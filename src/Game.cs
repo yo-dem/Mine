@@ -179,7 +179,7 @@ public sealed class Game : IDisposable
         _trees.Update(_treeField, _player.Eye);
         _grass.Update(_player.Eye);
         _objects.Update(_player.Position);
-        _creatures.Update(_player.Position, dt);
+        _creatures.Update(_player.Position, _dayCycle.Sample(), dt);
         _creatureRenderer.Update(_creatures);
         _aimed = _mouseCaptured ? _objects.Pick(_player.Eye, _player.LookDirection, ReachDistance, out _) : null;
         UpdateTitle(deltaTime);

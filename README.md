@@ -16,8 +16,8 @@ nell'acqua bassa pulsano venature di luce ciano bioluminescente, la riva è segn
 e sulla superficie brillano scintille come stelle cadute. Vicino alla riva si cammina nell'acqua; al largo è profonda e si **nuota**: ci si muove come in volo ma lentamente, Spazio per salire, Shift per immergersi, e da fermi si torna a galla.
 Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno; nell'acqua bassa galleggiano fiori di loto luminosi e tra l'erba spuntano fiori di ogni colore: campanule luminose, margherite pastello, tulipani, lupini dalle punte che brillano e piccoli fiori a stella luminosi, che crescono anche sotto i boschi.
 Sulle spiagge svettano palme scure in controluce, farfalle
-luminose svolazzano sui prati, pesci che brillano nuotano nell'acqua bassa e stormi di uccelli,
-ogni volta diversi per numero e disposizione (a V, in fila, in diagonale, sparsi), volteggiano in cielo, sagome scure al crepuscolo e luminosi di notte.
+luminose svolazzano sui prati (a sciami di notte), pesci che brillano nuotano nell'acqua più profonda e stormi di uccelli,
+ogni volta diversi per numero e disposizione (a V, in fila, in diagonale, sparsi), volteggiano in cielo: tanti di giorno, arrivano da lontano al mattino e se ne vanno al calare della sera, e di sera e di notte se ne vede solo qualcuno.
 
 Nel mondo si trovano piccoli cristalli luminosi da raccogliere, e puoi piazzarli dove vuoi: ognuno emette
 una luce viola che illumina il paesaggio attorno, con un alone nell'aria.
