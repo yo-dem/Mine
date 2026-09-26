@@ -22,29 +22,64 @@ public struct Creature
 /// <summary>
 /// The living things around the player, simulated on the CPU (they are few):
 /// glowing butterflies meandering over the land, fish gliding through the shallows, and flocks of
-/// birds wheeling high in the sky. Butterflies and fish that stray too far are respawned near the
-/// player; fish only ever appear where there is water deep enough.
+/// birds of every size and shape (V, slanted line, single file, loose cloud) wheeling high in the
+/// sky. Butterflies and fish that stray too far are respawned near the player; fish only ever
+/// appear where there is water deep enough.
 /// </summary>
 public sealed class Creatures
 {
-    private const int ButterflyCount = 36, FishCount = 28, FlockCount = 3, BirdsPerFlock = 7;
+    private const int ButterflyCount = 36, FishCount = 28, FlockCount = 5, MaxBirdsPerFlock = 16;
     private const float ButterflyRange = 32f, FishRange = 30f;
 
     private readonly TerrainField _terrain;
     private readonly Random _random = new(777);
     private readonly Creature[] _butterflies = new Creature[ButterflyCount];
     private readonly Creature[] _fish = new Creature[FishCount];
-    private readonly Creature[] _birds = new Creature[FlockCount * BirdsPerFlock];
-    private readonly (float Angle, float Speed, float Radius, float Height)[] _flocks = new (float, float, float, float)[FlockCount];
+    private readonly Creature[] _birds = new Creature[FlockCount * MaxBirdsPerFlock];
+    private readonly Vector3[] _birdSlots = new Vector3[FlockCount * MaxBirdsPerFlock]; // (back, side, up) in a loose cloud
+    private readonly Flock[] _flocks = new Flock[FlockCount];
+
+    private enum Formation { Vee, Echelon, Line, Cloud }
+
+    private struct Flock
+    {
+        public float Angle, Spin, Radius, Height, Spacing;
+        public int Count;
+        public Formation Formation;
+    }
     private Vector3 _flockAnchor = new(float.NaN);
+    private float _time;
 
     public Creatures(TerrainField terrain)
     {
         _terrain = terrain;
+        // Each flock has its own size (from a pair to a big wedge), shape, spacing, orbit and direction.
+        int[] sizes = [2, 4, 7, 11, 16];
+        _random.Shuffle(sizes);
+        var formations = new[] { Formation.Vee, Formation.Echelon, Formation.Line, Formation.Cloud, Formation.Vee };
+        _random.Shuffle(formations);
         for (int i = 0; i < FlockCount; i++)
-            _flocks[i] = (_random.NextSingle() * MathF.Tau, 0.06f + 0.05f * _random.NextSingle(), 70f + 90f * _random.NextSingle(), 55f + 45f * i);
+            _flocks[i] = new Flock
+            {
+                Angle = _random.NextSingle() * MathF.Tau,
+                Spin = (0.04f + 0.07f * _random.NextSingle()) * (_random.NextSingle() < 0.5f ? -1f : 1f),
+                Radius = 60f + 130f * _random.NextSingle(),
+                Height = 45f + 30f * i + 15f * _random.NextSingle(),
+                Spacing = 2.4f + 1.8f * _random.NextSingle(),
+                Count = Math.Min(sizes[i], MaxBirdsPerFlock),
+                Formation = sizes[i] <= 2 ? Formation.Cloud : formations[i],
+            };
         for (int i = 0; i < _birds.Length; i++)
-            _birds[i] = new Creature { Active = true, Scale = 3.2f + 1.0f * _random.NextSingle(), Phase = _random.NextSingle() * 10f };
+        {
+            var flock = _flocks[i / MaxBirdsPerFlock];
+            _birds[i] = new Creature
+            {
+                Active = i % MaxBirdsPerFlock < flock.Count,
+                Scale = 3.2f + 1.0f * _random.NextSingle(),
+                Phase = _random.NextSingle() * 10f,
+            };
+            _birdSlots[i] = new Vector3(_random.NextSingle() * 4f, _random.NextSingle() * 2f - 1f, _random.NextSingle() * 2f - 1f);
+        }
     }
 
     public ReadOnlySpan<Creature> Of(CreatureKind kind) => kind switch
@@ -56,6 +91,7 @@ public sealed class Creatures
 
     public void Update(Vector3 player, float dt)
     {
+        _time += dt;
         const float water = TerrainField.WaterLevel;
 
         for (int i = 0; i < _butterflies.Length; i++)
@@ -112,22 +148,38 @@ public sealed class Creatures
         _flockAnchor = Vector3.Lerp(_flockAnchor, player, 1f - MathF.Exp(-0.05f * dt));
         for (int k = 0; k < FlockCount; k++)
         {
-            var (angle, spin, radius, height) = _flocks[k];
-            angle += spin * dt;
-            _flocks[k].Angle = angle;
+            ref var flock = ref _flocks[k];
+            flock.Angle += flock.Spin * dt;
+            float angle = flock.Angle, spin = flock.Spin, radius = flock.Radius, height = flock.Height;
             var center = _flockAnchor + new Vector3(MathF.Cos(angle) * radius, 0, MathF.Sin(angle) * radius);
             center.Y = MathF.Max(_terrain.Height(center.X, center.Z), water) + height;
             var heading = new Vector3(-MathF.Sin(angle), 0, MathF.Cos(angle)) * spin * radius;
             var forward = Vector3.Normalize(heading);
             var side = new Vector3(-forward.Z, 0, forward.X);
-            for (int j = 0; j < BirdsPerFlock; j++)
+            float s = flock.Spacing;
+            for (int j = 0; j < flock.Count; j++)
             {
-                // A loose V: the leader in front, the others trailing on alternate sides.
+                int index = k * MaxBirdsPerFlock + j;
+                ref var bird = ref _birds[index];
+                var slot = _birdSlots[index];
                 int row = (j + 1) / 2;
                 float sideSign = j % 2 == 0 ? 1f : -1f;
-                ref var bird = ref _birds[k * BirdsPerFlock + j];
-                var offset = -forward * row * 3.2f + side * sideSign * row * 2.6f;
-                offset.Y = MathF.Sin(bird.Phase + (float)row) * 0.8f;
+                // Nobody keeps a perfect place: every bird drifts a little around its slot.
+                var drift = new Vector3(MathF.Sin(_time * 0.5f + bird.Phase), MathF.Sin(_time * 0.7f + bird.Phase * 1.3f),
+                    MathF.Sin(_time * 0.4f + bird.Phase * 0.7f)) * 0.6f;
+                var offset = flock.Formation switch
+                {
+                    // A V: the leader in front, the others trailing on alternate sides, one arm longer.
+                    Formation.Vee => -forward * row * s * 1.2f + side * sideSign * row * s * (sideSign > 0 ? 1f : 0.8f),
+                    // A single slanted line trailing off to one side.
+                    Formation.Echelon => (-forward * 1.1f + side * 0.9f) * j * s,
+                    // Single file, gently snaking.
+                    Formation.Line => -forward * j * s * 1.3f + side * MathF.Sin(j * 0.9f + _time * 0.3f) * s * 0.6f,
+                    // A loose cloud, each bird at its own random spot.
+                    _ => -forward * slot.X * s * 1.5f + side * slot.Y * s * 2.5f,
+                };
+                offset += side * drift.X + forward * drift.Z;
+                offset.Y = drift.Y + slot.Z * s * 0.4f;
                 bird.Position = center + offset;
                 bird.Velocity = heading;
             }

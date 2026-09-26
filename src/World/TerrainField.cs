@@ -7,8 +7,9 @@ namespace Mine.World;
 /// background threads. The land is made of layers: square tiles <see cref="TileSize"/> wide, each
 /// flat at a height that is a multiple of <see cref="LayerHeight"/>, with vertical walls between.
 /// <see cref="SmoothHeight"/> is the continuous surface they are cut from: slowly rolling ground,
-/// domain-warped hills, long dune ridges, softly terraced plateaus, deep basins under the water,
-/// and rare rock spires.
+/// domain-warped hills, long dune ridges, deep basins under the water, and rare rock spires.
+/// Slopes are kept gentle enough that neighbouring tiles almost always differ by one layer at most
+/// (walkable); larger steps are rare, apart from the spires.
 /// </summary>
 public sealed class TerrainField
 {
@@ -79,19 +80,13 @@ public sealed class TerrainField
         float hills = _hills.Fractal((x + wx) * 0.004f, (z + wz) * 0.004f, 5);
 
         // Long rounded dune ridges, strongest where the land is low.
-        float dune = 1f - MathF.Abs(_dunes.Fractal(x * 0.006f + hills * 0.3f, z * 0.0025f, 3));
+        float duneNoise = _dunes.Fractal(x * 0.006f + hills * 0.3f, z * 0.0025f, 3);
+        float dune = 1f - MathF.Sqrt(duneNoise * duneNoise + 0.02f); // rounded crest, no sharp ridge
         float lowland = Smooth(0.2f, -0.3f, continent);
 
-        float h = 20f + continent * 35f + hills * 40f + dune * dune * 9f * lowland;
+        float h = 20f + continent * 35f + hills * 30f + dune * dune * 9f * lowland;
 
-        // Soft terraces on the higher ground: flat steps joined by gentle slopes.
-        float highland = Smooth(0.0f, 0.4f, continent);
-        const float step = 9f;
-        float t = h / step;
-        float terraced = (MathF.Floor(t) + Smooth(0.3f, 0.7f, t - MathF.Floor(t))) * step;
-        h += (terraced - h) * 0.6f * highland;
-
-        h += _detail.Fractal(x * 0.05f, z * 0.05f, 2) * 1.0f;
+        h += _detail.Fractal(x * 0.05f, z * 0.05f, 2) * 0.4f;
         if (h < WaterLevel) h = WaterLevel - (WaterLevel - h) * DepthScale;
         return h + Spires(x, z);
     }

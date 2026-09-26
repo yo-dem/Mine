@@ -385,7 +385,7 @@ public static class TreeModels
                     float a = random.NextSingle() * MathF.Tau;
                     float r = MathF.Sqrt(random.NextSingle()) * 0.9f;
                     var foot = new Vector3(MathF.Cos(a) * r, -0.3f, MathF.Sin(a) * r);
-                    float height = 3.0f + 1.5f * random.NextSingle();
+                    float height = 2.0f + 2.5f * random.NextSingle() * random.NextSingle() + 1.2f * random.NextSingle();
                     var lean = new Vector3(MathF.Cos(a), 0, MathF.Sin(a)) * (0.15f + 0.3f * random.NextSingle());
                     var top = foot + new Vector3(0, height, 0) + lean;
                     var mid = foot + new Vector3(0, height * 0.55f, 0) + lean * 0.3f;

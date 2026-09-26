@@ -110,7 +110,10 @@ public sealed class TreeField
         }
     }
 
-    /// <summary>Reed clumps, one per tile, in the reed beds along the shores and in the shallows.</summary>
+    /// <summary>
+    /// Scattered reed clumps in the reed beds along the shores and in the shallows, of very different
+    /// heights: mostly middling, some low, the odd one towering over the rest.
+    /// </summary>
     private void AddReeds(List<TreeInstance> list, int cx, int cz, Random random)
     {
         const float water = TerrainField.WaterLevel;
@@ -121,8 +124,12 @@ public sealed class TreeField
             var center = _terrain.TileCenter(tx, tz);
             if (center.Y < water - 1.2f || center.Y > water + 1.0f) continue;
             float bed = GroundMaterials.Reeds(center.X, center.Z);
-            if (random.NextSingle() > bed * 0.9f) continue;
-            list.Add(new TreeInstance(center, random.NextSingle() * MathF.Tau, 0.8f + 0.4f * random.NextSingle(),
+            if (random.NextSingle() > bed * 0.3f) continue;
+            float roll = random.NextSingle();
+            float scale = roll < 0.3f ? 0.35f + 0.3f * random.NextSingle()   // low
+                : roll < 0.85f ? 0.7f + 0.4f * random.NextSingle()            // middling
+                : 1.3f + 0.5f * random.NextSingle();                          // towering
+            list.Add(new TreeInstance(center, random.NextSingle() * MathF.Tau, scale,
                 TreeModels.VariantOf(TreeModels.Decoration.Reeds)));
         }
     }
