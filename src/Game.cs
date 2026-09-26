@@ -57,6 +57,7 @@ public sealed class Game : IDisposable
     private static readonly Vector3 SkyColor = new(0.53f, 0.75f, 0.95f);
     private const float MouseSensitivity = 0.0025f;
     private const float ReachDistance = 6f;
+    private const double DoubleTapWindow = 0.3; // seconds between two W presses to start sprinting
 
     private readonly IWindow _window;
     private GL _gl = null!;
@@ -73,6 +74,9 @@ public sealed class Game : IDisposable
     private int _selectedSlot;
     private double _titleTimer;
     private int _frames;
+    private double _time;
+    private double _lastForwardTap = double.NegativeInfinity;
+    private bool _sprinting; // latched by double-tapping W, lasts until W is released
 
     public Game()
     {
@@ -130,6 +134,7 @@ public sealed class Game : IDisposable
 
     private void OnUpdate(double deltaTime)
     {
+        _time += deltaTime;
         float dt = (float)Math.Min(deltaTime, 0.05); // avoid huge steps after a hitch
 
         var move = Vector2.Zero;
@@ -141,10 +146,13 @@ public sealed class Game : IDisposable
             if (_keyboard.IsKeyPressed(Key.A)) move.X -= 1;
         }
 
+        bool sneak = _mouseCaptured && !_player.Flying && _keyboard.IsKeyPressed(Key.ShiftLeft);
+        if (move.Y <= 0 || sneak) _sprinting = false;
+
         _player.Update(_world, dt, move,
             up: _mouseCaptured && _keyboard.IsKeyPressed(Key.Space),
             down: _mouseCaptured && _keyboard.IsKeyPressed(Key.ShiftLeft),
-            sprint: _keyboard.IsKeyPressed(Key.ControlLeft));
+            sprint: _sprinting || _keyboard.IsKeyPressed(Key.ControlLeft));
 
         if (_player.Position.Y < -30) Respawn();
 
@@ -197,6 +205,10 @@ public sealed class Game : IDisposable
                 break;
             case Key.Escape:
                 _window.Close();
+                break;
+            case Key.W when _mouseCaptured:
+                if (_time - _lastForwardTap <= DoubleTapWindow) _sprinting = true;
+                _lastForwardTap = _time;
                 break;
             case Key.F:
                 _player.Flying = !_player.Flying;
@@ -257,6 +269,8 @@ public sealed class Game : IDisposable
         int fps = (int)(_frames / _titleTimer);
         var p = _player.Position;
         string mode = _player.Flying ? "volo" : "a piedi";
+        if (_sprinting) mode += " (corsa)";
+        else if (_player.Sneaking) mode += " (furtivo)";
         string hint = _mouseCaptured ? "" : " | clicca per giocare, Esc per uscire";
         _window.Title = $"Mine | {Blocks.Hotbar[_selectedSlot]} | {mode} | {fps} FPS | " +
                         $"{p.X:0} {p.Y:0} {p.Z:0}{hint}";
