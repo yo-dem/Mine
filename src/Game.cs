@@ -140,8 +140,47 @@ public sealed class Game : IDisposable
 
     private void Respawn()
     {
-        _player.Position = new Vector3(0, _terrainField.Height(0, 0), 0);
+        var spawn = FlatSpawn();
+        _player.Position = new Vector3(spawn.X, _terrainField.Height(spawn.X, spawn.Y), spawn.Y);
         _player.Velocity = Vector3.Zero;
+    }
+
+    /// <summary>
+    /// The flattest spot near the origin, searched on a widening spiral: dry land well above the
+    /// water (on the grass, not the sand) where the terrain tiles within 12 m sit at most one layer
+    /// from the centre's, and as many as possible on the same layer. Nearer spots win ties.
+    /// The layered land is rarely perfectly flat, so the flattest is taken rather than a flat one.
+    /// </summary>
+    private Vector2 FlatSpawn()
+    {
+        const float step = 16f, radius = 12f;
+        var best = Vector2.Zero;
+        float bestScore = float.MinValue;
+        for (int ring = 0; ring < 30; ring++)
+        {
+            int points = Math.Max(1, ring * 6);
+            for (int i = 0; i < points; i++)
+            {
+                float a = i * MathF.Tau / points + ring * 0.7f;
+                var center = _terrainField.TileCenter(MathF.Cos(a) * ring * step, MathF.Sin(a) * ring * step);
+                if (center.Y < TerrainField.WaterLevel + 6f) continue;
+                int same = 0, total = 0;
+                bool gentle = true;
+                for (float dz = -radius; dz <= radius && gentle; dz += TerrainField.TileSize)
+                for (float dx = -radius; dx <= radius && gentle; dx += TerrainField.TileSize)
+                {
+                    if (dx * dx + dz * dz > radius * radius) continue;
+                    float h = _terrainField.Height(center.X + dx, center.Z + dz);
+                    gentle = MathF.Abs(h - center.Y) <= TerrainField.LayerHeight;
+                    total++;
+                    if (h == center.Y) same++;
+                }
+                if (!gentle) continue;
+                float score = same / (float)total - ring * 0.004f;
+                if (score > bestScore) (bestScore, best) = (score, new Vector2(center.X, center.Z));
+            }
+        }
+        return best;
     }
 
     private void OnUpdate(double deltaTime)
@@ -198,7 +237,7 @@ public sealed class Game : IDisposable
 
         var atmosphere = _dayCycle.Sample();
         float time = (float)_time;
-        _lightCount = _objects.CollectLights(eye, time, _lights, _treeField.GlowingLights(eye, 80f));
+        _lightCount = _objects.CollectLights(eye, time, _lights, _treeField.GlowingLights(eye, 80f).Concat(_treeField.FlowerLights(eye)));
         var shadowCenter = _player.Position;
         _shadowMap.Render(shadowCenter, atmosphere.LightDirection, time, () =>
         {

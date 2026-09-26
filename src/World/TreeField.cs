@@ -111,6 +111,72 @@ public sealed class TreeField
     }
 
     /// <summary>
+    /// Coloured lights of the nearest flowers born of light (at most <paramref name="max"/>, within
+    /// <paramref name="radius"/>). Each fades out toward a cutoff that moves smoothly with the
+    /// distance of the first flower left out, so lights never pop as the player walks.
+    /// </summary>
+    public List<PointLight> FlowerLights(Vector3 center, float radius = 14f, int max = 8)
+    {
+        _flowerScratch.Clear();
+        int reach = (int)MathF.Ceiling(radius / CellSize);
+        int cx = (int)MathF.Floor(center.X / CellSize), cz = (int)MathF.Floor(center.Z / CellSize);
+        for (int dz = -reach; dz <= reach; dz++)
+        for (int dx = -reach; dx <= reach; dx++)
+        {
+            if (!_cells.TryGetValue((cx + dx, cz + dz), out var trees)) continue;
+            foreach (var tree in trees)
+            {
+                if (TreeModels.FlowerLight(tree.Variant) is null) continue;
+                float d = Vector3.Distance(tree.Position, center);
+                if (d < radius) _flowerScratch.Add((d, tree));
+            }
+        }
+        _flowerScratch.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+        float cutoff = _flowerScratch.Count > max ? _flowerScratch[max].Distance : radius;
+        var lights = new List<PointLight>(max);
+        for (int i = 0; i < Math.Min(max, _flowerScratch.Count); i++)
+        {
+            var (d, tree) = _flowerScratch[i];
+            float t = Math.Clamp((cutoff - d) / (cutoff * 0.4f), 0f, 1f);
+            float fade = t * t * (3 - 2 * t);
+            if (fade <= 0f) continue;
+            var color = TreeModels.FlowerLight(tree.Variant)!.Value;
+            lights.Add(new PointLight(tree.Position + new Vector3(0, 0.8f * tree.Scale, 0), color * 0.7f * fade, 4f * tree.Scale));
+        }
+        return lights;
+    }
+
+    private readonly List<(float Distance, TreeInstance Tree)> _flowerScratch = new();
+
+    /// <summary>
+    /// Gardens of flowers born of light (irises, poppies, lilies), the only place they grow: glowing
+    /// patches under the thick woods (a garden noise picks about half of them), densest at their
+    /// heart and where the trees crowd. One kind rules each garden.
+    /// </summary>
+    private void AddLightGardens(List<TreeInstance> list, int cx, int cz, Random random)
+    {
+        const float water = TerrainField.WaterLevel;
+        TreeModels.Decoration[] kinds = [TreeModels.Decoration.Irises, TreeModels.Decoration.Poppies, TreeModels.Decoration.Lilies];
+        for (int i = 0; i < 45; i++)
+        {
+            float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.35f);
+            float z = TerrainField.InsideTile((cz + random.NextSingle()) * CellSize, 0.35f);
+            float garden = _forest.Fractal(x * 0.012f + 300f, z * 0.012f - 200f, 2);
+            // The same forest noise as the trees (dense above 0.05): the thicker the wood, the more flowers.
+            float woods = Math.Clamp((_forest.Fractal(x * 0.0025f, z * 0.0025f, 3) - 0.05f) / 0.15f, 0f, 1f);
+            float density = Math.Clamp(garden / 0.15f, 0f, 1f) * woods;
+            if (random.NextSingle() >= density * 0.8f) continue;
+            float y = _terrain.Height(x, z);
+            if (y < water + 2f || _terrain.Normal(x, z, 1f).Y < 0.8f) continue;
+            float species = _forest.Fractal(x * 0.004f - 150f, z * 0.004f + 260f, 2);
+            int dominant = species < -0.1f ? 0 : species < 0.1f ? 1 : 2;
+            var kind = kinds[random.NextSingle() < 0.15f ? random.Next(kinds.Length) : dominant];
+            list.Add(new TreeInstance(new Vector3(x, y - 0.03f, z), random.NextSingle() * MathF.Tau,
+                1.1f + 0.45f * random.NextSingle(), TreeModels.VariantOf(kind)));
+        }
+    }
+
+    /// <summary>
     /// Flowers mixed with the grass: in the meadows, patches where one kind dominates (daisies,
     /// tulips, lupins, starflowers) with a few others mixed in; under the woods, glowing starflowers
     /// and bells.
@@ -118,9 +184,10 @@ public sealed class TreeField
     private void AddFlowers(List<TreeInstance> list, int cx, int cz, Random random)
     {
         const float water = TerrainField.WaterLevel;
+        // The flowers born of light grow only in their gardens (AddLightGardens).
         TreeModels.Decoration[] meadow =
             [TreeModels.Decoration.Daisies, TreeModels.Decoration.Tulips, TreeModels.Decoration.Lupins, TreeModels.Decoration.Starflowers];
-        for (int i = 0; i < 70; i++)
+        for (int i = 0; i < 40; i++)
         {
             float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.35f);
             float z = TerrainField.InsideTile((cz + random.NextSingle()) * CellSize, 0.35f);
@@ -137,14 +204,16 @@ public sealed class TreeField
             }
             else
             {
+                // Everywhere in moderation, a little thicker in patches.
                 float patch = _forest.Fractal(x * 0.015f + 90f, z * 0.015f - 30f, 2);
-                if (roll > 0.18f + 0.6f * Math.Clamp(patch + 0.1f, 0f, 1f)) continue;
+                if (roll > 0.3f + 0.2f * Math.Clamp(patch + 0.1f, 0f, 1f)) continue;
                 float species = _forest.Fractal(x * 0.008f - 70f, z * 0.008f + 55f, 2);
-                int dominant = species < -0.15f ? 0 : species < 0.05f ? 1 : species < 0.2f ? 2 : 3;
+                // Bands of the species noise (it mostly spans about -0.4..0.4), one per kind of flower.
+                int dominant = Math.Clamp((int)((species + 0.35f) / 0.7f * meadow.Length), 0, meadow.Length - 1);
                 kind = meadow[random.NextSingle() < 0.2f ? random.Next(meadow.Length) : dominant];
             }
             list.Add(new TreeInstance(new Vector3(x, y - 0.03f, z), random.NextSingle() * MathF.Tau,
-                0.8f + 0.5f * random.NextSingle(), TreeModels.VariantOf(kind)));
+                1.05f + 0.5f * random.NextSingle(), TreeModels.VariantOf(kind)));
         }
     }
 
@@ -270,6 +339,7 @@ public sealed class TreeField
     {
         AddReeds(list, cx, cz, random);
         AddFlowers(list, cx, cz, random);
+        AddLightGardens(list, cx, cz, random);
         const float water = TerrainField.WaterLevel;
         var crystals = TreeModels.VariantOf(biome < 0f ? TreeModels.Decoration.CyanCrystals : TreeModels.Decoration.VioletCrystals);
         for (int i = 0; i < 20; i++)

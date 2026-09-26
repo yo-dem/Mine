@@ -59,6 +59,10 @@ public static class TreeModels
         Tulips,      // upright cups, strong colours
         Starflowers, // small glowing stars, also under the trees
         Lupins,      // tall spikes of florets with glowing tips
+        // Flowers with leaves (the ones above are bare stems), the leaves shaped like grass blades:
+        Irises,      // a fan of upright sword leaves, flowers with raised and drooping petals
+        Poppies,     // a rosette of broad leaves lying on the ground, cup flowers on thin stems
+        Lilies,      // arching strap leaves, leafy stems, glowing trumpets
     }
 
     public static int TreeStyleCount => Styles.Length;
@@ -75,6 +79,7 @@ public static class TreeModels
         Decoration.GlowBells => 140f,
         Decoration.Daisies or Decoration.Tulips or Decoration.Starflowers => 110f,
         Decoration.Lupins => 140f,
+        Decoration.Irises or Decoration.Lilies or Decoration.Poppies => 120f,
         Decoration.Reeds => 400f,
         Decoration.Palm => float.MaxValue,
         _ => 700f,
@@ -82,7 +87,8 @@ public static class TreeModels
 
     /// <summary>Whether a variant is drawn into the shadow map: small flowers are not worth it.</summary>
     public static bool CastsShadow(int variant) => variant < Styles.Length || (Decoration)(variant - Styles.Length) is not
-        (Decoration.Lotus or Decoration.GlowBells or Decoration.Daisies or Decoration.Tulips or Decoration.Starflowers or Decoration.Lupins);
+        (Decoration.Lotus or Decoration.GlowBells or Decoration.Daisies or Decoration.Tulips or Decoration.Starflowers or Decoration.Lupins
+         or Decoration.Irises or Decoration.Poppies or Decoration.Lilies);
 
     /// <summary>The colour a decoration lights its surroundings with, or null if it gives no light.</summary>
     public static System.Numerics.Vector3? GlowColor(int variant) => variant < Styles.Length ? null : (Decoration)(variant - Styles.Length) switch
@@ -385,6 +391,11 @@ public static class TreeModels
                 }
                 break;
             }
+            case Decoration.Irises:
+            case Decoration.Poppies:
+            case Decoration.Lilies:
+                LeafyFlowers(mesh, random, decoration, lod);
+                break;
             case Decoration.Palm:
             {
                 // A tall, slender trunk curving toward the water, crowned with long arching fronds:
@@ -571,6 +582,325 @@ public static class TreeModels
         var top = foot + new Vector3(MathF.Cos(a) * out_, height + extra * random.NextSingle(), MathF.Sin(a) * out_);
         Cylinder(mesh, new Segment(foot, top, 0.014f, 0.01f, 0, BellSway), 3, new Vector3(0.12f, 0.22f, 0.26f));
         return top;
+    }
+
+    /// <summary>A random point on the ground within <paramref name="radius"/> of the centre.</summary>
+    private static Vector3 RandomFoot(Random random, float radius)
+    {
+        float a = random.NextSingle() * MathF.Tau, r = radius * MathF.Sqrt(random.NextSingle());
+        return new Vector3(MathF.Cos(a) * r, 0, MathF.Sin(a) * r);
+    }
+
+    /// <summary>The colours of a flower born of light: pale glowing stems, tinted leaves with veins of light, neon petals.</summary>
+    private sealed record LightPalette(Vector3 Stem, Vector3 LeafBase, Vector3 LeafTip, Vector3[] PetalBase, Vector3[] PetalTip, Vector3 Seed);
+
+    private static LightPalette PaletteOf(Decoration kind) => kind switch
+    {
+        Decoration.Lilies => new(new(0.80f, 0.92f, 1.0f), new(0.18f, 0.45f, 0.60f), new(0.45f, 0.85f, 0.95f),
+            [new(0.15f, 0.85f, 1.0f), new(0.30f, 1.0f, 0.85f), new(0.55f, 0.75f, 1.0f)],
+            [new(0.85f, 0.60f, 1.0f), new(0.90f, 1.0f, 1.0f), new(1.0f, 0.65f, 0.90f)], new(0.7f, 1.0f, 1.0f)),
+        Decoration.Poppies => new(new(0.95f, 0.82f, 0.95f), new(0.40f, 0.18f, 0.50f), new(0.80f, 0.45f, 0.85f),
+            [new(1.0f, 0.15f, 0.55f), new(0.95f, 0.25f, 0.80f), new(1.0f, 0.30f, 0.40f)],
+            [new(1.0f, 0.70f, 0.30f), new(1.0f, 0.90f, 1.0f), new(0.70f, 0.40f, 1.0f)], new(1.0f, 0.8f, 0.5f)),
+        _ => new(new(0.85f, 0.82f, 1.0f), new(0.20f, 0.20f, 0.55f), new(0.50f, 0.55f, 1.0f),
+            [new(0.45f, 0.20f, 1.0f), new(0.30f, 0.35f, 1.0f), new(0.70f, 0.25f, 1.0f)],
+            [new(0.40f, 0.85f, 1.0f), new(0.85f, 0.75f, 1.0f), new(1.0f, 0.50f, 0.90f)], new(0.8f, 0.7f, 1.0f)),
+    };
+
+    /// <summary>The colour of the light a flower born of light casts around it, or null.</summary>
+    public static Vector3? FlowerLight(int variant) => variant < Styles.Length ? null : (Decoration)(variant - Styles.Length) switch
+    {
+        Decoration.Lilies => new Vector3(0.35f, 0.85f, 1.0f),
+        Decoration.Poppies => new Vector3(1.0f, 0.35f, 0.7f),
+        Decoration.Irises => new Vector3(0.6f, 0.4f, 1.0f),
+        _ => null,
+    };
+
+    /// <summary>
+    /// Flowers born of light, built like plants: curved pale stems glowing brighter toward the top,
+    /// clothed in tinted leaves with veins of light, a calyx under a head of curved, cupped neon
+    /// petals glowing toward their tips, stamens with shining tips, and seeds of light floating over
+    /// the head. A few stems carry a closed bud. They also cast coloured light (<see cref="FlowerLight"/>).
+    /// </summary>
+    private static void LeafyFlowers(List<float> mesh, Random random, Decoration kind, int lod)
+    {
+        var palette = PaletteOf(kind);
+        int rows = lod == 0 ? 5 : lod == 1 ? 3 : 2;
+        int stems = lod >= 2 ? 1 : kind == Decoration.Poppies ? 2 : 1 + random.Next(2);
+        void LeafBlade(Vector3 foot, Vector3 outward, float length, float width, float elevation, float droop, float swayHeight) =>
+            Blade(mesh, foot, Vector3.UnitY, outward, length, width, elevation, droop, 0.3f, false, palette.LeafBase, palette.LeafTip,
+                0.08f, 0.25f, swayHeight, rows, ribGlow: 0.45f);
+
+        // Leaves from the ground: sword fans for the irises, a low rosette for the poppies.
+        int basal = kind switch { Decoration.Irises => 7, Decoration.Poppies => 6, _ => 0 } / (lod == 0 ? 1 : 2);
+        for (int i = 0; i < basal; i++)
+        {
+            float a = (i + 0.3f * random.NextSingle()) * MathF.Tau / basal;
+            if (kind == Decoration.Irises)
+                LeafBlade(RandomFoot(random, 0.06f), Horizontal(a), 0.45f + 0.3f * random.NextSingle(), 0.06f,
+                    1.2f + 0.2f * random.NextSingle(), 0.3f + 0.35f * random.NextSingle(), 1f);
+            else
+                LeafBlade(RandomFoot(random, 0.04f), Horizontal(a), 0.24f + 0.08f * random.NextSingle(), 0.11f, 0.9f, 0.9f, 1f);
+        }
+
+        // A flower head (or a closed bud) at the tip of a stem or branch, facing along its axis.
+        void Head(Vector3 top, Vector3 axis, float size, bool bud)
+        {
+            int hue = random.Next(palette.PetalBase.Length);
+            Vector3 petalBase = palette.PetalBase[hue], petalTip = palette.PetalTip[hue];
+            if (lod == 0) Calyx(mesh, top, axis, bud, palette);
+            if (bud)
+            {
+                Petals(mesh, top, axis, 5, 0.1f * size, 0.06f * size, 0.12f, -0.1f, 0.4f, true, palette.Stem, petalBase, 0.3f, 0.8f, rows, random.NextSingle());
+                return;
+            }
+            float twist = random.NextSingle() * MathF.Tau;
+            switch (kind)
+            {
+                case Decoration.Poppies:
+                    // Four broad cupped petals around a shining heart ringed with stamens.
+                    Petals(mesh, top, axis, 4, 0.14f * size, 0.17f * size, 0.75f, 0.35f, 0.4f, true, petalBase, petalTip, 0.35f, 0.9f, rows, twist);
+                    Bud(mesh, top + axis * 0.03f * size, 0.03f * size, palette.Seed, 1f, BellSway);
+                    if (lod == 0)
+                        for (int k = 0; k < 8; k++)
+                            Bud(mesh, top + (axis * 0.025f + Horizontal(k * MathF.Tau / 8f) * 0.04f) * size, 0.01f, petalTip, 1f, BellSway);
+                    break;
+                case Decoration.Lilies:
+                    // Six narrow petals curling back around long stamens.
+                    Petals(mesh, top, axis, 3, 0.19f * size, 0.075f * size, 0.5f, 1.3f, 0.3f, false, petalBase, petalTip, 0.35f, 0.95f, rows, twist);
+                    Petals(mesh, top, axis, 3, 0.18f * size, 0.07f * size, 0.55f, 1.2f, 0.3f, false, petalBase, petalTip, 0.35f, 0.95f, rows,
+                        twist + MathF.PI / 3f);
+                    if (lod == 0)
+                    {
+                        var (u, v) = Frame(axis);
+                        for (int k = 0; k < 6; k++)
+                        {
+                            float a = k * MathF.Tau / 6f + twist;
+                            var tip = top + (axis * 0.13f + (u * MathF.Cos(a) + v * MathF.Sin(a)) * 0.05f) * size;
+                            GlowTube(mesh, top, tip, 0.004f, 0.003f, BellSway, BellSway, palette.Stem, 0.6f, 0.9f, 3);
+                            Bud(mesh, tip, 0.012f, palette.Seed, 1f, BellSway);
+                        }
+                    }
+                    break;
+                default:
+                    // Irises: three petals standing up and curling in, three wide falls drooping out,
+                    // gold at their throat.
+                    Petals(mesh, top, axis, 3, 0.13f * size, 0.08f * size, 0.25f, -0.35f, 0.35f, true, petalBase, petalTip, 0.35f, 0.9f, rows, twist);
+                    Petals(mesh, top, axis, 3, 0.16f * size, 0.11f * size, 1.1f, 1.1f, 0.25f, true, new Vector3(1.0f, 0.85f, 0.4f), petalBase,
+                        0.5f, 0.8f, rows, twist + MathF.PI / 3f);
+                    break;
+            }
+            // Seeds of light floating over the head.
+            if (lod <= 1)
+                for (int k = 0; k < 2; k++)
+                {
+                    var p = top + axis * (0.1f + 0.2f * random.NextSingle()) + Horizontal(random.NextSingle() * MathF.Tau) * 0.1f * random.NextSingle();
+                    Bud(mesh, p, 0.01f + 0.01f * random.NextSingle(), palette.Seed, 1f, BellSway);
+                }
+        }
+
+        for (int s = 0; s < stems; s++)
+        {
+            float height = kind switch
+            {
+                Decoration.Poppies => 0.55f + 0.3f * random.NextSingle(),
+                Decoration.Lilies => 0.8f + 0.35f * random.NextSingle(),
+                _ => 0.75f + 0.3f * random.NextSingle(),
+            };
+            float StemSway(Vector3 p) => BellSway * Math.Clamp(p.Y / height, 0f, 1f);
+            var foot = RandomFoot(random, 0.12f);
+            var lean = Horizontal(random.NextSingle() * MathF.Tau) * (0.05f + 0.1f * random.NextSingle()) * height;
+            Vector3 Stem(float t) => foot + new Vector3(0, height * t, 0) + lean * t * t;
+            int segments = lod == 0 ? 4 : 2;
+            for (int k = 0; k < segments; k++)
+            {
+                float t0 = k / (float)segments, t1 = (k + 1) / (float)segments;
+                GlowTube(mesh, Stem(t0), Stem(t1), 0.018f - 0.007f * t0, 0.018f - 0.007f * t1, BellSway * t0, BellSway * t1,
+                    palette.Stem, 0.25f + 0.35f * t0, 0.25f + 0.35f * t1, lod == 0 ? 4 : 3);
+            }
+
+            // Leaves along the stem below the branches, each turned on from the last (like real
+            // plants), smaller higher up.
+            int leaves = kind switch { Decoration.Lilies => 7, Decoration.Poppies => 3, _ => 2 };
+            leaves = lod == 0 ? leaves : lod == 1 ? (leaves + 1) / 2 : 1;
+            float turn = random.NextSingle() * MathF.Tau;
+            for (int k = 0; k < leaves; k++)
+            {
+                float t = 0.12f + 0.55f * (k + 0.5f) / leaves;
+                turn += 2.4f;
+                float size = 1.1f - 0.5f * t;
+                var (length, width, elevation, droop) = kind switch
+                {
+                    Decoration.Lilies => (0.25f, 0.065f, 0.75f, 0.9f),
+                    Decoration.Poppies => (0.17f, 0.07f, 0.6f, 0.7f),
+                    _ => (0.22f, 0.05f, 1.15f, 0.35f), // irises: narrow leaves hugging the stem
+                };
+                LeafBlade(Stem(t), Horizontal(turn), length * size, width * size, elevation, droop, height);
+            }
+
+            // One flower crowns the stem; below it the stem branches into two or three curving side
+            // stems, each ending in a smaller flower (now and then a closed bud).
+            Head(Stem(1f), Vector3.Normalize(new Vector3(0, height, 0) + lean * 2f), 1f, false);
+            int branches = lod >= 2 ? 1 : 2 + random.Next(2);
+            float spin = random.NextSingle() * MathF.Tau;
+            for (int k = 0; k < branches; k++)
+            {
+                var start = Stem(0.7f + 0.2f * random.NextSingle());
+                var outward = Horizontal(spin + (k + 0.3f * random.NextSingle()) * MathF.Tau / branches);
+                float length = (0.16f + 0.1f * random.NextSingle()) * (0.6f + 0.4f * height);
+                // A quadratic curve: out first, then turning upward.
+                var control = start + outward * length * 0.6f + new Vector3(0, length * 0.2f, 0);
+                var end = start + outward * length * 0.8f + new Vector3(0, length * 0.75f, 0);
+                Vector3 Branch(float t) => Vector3.Lerp(Vector3.Lerp(start, control, t), Vector3.Lerp(control, end, t), t);
+                int pieces = lod == 0 ? 3 : 1;
+                for (int q = 0; q < pieces; q++)
+                {
+                    Vector3 b0 = Branch(q / (float)pieces), b1 = Branch((q + 1) / (float)pieces);
+                    GlowTube(mesh, b0, b1, 0.01f - 0.003f * q / pieces, 0.01f - 0.003f * (q + 1) / pieces, StemSway(b0), StemSway(b1),
+                        palette.Stem, 0.5f, 0.6f, 3);
+                }
+                // A little leaf (a bract) where the branch leaves the stem.
+                if (lod == 0)
+                    LeafBlade(start, Horizontal(spin + (k + 0.5f) * MathF.Tau / branches), 0.08f, 0.03f, 0.7f, 0.6f, height);
+                var axis = Vector3.Normalize(Vector3.Normalize(end - control) + new Vector3(0, 0.6f, 0));
+                Head(end, axis, 0.75f + 0.15f * random.NextSingle(), random.NextSingle() < 0.2f);
+            }
+        }
+    }
+
+    /// <summary>A tapering tube that glows from within, brighter toward <paramref name="b"/> when <paramref name="glowB"/> is higher.</summary>
+    private static void GlowTube(List<float> mesh, Vector3 a, Vector3 b, float radiusA, float radiusB, float swayA, float swayB,
+        Vector3 color, float glowA, float glowB, int sides)
+    {
+        var (u, v) = Frame(Vector3.Normalize(b - a));
+        for (int i = 0; i < sides; i++)
+        {
+            float a0 = i * MathF.Tau / sides, a1 = (i + 1) * MathF.Tau / sides;
+            var n0 = u * MathF.Cos(a0) + v * MathF.Sin(a0);
+            var n1 = u * MathF.Cos(a1) + v * MathF.Sin(a1);
+            var p00 = a + n0 * radiusA; var p01 = a + n1 * radiusA;
+            var p10 = b + n0 * radiusB; var p11 = b + n1 * radiusB;
+            // Counter-clockwise from outside: check against the outward normal.
+            if (Vector3.Dot(Vector3.Cross(p11 - p00, p10 - p00), n0) < 0)
+            {
+                Vertex(mesh, p00, n0, color, glowA, swayA); Vertex(mesh, p11, n1, color, glowB, swayB); Vertex(mesh, p10, n0, color, glowB, swayB);
+                Vertex(mesh, p00, n0, color, glowA, swayA); Vertex(mesh, p01, n1, color, glowA, swayA); Vertex(mesh, p11, n1, color, glowB, swayB);
+            }
+            else
+            {
+                Vertex(mesh, p00, n0, color, glowA, swayA); Vertex(mesh, p10, n0, color, glowB, swayB); Vertex(mesh, p11, n1, color, glowB, swayB);
+                Vertex(mesh, p00, n0, color, glowA, swayA); Vertex(mesh, p11, n1, color, glowB, swayB); Vertex(mesh, p01, n1, color, glowA, swayA);
+            }
+        }
+    }
+
+    /// <summary>A horizontal unit vector at an angle around Y.</summary>
+    private static Vector3 Horizontal(float angle) => new(MathF.Cos(angle), 0, MathF.Sin(angle));
+
+    /// <summary>Two unit vectors perpendicular to <paramref name="axis"/> and to each other.</summary>
+    private static (Vector3 U, Vector3 V) Frame(Vector3 axis)
+    {
+        var u = Vector3.Normalize(Vector3.Cross(axis, MathF.Abs(axis.X) < 0.9f ? Vector3.UnitX : Vector3.UnitZ));
+        return (u, Vector3.Cross(axis, u));
+    }
+
+    /// <summary>
+    /// A ring of <paramref name="count"/> petals around <paramref name="axis"/> at <paramref name="center"/>,
+    /// opened <paramref name="open"/> radians from the axis and curling by <paramref name="curl"/> (see <see cref="Blade"/>).
+    /// </summary>
+    private static void Petals(List<float> mesh, Vector3 center, Vector3 axis, int count, float length, float width, float open, float curl,
+        float cup, bool rounded, Vector3 baseColor, Vector3 tipColor, float baseGlow, float tipGlow, int rows, float twist)
+    {
+        var (u, v) = Frame(axis);
+        for (int i = 0; i < count; i++)
+        {
+            float a = twist + i * MathF.Tau / count;
+            var outward = u * MathF.Cos(a) + v * MathF.Sin(a);
+            Blade(mesh, center, axis, outward, length, width, MathF.PI / 2f - open, curl, cup, rounded,
+                baseColor, tipColor, baseGlow, tipGlow, 0f, rows);
+        }
+    }
+
+    /// <summary>Five small sepals under the flower head, folded back (or wrapped around a bud).</summary>
+    private static void Calyx(List<float> mesh, Vector3 center, Vector3 axis, bool bud, LightPalette palette)
+    {
+        var (u, v) = Frame(axis);
+        for (int i = 0; i < 5; i++)
+        {
+            float a = i * MathF.Tau / 5f;
+            var outward = u * MathF.Cos(a) + v * MathF.Sin(a);
+            if (bud) Blade(mesh, center - axis * 0.01f, axis, outward, 0.08f, 0.035f, 1.2f, -0.2f, 0.3f, false, palette.LeafBase, palette.LeafTip, 0.2f, 0.4f, 0f, 3, 0.4f);
+            else Blade(mesh, center - axis * 0.02f, axis, outward, 0.05f, 0.03f, -0.4f, 0.3f, 0.2f, false, palette.LeafBase, palette.LeafTip, 0.2f, 0.4f, 0f, 3, 0.4f);
+        }
+    }
+
+    /// <summary>
+    /// A curved, folded surface: a leaf or a petal. It starts at <paramref name="foot"/> and grows in
+    /// the plane of <paramref name="up"/> and <paramref name="outward"/> (perpendicular unit vectors),
+    /// first at <paramref name="elevation"/> radians above <paramref name="outward"/>, then bending
+    /// down by <paramref name="droop"/> radians over its length (negative: curling up). Its outline is
+    /// narrow at the foot, widest near the middle and pointed (a leaf) or <paramref name="rounded"/> (a
+    /// petal); its edges are raised by <paramref name="fold"/> of the half width toward the
+    /// <paramref name="up"/> side, so leaves are channelled along the midrib and petals cupped. The
+    /// midrib is lighter. Seen from both sides. Sway: constant (heads, <paramref name="swayHeight"/> 0)
+    /// or growing with height up to <paramref name="swayHeight"/>, like the stem it grows on.
+    /// </summary>
+    private static void Blade(List<float> mesh, Vector3 foot, Vector3 up, Vector3 outward, float length, float width, float elevation,
+        float droop, float fold, bool rounded, Vector3 baseColor, Vector3 tipColor, float baseGlow, float tipGlow, float swayHeight, int rows,
+        float ribGlow = 0f)
+    {
+        var across = Vector3.Normalize(Vector3.Cross(up, outward));
+        // Direction and centre at t (0..1 along the length), the angle measured from "up".
+        float theta0 = MathF.PI / 2f - elevation, kappa = droop;
+        Vector3 Direction(float t) => up * MathF.Cos(theta0 + kappa * t) + outward * MathF.Sin(theta0 + kappa * t);
+        Vector3 Center(float t)
+        {
+            if (MathF.Abs(kappa) < 1e-3f) return foot + Direction(0) * length * t;
+            float a = theta0 + kappa * t;
+            return foot + (up * (MathF.Sin(a) - MathF.Sin(theta0)) + outward * (MathF.Cos(theta0) - MathF.Cos(a))) * (length / kappa);
+        }
+        float Half(float t) => rounded
+            ? 0.5f * width * MathF.Max(MathF.Sin(MathF.PI * (0.1f + 0.8f * t)), 0.25f)
+            : 0.5f * width * MathF.Pow(MathF.Max(MathF.Sin(MathF.PI * (0.08f + 0.92f * t)), 0f), 0.7f);
+
+        Span<Vector3> left = stackalloc Vector3[8], mid = stackalloc Vector3[8], right = stackalloc Vector3[8];
+        Span<float> ts = stackalloc float[8];
+        for (int k = 0; k < rows; k++)
+        {
+            float t = rounded ? k / (float)(rows - 1) : k / (float)rows;
+            var c = Center(t);
+            var d = Direction(t);
+            var inner = up * MathF.Sin(theta0 + kappa * t) - outward * MathF.Cos(theta0 + kappa * t); // perpendicular, toward "up"
+            float h = Half(t);
+            ts[k] = t;
+            mid[k] = c;
+            left[k] = c - across * h + inner * h * fold;
+            right[k] = c + across * h + inner * h * fold;
+        }
+        var tip = rounded ? Center(1f) + Direction(1f) * (length / (rows - 1)) * 0.35f : Center(1f);
+
+        Vector3 Color(float t, bool rib) => Vector3.Lerp(baseColor, tipColor, t) * (rib ? 1.15f : 1f);
+        float Glow(float t, bool rib) => MathF.Min(float.Lerp(baseGlow, tipGlow, t) + (rib ? ribGlow : 0f), 1f);
+        float Sway(Vector3 p) => swayHeight <= 0f ? BellSway : BellSway * Math.Clamp(p.Y / swayHeight, 0f, 1f);
+        void Triangle(Vector3 a, float ta, bool ra, Vector3 b, float tb, bool rb, Vector3 c, float tc, bool rc)
+        {
+            var n = Vector3.Cross(b - a, c - a);
+            if (n.LengthSquared() < 1e-14f) return;
+            n = Vector3.Normalize(n);
+            Vertex(mesh, a, n, Color(ta, ra), Glow(ta, ra), Sway(a)); Vertex(mesh, b, n, Color(tb, rb), Glow(tb, rb), Sway(b)); Vertex(mesh, c, n, Color(tc, rc), Glow(tc, rc), Sway(c));
+            Vertex(mesh, a, -n, Color(ta, ra), Glow(ta, ra), Sway(a)); Vertex(mesh, c, -n, Color(tc, rc), Glow(tc, rc), Sway(c)); Vertex(mesh, b, -n, Color(tb, rb), Glow(tb, rb), Sway(b));
+        }
+        for (int k = 0; k + 1 < rows; k++)
+        {
+            float t0 = ts[k], t1 = ts[k + 1];
+            Triangle(left[k], t0, false, mid[k], t0, true, mid[k + 1], t1, true);
+            Triangle(left[k], t0, false, mid[k + 1], t1, true, left[k + 1], t1, false);
+            Triangle(mid[k], t0, true, right[k], t0, false, right[k + 1], t1, false);
+            Triangle(mid[k], t0, true, right[k + 1], t1, false, mid[k + 1], t1, true);
+        }
+        int last = rows - 1;
+        Triangle(left[last], ts[last], false, mid[last], ts[last], true, tip, 1f, true);
+        Triangle(mid[last], ts[last], true, right[last], ts[last], false, tip, 1f, true);
     }
 
     /// <summary>

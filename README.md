@@ -14,15 +14,15 @@ e una notte cosmica dominata da un'enorme galassia a spirale, una grande luna pi
 Nelle zone basse ci sono mari e laghi che riflettono il cielo, galassia compresa, con spiagge di sabbia viola:
 nell'acqua bassa pulsano venature di luce ciano bioluminescente, la riva è segnata da una linea luminosa
 e sulla superficie brillano scintille come stelle cadute. Vicino alla riva si cammina nell'acqua; al largo è profonda e si **nuota**: ci si muove come in volo ma lentamente, Spazio per salire, Shift per immergersi, e da fermi si torna a galla.
-Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno; nell'acqua bassa galleggiano fiori di loto luminosi e tra l'erba spuntano fiori di ogni colore: campanule luminose, margherite pastello, tulipani, lupini dalle punte che brillano e piccoli fiori a stella luminosi, che crescono anche sotto i boschi.
+Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno; nell'acqua bassa galleggiano fiori di loto luminosi e tra l'erba spuntano fiori di ogni colore: campanule luminose, margherite pastello, tulipani, lupini dalle punte che brillano, piccoli fiori a stella luminosi e, raccolti in giardini sotto i boschi fitti, fiori nati dalla luce: steli chiari che brillano verso l'alto e si ramificano in grappoli di 3–4 fiori, foglie colorate con venature di luce, petali al neon, semi di luce che fluttuano sopra la corolla e una luce colorata che tinge l'erba intorno (iris viola dalle foglie a spada, papaveri magenta su rosette di foglie, gigli ciano dai petali ripiegati); stelle luminose, campanule e gigli crescono anche sotto i boschi.
 Sulle spiagge svettano palme scure in controluce, farfalle
 luminose svolazzano sui prati (a sciami di notte), pesci che brillano nuotano nell'acqua più profonda e stormi di uccelli,
-ogni volta diversi per numero e disposizione (a V, in fila, in diagonale, sparsi), volteggiano in cielo: tanti di giorno, arrivano da lontano al mattino e se ne vanno al calare della sera, e di sera e di notte se ne vede solo qualcuno.
+ogni volta diversi per numero e forma, mai regolari (V sbilenche con ritardatari, nuvole che si allungano e si stringono, gruppetti che si separano e si riuniscono, vortici), volteggiano in cielo: tanti di giorno, arrivano da lontano al mattino e se ne vanno al calare della sera, e di sera e di notte se ne vede solo qualcuno.
 
 Nel mondo si trovano piccoli cristalli luminosi da raccogliere, e puoi piazzarli dove vuoi: ognuno emette
 una luce viola che illumina il paesaggio attorno, con un alone nell'aria.
 
-I prati sono coperti di erba a chiazze di colore (verde acqua, viola, magenta, oro-lilla, azzurro) che ondeggia al vento e brilla in controluce; le rive e l'acqua bassa sono punteggiate di canneti di altezze diverse, dai ciuffi bassi alle canne altissime, con le spighe scure delle tife; in certe zone cresce alta fino alle cosce e, al centro, più alta del personaggio, e il paesaggio è punteggiato
+I prati sono coperti da un tappeto fitto di ciuffi d'erba (più fili da una base comune, aperti a ventaglio, raccolti in gruppetti, con ciuffi bassi che coprono il terreno tra quelli alti) a chiazze di colore (verde acqua, viola, magenta, oro-lilla, azzurro) che ondeggia al vento e brilla in controluce; le rive e l'acqua bassa sono punteggiate di canneti di altezze diverse, dai ciuffi bassi alle canne altissime, con le spighe scure delle tife; in certe zone cresce alta fino alle cosce e, al centro, più alta del personaggio, e il paesaggio è punteggiato
 di boschetti, ognuno di una sola specie, e alberi isolati in stile fiabesco: querce, cipressi, alberi dorati, turchesi, fioriti di lilla,
 ad ombrello, e alcuni con sfere luminose appese che si accendono di notte.
 
@@ -82,7 +82,7 @@ src/
     TerrainRenderer.cs    tessere del terreno con livelli di dettaglio, costruite in background
     TerrainShaders.cs     shader di terreno e oggetti: materiali, luce, ombre, luci, foschia
     ObjectRenderer.cs     modelli procedurali degli oggetti
-    GrassRenderer.cs      fili d'erba attorno al giocatore (instancing, costruiti in background)
+    GrassRenderer.cs      ciuffi d'erba attorno al giocatore (instancing, costruiti in background)
     TreeModels.cs         modelli procedurali degli alberi, 8 stili e 4 livelli di dettaglio
     TreeRenderer.cs       disegno degli alberi (instancing per stile e livello di dettaglio)
     SkyRenderer.cs        cielo, sole, luna, stelle, nuvole volumetriche

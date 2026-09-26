@@ -352,7 +352,8 @@ public static class TerrainShaders
         {
             vec3 root = aBase.xyz;
             float dist = distance(root.xz, uCameraPos.xz);
-            float keep = mix(1.0, 0.12, smoothstep(10.0, uGrassRadius, dist));
+            // The grass is dense: thin it out soon, the survivors growing wider to keep the ground covered.
+            float keep = mix(1.0, 0.07, smoothstep(8.0, uGrassRadius * 0.85, dist));
 
             vWorldPos = root;
             vNormal = vec3(0.0, 1.0, 0.0);
@@ -370,7 +371,7 @@ public static class TerrainShaders
             vec3 facing = vec3(cos(aShape.x), 0.0, sin(aShape.x));
             vec3 across = vec3(-facing.z, 0.0, facing.x);
             // Taller blades are also broader, so tall grass reads as thick stalks, not threads.
-            float width = 0.03 * (1.0 - t * 0.85) * min(inversesqrt(keep), 2.8) * clamp(aShape.y / 0.5, 1.0, 2.6);
+            float width = 0.03 * (1.0 - t * 0.85) * min(inversesqrt(keep), 3.2) * clamp(aShape.y / 0.5, 1.0, 2.6);
             vec3 lean = facing * (0.15 + aBase.w * 0.45) * height + windOffset(root, uTime) * 0.25 * height;
             vec3 pos = root + across * aBlade.x * width + vec3(0.0, height * t, 0.0) + lean * t * t;
 

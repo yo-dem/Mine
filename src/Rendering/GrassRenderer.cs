@@ -7,7 +7,8 @@ namespace Mine.Rendering;
 
 /// <summary>
 /// Grass blades around the camera, drawn with instancing. The ground is cut into 32 m tiles;
-/// each tile's blades are scattered on the thread pool (standing on the flat terrain tiles,
+/// each tile's blades are grouped in tufts (a few blades sharing one root and fanning out from
+/// it) scattered on the thread pool (standing on the flat terrain tiles,
 /// kept only where the ground is painted as grass, coloured like it) and uploaded as one
 /// instance buffer. Every blade is the same 7-vertex strip, shaped and swayed in the vertex
 /// shader, which also thins the blades out with distance.
@@ -16,11 +17,16 @@ public sealed unsafe class GrassRenderer : IDisposable
 {
     public const float Radius = 70f;
     private const float TileSize = 32f;
-    private const float BladesPerSquareMetre = 14f;
+    private const float BladesPerSquareMetre = 42f;
     // Every blade is at least this tall; the tallest reach MaxHeight on ordinary ground, and much
     // more in the tall grass meadows (see GroundMaterials.TallGrass).
-    private const float MinHeight = 0.45f;
-    private const float MaxHeight = 1.0f, ThighHeight = 1.25f, GiantHeight = 2.4f;
+    private const float MinHeight = 0.6f;
+    private const float MaxHeight = 1.45f, ThighHeight = 1.7f, GiantHeight = 2.6f;
+    // Blades per tuft, and tufts per clump (tufts crowd together, a hand's width apart).
+    private const int MinTuft = 3, MaxTuft = 9, MaxTuftsPerClump = 3;
+    private const float ClumpRadius = 0.3f;
+    // Short, spreading tufts that carpet the ground between the taller ones.
+    private const float CarpetMin = 0.25f, CarpetMax = 0.5f;
     private const int FloatsPerBlade = 11;
     private const int UploadsPerFrame = 4;
 
@@ -108,41 +114,72 @@ public sealed unsafe class GrassRenderer : IDisposable
         float S(int i, int j) => smooth[(j + 1) * n + (i + 1)];
 
         var random = new Random(tx * 73856093 ^ tz * 19349663);
-        // Tall meadows are denser: more attempts everywhere, most of them dropped on ordinary ground.
-        int count = (int)(TileSize * TileSize * BladesPerSquareMetre * 1.6f);
-        var blades = new List<float>(count * FloatsPerBlade);
+        // Tall meadows are a little denser: more attempts everywhere, some dropped on ordinary ground.
+        const float averageClump = 11f; // blades per clump on average: ~2 tufts of ~5.5 blades
+        int count = (int)(TileSize * TileSize * BladesPerSquareMetre * 1.6f / averageClump);
+        var blades = new List<float>((int)(count * averageClump * 0.7f) * FloatsPerBlade);
         for (int b = 0; b < count; b++)
         {
             float lx = random.NextSingle() * TileSize, lz = random.NextSingle() * TileSize;
             float tall = GroundMaterials.TallGrass(x0 + lx, z0 + lz);
-            if (random.NextSingle() > 0.6f + 0.4f * tall) continue;
+            if (random.NextSingle() > 0.9f + 0.1f * tall) continue;
             int i = (int)(lx / t), j = (int)(lz / t);
             float y = TerrainField.Layer(S(i, j));
             float gx = (S(i + 1, j) - S(i - 1, j)) / (2 * t), gz = (S(i, j + 1) - S(i, j - 1)) / (2 * t);
             float normalY = 1f / MathF.Sqrt(1 + gx * gx + gz * gz);
-            var root = new Vector3(x0 + lx, y - 0.02f, z0 + lz);
+            var center = new Vector3(x0 + lx, y - 0.02f, z0 + lz);
             const float water = TerrainField.WaterLevel; // shores and shallows hold reed clumps instead (TreeField)
             if (normalY < 0.6f || y < water + 1f) continue; // certainly rock, sand or water: skip early
-            float grass = GroundMaterials.GrassWeight(root, normalY);
+            float grass = GroundMaterials.GrassWeight(center, normalY);
             if (grass < 0.35f) continue;
-            var color = GroundMaterials.GrassColor(root.X, root.Z);
+            var color = GroundMaterials.GrassColor(center.X, center.Z);
             color = Vector3.Lerp(color, new Vector3(0.55f, 0.38f, 0.62f), tall * 0.4f); // meadows turn lilac-gold
 
-            blades.Add(root.X);
-            blades.Add(root.Y);
-            blades.Add(root.Z);
-            blades.Add(random.NextSingle());                        // bend
-            blades.Add(random.NextSingle() * MathF.Tau);            // facing
             float maxHeight = tall <= 0.5f
                 ? float.Lerp(MaxHeight, ThighHeight, tall * 2f)
                 : float.Lerp(ThighHeight, GiantHeight, (tall - 0.5f) * 2f);
-            float r = random.NextSingle();
-            blades.Add(MinHeight + (maxHeight - MinHeight) * (0.35f * r + 0.65f * r * r));
-            blades.Add(random.NextSingle());                        // thinning key
-            blades.Add(random.NextSingle() * random.NextSingle());  // colour variation
-            blades.Add(color.X);
-            blades.Add(color.Y);
-            blades.Add(color.Z);
+            // A clump: a few tufts crowded together, kept on this terrain tile's flat top (so none
+            // floats over or sinks under a neighbouring layer).
+            float tileX0 = (i0 + i) * t, tileZ0 = (j0 + j) * t;
+            int tufts = 1 + random.Next(MaxTuftsPerClump);
+            for (int q = 0; q < tufts; q++)
+            {
+                float a = random.NextSingle() * MathF.Tau, d = ClumpRadius * MathF.Sqrt(random.NextSingle());
+                var root = new Vector3(
+                    Math.Clamp(center.X + MathF.Cos(a) * d, tileX0 + 0.03f, tileX0 + t - 0.03f), center.Y,
+                    Math.Clamp(center.Z + MathF.Sin(a) * d, tileZ0 + 0.03f, tileZ0 + t - 0.03f));
+                // One tuft: its blades spring from (almost) the same root, fanned out all around it
+                // (each leans the way it faces) and share the thinning key, so a whole tuft thins out
+                // together. The middle blades stand tallest and straightest, the outer ones bow out.
+                // Some tufts are short and spreading, carpeting the ground (fewer in tall meadows).
+                bool carpet = random.NextSingle() < 0.25f * (1f - tall);
+                float size = random.NextSingle();
+                int bladeCount = Math.Min(MinTuft + (int)((MaxTuft - MinTuft + 1) * size), MaxTuft);
+                float r = random.NextSingle();
+                float tuftHeight = carpet
+                    ? CarpetMin + (CarpetMax - CarpetMin) * r
+                    : MinHeight + (maxHeight - MinHeight) * (0.6f * r + 0.4f * r * r);
+                float thinning = random.NextSingle();
+                float spin = random.NextSingle() * MathF.Tau;
+                for (int k = 0; k < bladeCount; k++)
+                {
+                    float facing = spin + (k + 0.4f * random.NextSingle()) * MathF.Tau / bladeCount;
+                    float outer = k / (float)(bladeCount - 1);
+                    var jitter = new Vector2(random.NextSingle() - 0.5f, random.NextSingle() - 0.5f) * 0.05f;
+                    float bend = carpet ? 0.5f + 0.5f * random.NextSingle() : 0.05f + 0.5f * outer + 0.15f * random.NextSingle();
+                    blades.Add(root.X + jitter.X);
+                    blades.Add(root.Y);
+                    blades.Add(root.Z + jitter.Y);
+                    blades.Add(bend);
+                    blades.Add(facing);
+                    blades.Add(tuftHeight * (1f - 0.4f * outer) * (0.85f + 0.3f * random.NextSingle()));
+                    blades.Add(thinning);                                   // thinning key
+                    blades.Add(random.NextSingle() * random.NextSingle());  // colour variation
+                    blades.Add(color.X);
+                    blades.Add(color.Y);
+                    blades.Add(color.Z);
+                }
+            }
         }
         return blades.ToArray();
     }
