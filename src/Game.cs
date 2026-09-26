@@ -41,6 +41,9 @@ public sealed class Game : IDisposable
     private IslandRenderer _islandRenderer = null!;
     private Ground _ground = null!;
     private PathField _paths = null!;
+    private Creatures _creatures = null!;
+    private CreatureRenderer _creatureRenderer = null!;
+    private Shader _creatureShader = null!;
     private CloudNoise _cloudNoise = null!;
     private MoteRenderer _motes = null!;
     private PostProcess _post = null!;
@@ -118,6 +121,9 @@ public sealed class Game : IDisposable
         _islandRenderer = new IslandRenderer(_gl);
         _paths = new PathField(_terrainField, seed: 1337);
         _ground = new Ground(_terrainField, _islands, _paths);
+        _creatures = new Creatures(_terrainField);
+        _creatureRenderer = new CreatureRenderer(_gl);
+        _creatureShader = new Shader(_gl, TerrainShaders.CreatureVertex, TerrainShaders.CreatureFragment);
         _cloudNoise = new CloudNoise(_gl);
         _motes = new MoteRenderer(_gl);
         _post = new PostProcess(_gl);
@@ -179,6 +185,8 @@ public sealed class Game : IDisposable
         _trees.Update(_treeField, _player.Eye);
         _grass.Update(_player.Eye);
         _objects.Update(_player.Position);
+        _creatures.Update(_player.Position, dt);
+        _creatureRenderer.Update(_creatures);
         _aimed = _mouseCaptured ? _objects.Pick(_player.Eye, _player.LookDirection, ReachDistance, out _) : null;
         UpdateTitle(deltaTime);
     }
@@ -244,7 +252,12 @@ public sealed class Game : IDisposable
             _objectRenderer.Draw(obj.Kind);
         }
 
+        // Butterflies, birds and fish (fish before the water, which then refracts them).
+        SetWorldUniforms(_creatureShader, view * projection, eye, atmosphere, time);
+        _creatureRenderer.Draw(_creatureShader);
+
         // Floating islands use the object shader, their vertices already in world space.
+        _objectShader.Use();
         _objectShader.Set("uModel", Matrix4x4.Identity);
         _objectShader.Set("uGlow", 1f + 0.15f * MathF.Sin(time * 1.3f));
         _objectShader.Set("uHighlight", 0f);
@@ -446,6 +459,8 @@ public sealed class Game : IDisposable
         _motes?.Dispose();
         _post?.Dispose();
         _waterShader?.Dispose();
+        _creatureShader?.Dispose();
+        _creatureRenderer?.Dispose();
         _water?.Dispose();
         _crosshair?.Dispose();
         _sky?.Dispose();

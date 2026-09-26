@@ -50,6 +50,7 @@ public static class TreeModels
         ShoreRock,
         CrystalStone,
         WisteriaArch,
+        Palm,
     }
 
     public static int TreeStyleCount => Styles.Length;
@@ -65,6 +66,7 @@ public static class TreeModels
         Decoration.Lotus => 160f,
         Decoration.GlowBells => 140f,
         Decoration.CrystalStone => 450f,
+        Decoration.Palm => float.MaxValue,
         _ => 700f,
     };
 
@@ -86,6 +88,7 @@ public static class TreeModels
     {
         Decoration.VioletCrystals or Decoration.CyanCrystals => 0.7f,
         Decoration.ShoreRock => 1.1f,
+        Decoration.Palm => 0.24f,
         _ => 0f, // flowers do not block the way
     };
 
@@ -391,6 +394,63 @@ public static class TreeModels
                 }
                 break;
             }
+            case Decoration.Palm:
+            {
+                // A tall, slender trunk curving toward the water, crowned with long arching fronds:
+                // a dark silhouette against the glowing sky, as on a tropical shore at dusk.
+                float lean = 0.9f + 0.6f * random.NextSingle();
+                int rings = lod >= 2 ? 5 : 9;
+                var trunk = new Vector3[rings + 1];
+                for (int i = 0; i <= rings; i++)
+                {
+                    float t = i / (float)rings;
+                    trunk[i] = new Vector3(lean * t * t * 2.2f, t * 8.5f, 0.3f * MathF.Sin(t * 2.5f));
+                }
+                var bark = new Vector3(0.10f, 0.07f, 0.13f);
+                for (int i = 0; i < rings; i++)
+                {
+                    float t0 = i / (float)rings, t1 = (i + 1) / (float)rings;
+                    Cylinder(mesh, new Segment(trunk[i], trunk[i + 1], 0.24f * (1 - 0.35f * t0), 0.24f * (1 - 0.35f * t1),
+                        t0 * t0 * 0.6f, t1 * t1 * 0.6f), lod >= 2 ? 4 : 6, bark * (0.8f + 0.25f * t1));
+                }
+
+                var top = trunk[rings];
+                int fronds = lod >= 2 ? 7 : 10;
+                int steps = lod >= 2 ? 4 : 7;
+                for (int f = 0; f < fronds; f++)
+                {
+                    float a = f * MathF.Tau / fronds + random.NextSingle() * 0.4f;
+                    var outward = new Vector3(MathF.Cos(a), 0, MathF.Sin(a));
+                    var across = new Vector3(-outward.Z, 0, outward.X);
+                    float length = 2.8f + 1.2f * random.NextSingle();
+                    float rise = 0.6f + 0.5f * random.NextSingle();
+                    var leaf = Vector3.Lerp(new Vector3(0.06f, 0.10f, 0.14f), new Vector3(0.12f, 0.16f, 0.26f), random.NextSingle());
+                    Vector3 Point(float t) => top + outward * length * t + new Vector3(0, rise * MathF.Sin(t * 2.2f) - 1.9f * t * t, 0);
+                    for (int s = 0; s < steps; s++)
+                    {
+                        float t0 = s / (float)steps, t1 = (s + 1) / (float)steps;
+                        float w0 = 0.55f * MathF.Sin(MathF.PI * MathF.Max(t0, 0.08f)), w1 = 0.55f * MathF.Sin(MathF.PI * t1);
+                        var p0 = Point(t0); var p1 = Point(t1);
+                        // Leaflets droop on both sides of the rib, so the frond is a shallow V.
+                        var l0 = p0 + across * w0 - new Vector3(0, w0 * 0.35f, 0);
+                        var r0 = p0 - across * w0 - new Vector3(0, w0 * 0.35f, 0);
+                        var l1 = p1 + across * w1 - new Vector3(0, w1 * 0.35f, 0);
+                        var r1 = p1 - across * w1 - new Vector3(0, w1 * 0.35f, 0);
+                        var n = Vector3.UnitY;
+                        var c = leaf * (0.8f + 0.4f * t1);
+                        // Both windings, so the fronds are seen from above and below.
+                        Vertex(mesh, p0, n, c, 0, 1); Vertex(mesh, l0, n, c, 0, 1); Vertex(mesh, l1, n, c, 0, 1);
+                        Vertex(mesh, p0, n, c, 0, 1); Vertex(mesh, l1, n, c, 0, 1); Vertex(mesh, p1, n, c, 0, 1);
+                        Vertex(mesh, p0, n, c, 0, 1); Vertex(mesh, r1, n, c, 0, 1); Vertex(mesh, r0, n, c, 0, 1);
+                        Vertex(mesh, p0, n, c, 0, 1); Vertex(mesh, p1, n, c, 0, 1); Vertex(mesh, r1, n, c, 0, 1);
+                        Vertex(mesh, p0, -n, c, 0, 1); Vertex(mesh, l1, -n, c, 0, 1); Vertex(mesh, l0, -n, c, 0, 1);
+                        Vertex(mesh, p0, -n, c, 0, 1); Vertex(mesh, p1, -n, c, 0, 1); Vertex(mesh, l1, -n, c, 0, 1);
+                        Vertex(mesh, p0, -n, c, 0, 1); Vertex(mesh, r0, -n, c, 0, 1); Vertex(mesh, r1, -n, c, 0, 1);
+                        Vertex(mesh, p0, -n, c, 0, 1); Vertex(mesh, r1, -n, c, 0, 1); Vertex(mesh, p1, -n, c, 0, 1);
+                    }
+                }
+                break;
+            }
             case Decoration.ShoreRock:
             {
                 Rock(mesh, Vector3.Zero, new Vector3(1.4f, 0.9f, 1.1f), new Vector3(0.12f, 0.09f, 0.18f), lod, 5.3f);
@@ -399,7 +459,7 @@ public static class TreeModels
                     float a = random.NextSingle() * MathF.Tau;
                     var foot = new Vector3(MathF.Cos(a) * 0.9f, 0.5f, MathF.Sin(a) * 0.6f);
                     var dir = Vector3.Normalize(new Vector3(MathF.Cos(a), 0.9f, MathF.Sin(a)));
-                    Prism(mesh, foot, dir, 0.5f + 0.4f * random.NextSingle(), 0.1f, new Vector3(0.55f, 0.45f, 1.0f), 5);
+                    Prism(mesh, foot, dir, 0.5f + 0.4f * random.NextSingle(), 0.1f, new Vector3(0.28f, 0.22f, 0.55f), 5);
                 }
                 break;
             }

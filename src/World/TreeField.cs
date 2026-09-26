@@ -194,10 +194,13 @@ public sealed class TreeField
             }
             else if (y >= water - 1f && y < water + 4f)
             {
-                // The shore: crystal clusters and dark rocks.
-                if (roll < 0.035f)
+                // The shore: palms, crystal clusters and dark rocks.
+                if (roll < 0.03f && y > water + 0.8f)
+                    list.Add(new TreeInstance(new Vector3(x, y - 0.2f, z), yaw, 0.8f + 0.5f * random.NextSingle(),
+                        TreeModels.VariantOf(TreeModels.Decoration.Palm)));
+                else if (roll < 0.065f)
                     list.Add(new TreeInstance(new Vector3(x, y - 0.3f, z), yaw, 0.7f + 1.5f * random.NextSingle(), crystals));
-                else if (roll < 0.08f)
+                else if (roll < 0.11f)
                     list.Add(new TreeInstance(new Vector3(x, y - 0.4f, z), yaw, 0.8f + 1.7f * random.NextSingle(),
                         TreeModels.VariantOf(TreeModels.Decoration.ShoreRock)));
             }

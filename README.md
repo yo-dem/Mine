@@ -16,7 +16,9 @@ e sulla superficie brillano scintille come stelle cadute. Nell'acqua si cammina 
 Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno, tra scogli
 scuri; nell'acqua bassa galleggiano fiori di loto luminosi e sui prati spuntano campanule che brillano.
 Sentieri di pietre di cristallo attraversano mari e laghi sotto archi di glicine luminoso: si possono
-percorrere a piedi da una riva all'altra.
+percorrere a piedi da una riva all'altra. Sulle spiagge svettano palme scure in controluce, farfalle
+luminose svolazzano sui prati, pesci che brillano nuotano nell'acqua bassa e stormi di uccelli
+volteggiano in cielo, sagome scure al crepuscolo e luminosi di notte.
 
 Nel mondo si trovano cristalli e lanterne da raccogliere, e puoi piazzare lanterne, torce e cristalli
 dove vuoi: ognuno emette una luce colorata che illumina il paesaggio attorno, con un alone nell'aria.
@@ -76,6 +78,7 @@ src/
     IslandField.cs        isole fluttuanti: dove sono, forma, alberi in cima
     Ground.cs             dove si può camminare: terreno, cime delle isole, pietre dei sentieri
     PathField.cs          sentieri di pietre di cristallo e archi di glicine sull'acqua
+    Creatures.cs          farfalle, pesci e stormi di uccelli (simulazione)
     TreeField.cs          dove crescono gli alberi (boschi, alberi isolati), collisione con i tronchi
     GroundMaterials.cs    colore e copertura dell'erba (copia in C# delle funzioni dello shader)
   Rendering/
@@ -90,6 +93,7 @@ src/
     PostProcess.cs        buffer HDR, bloom, raggi di luce, color grading
     MoteRenderer.cs       particelle magiche: granelli, spore, lucciole
     WaterRenderer.cs      mari e laghi (lo shader è in TerrainShaders)
+    CreatureRenderer.cs   modelli e animazione delle creature
     IslandRenderer.cs     modelli delle isole fluttuanti
     MeshBuilder.cs        costruzione di modelli (oggetti, isole)
     ShadowMap.cs          mappa delle ombre vista dal sole

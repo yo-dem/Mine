@@ -551,6 +551,86 @@ public static class TerrainShaders
         }
         """;
 
+    // ---- Creatures -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Butterflies (kind 0) flap both wings up together, birds (1) beat them up and down, fish (2)
+    /// swing their tail. Butterflies and fish glow in a hue picked by their phase; birds are dark
+    /// silhouettes by day that light up pale blue at night.
+    /// </summary>
+    public const string CreatureVertex = """
+        #version 330 core
+        layout(location = 0) in vec3 aPos;
+        layout(location = 1) in vec3 aColor;
+        layout(location = 2) in float aEmissive;
+        layout(location = 3) in float aAnim;
+        layout(location = 4) in vec4 aInstance; // position, heading
+        layout(location = 5) in vec2 aExtra;    // scale, phase
+
+        uniform mat4 uViewProj;
+        uniform float uTime;
+        uniform float uNight;
+        uniform int uKind;
+
+        out vec3 vWorldPos;
+        out vec3 vColor;
+        out float vEmissive;
+
+        void main()
+        {
+            vec3 p = aPos;
+            float t = uTime + aExtra.y;
+            if (uKind == 0 && aAnim != 0.0)
+            {
+                float fold = 0.15 + 1.15 * abs(sin(t * 13.0));
+                p = vec3(p.x, abs(p.z) * sin(fold), p.z * cos(fold));
+            }
+            else if (uKind == 1 && aAnim != 0.0)
+            {
+                float beat = sin(t * 4.5) * 0.6 + 0.1;
+                p = vec3(p.x, abs(p.z) * sin(beat), p.z * cos(beat));
+            }
+            else if (uKind == 2)
+            {
+                p.z += sin(t * 9.0 - p.x * 9.0) * 0.08 * aAnim;
+            }
+
+            float c = cos(aInstance.w), s = sin(aInstance.w);
+            p *= aExtra.x;
+            vec3 world = aInstance.xyz + vec3(c * p.x - s * p.z, p.y, s * p.x + c * p.z);
+
+            vec3 hue = mix(vec3(0.35, 0.9, 1.0), vec3(0.95, 0.5, 1.0), fract(aExtra.y * 0.37));
+            if (uKind == 1)
+            {
+                vColor = mix(vec3(0.06, 0.04, 0.12), vec3(0.55, 0.75, 1.0), uNight);
+                vEmissive = aEmissive * uNight;
+            }
+            else
+            {
+                vColor = aColor * hue;
+                vEmissive = aEmissive;
+            }
+            vWorldPos = world;
+            gl_Position = uViewProj * vec4(world, 1.0);
+        }
+        """;
+
+    public const string CreatureFragment = FragmentHeader + """
+
+        in vec3 vWorldPos;
+        in vec3 vColor;
+        in float vEmissive;
+
+        out vec4 FragColor;
+
+        void main()
+        {
+            vec3 color = litColor(vColor, vWorldPos, vec3(0.0, 1.0, 0.0), 0.8);
+            color = mix(color, vColor * mix(1.4, 2.4, uNight), vEmissive);
+            FragColor = finishColor(color, vWorldPos, 1.0 - 0.6 * vEmissive);
+        }
+        """;
+
     // ---- Objects -------------------------------------------------------------------------
 
     public const string ObjectVertex = """
