@@ -27,6 +27,8 @@ public sealed unsafe class ChunkMesh : IDisposable
         gl.EnableVertexAttribArray(1);
         gl.VertexAttribPointer(2, 1, VertexAttribPointerType.Float, false, stride, (void*)(5 * sizeof(float)));
         gl.EnableVertexAttribArray(2);
+        gl.VertexAttribPointer(3, 3, VertexAttribPointerType.Float, false, stride, (void*)(6 * sizeof(float)));
+        gl.EnableVertexAttribArray(3);
 
         gl.BindVertexArray(0);
     }

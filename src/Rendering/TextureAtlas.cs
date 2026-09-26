@@ -7,6 +7,9 @@ namespace Mine.Rendering;
 /// A 4x4 grid of 16px block textures, generated procedurally at startup
 /// so the game needs no image files. The alpha channel is not transparency
 /// but a glow mask: 1 marks texels that emit light (see the terrain shader).
+/// Blocks are half a block tall, so side faces only ever show the upper half of a
+/// tile (rows 0..7): every patterned tile repeats every 8 rows, making that half a
+/// complete design on its own, and top faces show the pattern twice.
 /// </summary>
 public sealed unsafe class TextureAtlas : IDisposable
 {
@@ -106,7 +109,7 @@ public sealed unsafe class TextureAtlas : IDisposable
             }
             case Tile.Cobblestone:
             {
-                int row = py / 4;
+                int row = py / 4 % 2;
                 bool mortar = py % 4 == 0 || (px + row * 2) % 5 == 0;
                 float stone = Noise((px + row * 2) / 5, row, 42);
                 return Tint(128, 128, 128, mortar ? 0.55f : 0.75f + 0.35f * stone);
@@ -141,20 +144,21 @@ public sealed unsafe class TextureAtlas : IDisposable
     private static float? CrystalFacet(int px, int py)
     {
         int a = px + py, b = px - py + 16;
-        if (a % 8 == 0 || b % 10 == 0) return null;
-        return 0.55f + 0.45f * Noise(a / 8, b / 10, 3);
+        if (a % 8 == 0 || b % 8 == 0) return null;
+        return 0.55f + 0.45f * Noise(a / 8, b / 8, 3);
     }
 
     private static bool IsMushroomSpot(int px, int py)
     {
-        int cx = px / 5, cy = py / 5;
+        int cx = px / 4, cy = py % 8 / 4;
         if (Noise(cx, cy, 7) < 0.35f) return false;
-        float dx = px % 5 - 2, dy = py % 5 - 2;
-        return dx * dx + dy * dy <= 2.5f;
+        float dx = px % 4 - 1.5f, dy = py % 4 - 1.5f;
+        return dx * dx + dy * dy <= 1.6f;
     }
 
+    // Two panes per half block: bars on the tile edges and down the middle.
     private static bool IsLanternFrame(int px, int py) =>
-        px is 0 or 1 or 14 or 15 || py is 0 or 1 or 14 or 15 || px is 7 or 8;
+        px is 0 or 1 or 7 or 8 or 14 or 15 || py % 8 is 0 or 1 or 6 or 7;
 
     /// <summary>Deterministic pseudo-random value in [0, 1).</summary>
     private static float Noise(int x, int y, int seed)

@@ -16,17 +16,20 @@ public sealed class Game : IDisposable
         layout(location = 0) in vec3 aPos;
         layout(location = 1) in vec2 aUv;
         layout(location = 2) in float aLight;
+        layout(location = 3) in vec3 aBlockLight;
 
         uniform mat4 uViewProj;
 
         out vec2 vUv;
         out float vLight;
+        out vec3 vBlockLight;
         out vec3 vWorldPos;
 
         void main()
         {
             vUv = aUv;
             vLight = aLight;
+            vBlockLight = aBlockLight;
             vWorldPos = aPos;
             gl_Position = uViewProj * vec4(aPos, 1.0);
         }
@@ -36,6 +39,7 @@ public sealed class Game : IDisposable
 
         in vec2 vUv;
         in float vLight; // ambient occlusion
+        in vec3 vBlockLight; // coloured light from glowing blocks, 0..1 per channel
         in vec3 vWorldPos;
 
         uniform sampler2D uAtlas; // alpha = glow mask
@@ -49,6 +53,7 @@ public sealed class Game : IDisposable
         uniform float uShadowBias;
         uniform float uFogStart;
         uniform float uFogEnd;
+        uniform float uMistDensity; // soft aerial haze, per block of distance
 
         out vec4 FragColor;
 
@@ -68,6 +73,26 @@ public sealed class Game : IDisposable
             return mix(sum / 9.0, 1.0, smoothstep(0.85, 1.0, border));
         }
 
+        float valueNoise3(vec3 p)
+        {
+            vec3 i = floor(p), f = fract(p);
+            vec3 u = f * f * (3.0 - 2.0 * f);
+            float a = mix(hash13(i), hash13(i + vec3(1, 0, 0)), u.x);
+            float b = mix(hash13(i + vec3(0, 1, 0)), hash13(i + vec3(1, 1, 0)), u.x);
+            float c = mix(hash13(i + vec3(0, 0, 1)), hash13(i + vec3(1, 0, 1)), u.x);
+            float d = mix(hash13(i + vec3(0, 1, 1)), hash13(i + vec3(1, 1, 1)), u.x);
+            return mix(mix(a, b, u.y), mix(c, d, u.y), u.z);
+        }
+
+        // Gentle aerial haze: grows slowly with distance to soften contrast, never a wall.
+        // A faint, slowly drifting variation keeps the air from looking flat.
+        float mist(vec3 ro, vec3 rd, float dist)
+        {
+            vec3 p = ro + rd * dist * 0.5;
+            float drift = 0.85 + 0.3 * valueNoise3(p * 0.05 + vec3(uTime * 0.03, 0.0, uTime * 0.02));
+            return 1.0 - exp(-uMistDensity * dist * drift);
+        }
+
         void main()
         {
             // Faces are flat, so screen-space derivatives give the exact normal.
@@ -83,7 +108,10 @@ public sealed class Game : IDisposable
             vec3 ambient = mix(uAmbient, skyLight, 0.35) * (0.95 + 0.05 * n.y);
             // Ambient occlusion only darkens the light coming from the sky: applying it to
             // direct sunlight too would smear triangle-shaped gradients over sunlit faces.
-            vec3 light = ambient * vLight + uLightColor * diffuse * shadow(n);
+            // Block light: a steep curve so it pools around the source and fades out gently.
+            // Weaker in daylight, where the sun would drown it out anyway.
+            vec3 blockLight = pow(vBlockLight, vec3(2.6)) * 1.5 * mix(0.35, 1.0, uNight);
+            vec3 light = (ambient + blockLight) * vLight + uLightColor * diffuse * shadow(n);
             vec3 color = tex.rgb * light;
 
             float glow = tex.a;
@@ -97,9 +125,24 @@ public sealed class Game : IDisposable
 
             vec3 toFragment = vWorldPos - uCameraPos;
             float dist = length(toFragment);
-            // Hazy hours also lay a thin coloured veil over nearby blocks.
-            float fog = max(clamp((dist - uFogStart) / (uFogEnd - uFogStart), 0.0, 1.0), uHaze * 0.12) * (1.0 - 0.7 * glow);
-            FragColor = vec4(toneMap(mix(color, skyColor(toFragment / dist, false), fog)), 1.0);
+            vec3 rd = toFragment / dist;
+            vec3 sky = skyColor(rd, false);
+            float cutThrough = 1.0 - 0.7 * glow; // glowing blocks shine through the air
+
+            // Soft haze: tints distant things with the hue of the air (golden at dawn, blue at
+            // night) and flattens their contrast, but keeps their brightness, so dark trees
+            // far away stay dark instead of turning white.
+            const vec3 luma = vec3(0.3, 0.59, 0.11);
+            vec3 airHue = sky / max(dot(sky, luma), 1e-3);
+            float brightness = dot(color, luma);
+            vec3 tinted = airHue * brightness;
+            vec3 hazeTarget = mix(tinted, vec3(brightness), 0.4);
+            color = mix(color, hazeTarget, mist(uCameraPos, rd, dist) * cutThrough);
+
+            // Edge fog: only the last stretch before the end of the loaded world fades into
+            // the sky, to hide where the terrain stops.
+            float edge = smoothstep(uFogStart, uFogEnd, dist) * cutThrough;
+            FragColor = vec4(toneMap(mix(color, sky, edge)), 1.0);
         }
         """;
 
@@ -182,8 +225,7 @@ public sealed class Game : IDisposable
 
     private void Respawn()
     {
-        int surface = _world.GetSurfaceY(0, 0);
-        _player.Position = new Vector3(0.5f, surface + 1, 0.5f);
+        _player.Position = new Vector3(0.5f, _world.GetSurfaceHeight(0, 0), 0.5f);
         _player.Velocity = Vector3.Zero;
     }
 
@@ -248,8 +290,9 @@ public sealed class Game : IDisposable
         _shader.Set("uAmbient", atmosphere.Ambient);
         _shader.Set("uLightColor", atmosphere.LightColor);
         _shader.Set("uLightDir", atmosphere.LightDirection);
-        _shader.Set("uFogStart", fogEnd * float.Lerp(0.6f, 0.25f, atmosphere.Haze)); // haze thickens the air
+        _shader.Set("uFogStart", fogEnd * 0.75f); // only the last stretch, to hide the world's edge
         _shader.Set("uFogEnd", fogEnd);
+        _shader.Set("uMistDensity", float.Lerp(0.006f, 0.012f, atmosphere.Haze)); // a bit more at dawn and dusk
         _shader.Set("uAtlas", 0);
         _atlas.Bind(0);
         _shader.Set("uShadowMap", 1);
@@ -314,17 +357,21 @@ public sealed class Game : IDisposable
             return;
         }
 
-        if (!_world.Raycast(_player.Eye, _player.LookDirection, ReachDistance, out var hit, out var before))
+        if (!_world.Raycast(_player.Eye, _player.LookDirection, ReachDistance, out var hit))
             return;
 
         if (button == MouseButton.Left)
-        {
-            _world.SetBlock(hit, BlockType.Air);
-        }
-        else if (button == MouseButton.Right && !_player.Intersects(before))
-        {
-            _world.SetBlock(before, Blocks.Hotbar[_selectedSlot]);
-        }
+            _world.SetBlock(hit.Block, BlockType.Air);
+        else if (button == MouseButton.Right)
+            PlaceBlock(hit);
+    }
+
+    /// <summary>Places the selected half block in the cell in front of the face hit.</summary>
+    private void PlaceBlock(RayHit hit)
+    {
+        var target = hit.Adjacent;
+        if (_world.GetBlock(target.X, target.Y, target.Z) == BlockType.Air && !_player.Intersects(target))
+            _world.SetBlock(target, Blocks.Hotbar[_selectedSlot]);
     }
 
     private void OnScroll(IMouse mouse, ScrollWheel wheel)

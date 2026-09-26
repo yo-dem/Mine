@@ -1,6 +1,9 @@
 namespace Mine.World;
 
-/// <summary>Fills chunks with terrain: rolling hills, beaches and trees.</summary>
+/// <summary>
+/// Fills chunks with terrain: rolling hills, beaches and trees. Everything is in half-block
+/// cells, so the ground height has half-block resolution.
+/// </summary>
 public sealed class TerrainGenerator
 {
     private const int SeaLevel = 40;
@@ -16,31 +19,33 @@ public sealed class TerrainGenerator
         _detail = new PerlinNoise(seed + 1);
     }
 
-    public int GetHeight(int worldX, int worldZ)
+    /// <summary>Topmost solid cell of a column.</summary>
+    public int GetSurface(int worldX, int worldZ)
     {
         float hills = _height.Fractal(worldX * 0.006f, worldZ * 0.006f, 5);
         float bumps = _detail.Fractal(worldX * 0.03f, worldZ * 0.03f, 3);
-        int h = (int)(SeaLevel + 4 + hills * 28 + bumps * 3);
-        return Math.Clamp(h, 1, Chunk.Height - 10);
+        float surface = SeaLevel + 5 + hills * 28 + bumps * 3; // world height of the ground
+        return Math.Clamp(Chunk.CellY(surface) - 1, 1, Chunk.Height - 24);
     }
 
     public void Generate(Chunk chunk)
     {
         int baseX = chunk.ChunkX * Chunk.Size;
         int baseZ = chunk.ChunkZ * Chunk.Size;
+        const int seaCell = SeaLevel * 2;
 
         for (int z = 0; z < Chunk.Size; z++)
         for (int x = 0; x < Chunk.Size; x++)
         {
-            int height = GetHeight(baseX + x, baseZ + z);
-            bool beach = height <= SeaLevel + 1;
+            int surface = GetSurface(baseX + x, baseZ + z);
+            bool beach = surface <= seaCell + 3;
 
-            for (int y = 0; y <= height; y++)
+            for (int y = 0; y <= surface; y++)
             {
                 BlockType block;
-                if (y < height - 3) block = BlockType.Stone;
+                if (y < surface - 7) block = BlockType.Stone; // 4 blocks of soil over the rock
                 else if (beach) block = BlockType.Sand;
-                else if (y < height) block = BlockType.Dirt;
+                else if (y < surface) block = BlockType.Dirt;
                 else block = BlockType.Grass;
                 chunk.Set(x, y, z, block);
             }
@@ -58,19 +63,20 @@ public sealed class TerrainGenerator
         {
             if (Hash(baseX + x, baseZ + z) % 97 != 0) continue;
 
-            int ground = GetHeight(baseX + x, baseZ + z);
+            int ground = GetSurface(baseX + x, baseZ + z);
             if (chunk.Get(x, ground, z) != BlockType.Grass) continue;
 
-            int trunk = 4 + (int)(Hash(baseX + x + 7, baseZ + z - 3) % 3);
+            // Trunk of 8..12 cells (4 to 6 blocks); the crown is built around its top cell.
+            int trunk = 8 + (int)(Hash(baseX + x + 7, baseZ + z - 3) % 5);
             int top = ground + trunk;
-            if (top + 2 >= Chunk.Height) continue;
+            if (top + 3 >= Chunk.Height) continue;
 
             for (int y = ground + 1; y <= top; y++)
                 chunk.Set(x, y, z, BlockType.Log);
 
-            for (int ly = top - 2; ly <= top + 1; ly++)
+            for (int ly = top - 5; ly <= top + 2; ly++)
             {
-                int radius = ly >= top ? 1 : 2;
+                int radius = ly >= top - 1 ? 1 : 2;
                 for (int lz = -radius; lz <= radius; lz++)
                 for (int lx = -radius; lx <= radius; lx++)
                 {

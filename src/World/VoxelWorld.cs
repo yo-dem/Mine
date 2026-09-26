@@ -6,9 +6,10 @@ namespace Mine.World;
 
 /// <summary>
 /// Owns the loaded chunks: streams them in and out around the player,
-/// rebuilds their meshes and answers block queries.
+/// rebuilds their meshes and answers block queries. Block coordinates are cells:
+/// x and z in blocks, y in half blocks (see <see cref="Chunk.CellHeight"/>).
 /// </summary>
-public sealed class VoxelWorld : IDisposable
+public sealed partial class VoxelWorld : IDisposable
 {
     public const int RenderDistance = 8; // in chunks
 
@@ -23,6 +24,10 @@ public sealed class VoxelWorld : IDisposable
     private readonly List<(int X, int Z)> _toUnload = new();
     private readonly HashSet<Chunk> _edited = new();
     private readonly Chunk?[] _neighbours = new Chunk?[9];
+
+    // Every block the player changed, per chunk (key: local cell index), kept apart from the
+    // chunks themselves: unloaded chunks are regenerated from the seed, then these are replayed.
+    private readonly Dictionary<(int X, int Z), Dictionary<int, BlockType>> _edits = new();
 
     public VoxelWorld(GL gl, int seed)
     {
@@ -52,6 +57,9 @@ public sealed class VoxelWorld : IDisposable
 
         int lx = pos.X & (Chunk.Size - 1), lz = pos.Z & (Chunk.Size - 1);
         chunk.Set(lx, pos.Y, lz, block);
+        if (!_edits.TryGetValue((cx, cz), out var edits))
+            _edits[(cx, cz)] = edits = new Dictionary<int, BlockType>();
+        edits[EditKey(lx, pos.Y, lz)] = block;
         MarkEdited(chunk);
 
         // A block on the border also changes the faces (and AO) of the neighbour.
@@ -59,6 +67,10 @@ public sealed class VoxelWorld : IDisposable
         if (lx == Chunk.Size - 1) MarkEdited(GetChunk(cx + 1, cz));
         if (lz == 0) MarkEdited(GetChunk(cx, cz - 1));
         if (lz == Chunk.Size - 1) MarkEdited(GetChunk(cx, cz + 1));
+
+        // Placing or removing anything can open, block, add or remove light.
+        foreach (var relit in Relight(pos))
+            MarkEdited(relit);
 
         foreach (var edited in _edited)
             if (edited.Mesh is not null) BuildMesh(edited);
@@ -73,13 +85,16 @@ public sealed class VoxelWorld : IDisposable
         _edited.Add(chunk);
     }
 
-    /// <summary>Generates the chunk containing a world column right away (used for spawning).</summary>
-    public int GetSurfaceY(int x, int z)
+    /// <summary>
+    /// World height of the ground in a column, generating its chunk right away if needed
+    /// (used for spawning).
+    /// </summary>
+    public float GetSurfaceHeight(int x, int z)
     {
         int cx = x >> Chunk.SizeShift, cz = z >> Chunk.SizeShift;
         if (GetChunk(cx, cz) is null) LoadChunk(cx, cz);
         for (int y = Chunk.Height - 1; y >= 0; y--)
-            if (Blocks.IsSolid(GetBlock(x, y, z))) return y;
+            if (Blocks.IsSolid(GetBlock(x, y, z))) return (y + 1) * Chunk.CellHeight;
         return 0;
     }
 
@@ -137,7 +152,17 @@ public sealed class VoxelWorld : IDisposable
         var chunk = new Chunk(cx, cz);
         _generator.Generate(chunk);
         _chunks[(cx, cz)] = chunk;
+
+        if (_edits.TryGetValue((cx, cz), out var edits))
+            foreach (var (key, block) in edits)
+                chunk.Set(key & (Chunk.Size - 1), key >> (2 * Chunk.SizeShift), (key >> Chunk.SizeShift) & (Chunk.Size - 1), block);
+
+        LightNewChunk(chunk);
+        foreach (var relit in _relit)
+            relit.Dirty = true;
     }
+
+    private static int EditKey(int x, int y, int z) => (y << (2 * Chunk.SizeShift)) | (z << Chunk.SizeShift) | x;
 
     private void BuildMesh(Chunk chunk)
     {
@@ -152,36 +177,39 @@ public sealed class VoxelWorld : IDisposable
     }
 
     /// <summary>
-    /// Walks the voxel grid along a ray (Amanatides &amp; Woo DDA).
-    /// Returns the first solid block hit and the empty cell right before it.
+    /// Walks the cell grid along a ray (Amanatides &amp; Woo DDA) and returns the first solid cell hit.
+    /// The walk happens in cell space, where y is scaled by 1 / CellHeight so cells are unit cubes;
+    /// the ray parameter t is the same in both spaces.
     /// </summary>
-    public bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out BlockPos hit, out BlockPos before)
+    public bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out RayHit hit)
     {
-        int x = (int)MathF.Floor(origin.X), y = (int)MathF.Floor(origin.Y), z = (int)MathF.Floor(origin.Z);
-        int stepX = Math.Sign(direction.X), stepY = Math.Sign(direction.Y), stepZ = Math.Sign(direction.Z);
+        var o = new Vector3(origin.X, origin.Y / Chunk.CellHeight, origin.Z);
+        var d = new Vector3(direction.X, direction.Y / Chunk.CellHeight, direction.Z);
 
-        float tDeltaX = stepX != 0 ? MathF.Abs(1f / direction.X) : float.PositiveInfinity;
-        float tDeltaY = stepY != 0 ? MathF.Abs(1f / direction.Y) : float.PositiveInfinity;
-        float tDeltaZ = stepZ != 0 ? MathF.Abs(1f / direction.Z) : float.PositiveInfinity;
+        int x = (int)MathF.Floor(o.X), y = (int)MathF.Floor(o.Y), z = (int)MathF.Floor(o.Z);
+        int stepX = Math.Sign(d.X), stepY = Math.Sign(d.Y), stepZ = Math.Sign(d.Z);
 
-        float tMaxX = stepX > 0 ? (x + 1 - origin.X) * tDeltaX : stepX < 0 ? (origin.X - x) * tDeltaX : float.PositiveInfinity;
-        float tMaxY = stepY > 0 ? (y + 1 - origin.Y) * tDeltaY : stepY < 0 ? (origin.Y - y) * tDeltaY : float.PositiveInfinity;
-        float tMaxZ = stepZ > 0 ? (z + 1 - origin.Z) * tDeltaZ : stepZ < 0 ? (origin.Z - z) * tDeltaZ : float.PositiveInfinity;
+        float tDeltaX = stepX != 0 ? MathF.Abs(1f / d.X) : float.PositiveInfinity;
+        float tDeltaY = stepY != 0 ? MathF.Abs(1f / d.Y) : float.PositiveInfinity;
+        float tDeltaZ = stepZ != 0 ? MathF.Abs(1f / d.Z) : float.PositiveInfinity;
 
-        before = new BlockPos(x, y, z);
+        float tMaxX = stepX > 0 ? (x + 1 - o.X) * tDeltaX : stepX < 0 ? (o.X - x) * tDeltaX : float.PositiveInfinity;
+        float tMaxY = stepY > 0 ? (y + 1 - o.Y) * tDeltaY : stepY < 0 ? (o.Y - y) * tDeltaY : float.PositiveInfinity;
+        float tMaxZ = stepZ > 0 ? (z + 1 - o.Z) * tDeltaZ : stepZ < 0 ? (o.Z - z) * tDeltaZ : float.PositiveInfinity;
+
         float t = 0;
+        var normal = Vector3.Zero; // face of the current cell the ray entered through
         while (t <= maxDistance)
         {
             if (Blocks.IsSolid(GetBlock(x, y, z)))
             {
-                hit = new BlockPos(x, y, z);
+                hit = new RayHit(new BlockPos(x, y, z), normal, origin + direction * t);
                 return true;
             }
 
-            before = new BlockPos(x, y, z);
-            if (tMaxX < tMaxY && tMaxX < tMaxZ) { x += stepX; t = tMaxX; tMaxX += tDeltaX; }
-            else if (tMaxY < tMaxZ) { y += stepY; t = tMaxY; tMaxY += tDeltaY; }
-            else { z += stepZ; t = tMaxZ; tMaxZ += tDeltaZ; }
+            if (tMaxX < tMaxY && tMaxX < tMaxZ) { x += stepX; t = tMaxX; tMaxX += tDeltaX; normal = new Vector3(-stepX, 0, 0); }
+            else if (tMaxY < tMaxZ) { y += stepY; t = tMaxY; tMaxY += tDeltaY; normal = new Vector3(0, -stepY, 0); }
+            else { z += stepZ; t = tMaxZ; tMaxZ += tDeltaZ; normal = new Vector3(0, 0, -stepZ); }
         }
 
         hit = default;
