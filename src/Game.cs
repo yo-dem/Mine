@@ -12,6 +12,8 @@ namespace Mine;
 public sealed class Game : IDisposable
 {
     private const float MouseSensitivity = 0.0025f;
+    private const float ReachDistance = 6f;
+    private const float ObjectDrawDistance = 350f;
     private const double DoubleTapWindow = 0.3; // seconds between two W presses to start sprinting
     private const float FastTimeScale = 60f;     // holding T speeds up the day
 
@@ -20,6 +22,9 @@ public sealed class Game : IDisposable
     private IInputContext _input = null!;
     private IKeyboard _keyboard = null!;
     private Shader _terrainShader = null!;
+    private Shader _objectShader = null!;
+    private ObjectRenderer _objectRenderer = null!;
+    private WorldObjects _objects = null!;
     private Crosshair _crosshair = null!;
     private SkyRenderer _sky = null!;
     private ShadowMap _shadowMap = null!;
@@ -27,6 +32,13 @@ public sealed class Game : IDisposable
     private TerrainRenderer _terrain = null!;
     private readonly Player _player = new();
     private readonly DayCycle _dayCycle = new();
+    private readonly PointLight[] _lights = new PointLight[TerrainShaders.MaxPointLights];
+    private int _lightCount;
+
+    // Inventory: how many objects of each kind the player carries, and which one is in hand.
+    private readonly int[] _inventory = [2, 3, 0]; // lanterns, torches, crystals
+    private ObjectKind _selected = ObjectKind.Lantern;
+    private WorldObject? _aimed; // the object under the crosshair, within reach
 
     private Vector2? _lastMouse;
     private bool _mouseCaptured;
@@ -68,15 +80,19 @@ public sealed class Game : IDisposable
         {
             mouse.MouseMove += OnMouseMove;
             mouse.MouseDown += OnMouseDown;
+            mouse.Scroll += OnScroll;
         }
         SetMouseCaptured(true);
 
-        _terrainShader = new Shader(_gl, TerrainShaders.Vertex, TerrainShaders.Fragment);
+        _terrainShader = new Shader(_gl, TerrainShaders.TerrainVertex, TerrainShaders.TerrainFragment);
+        _objectShader = new Shader(_gl, TerrainShaders.ObjectVertex, TerrainShaders.ObjectFragment);
+        _objectRenderer = new ObjectRenderer(_gl);
         _crosshair = new Crosshair(_gl);
         _sky = new SkyRenderer(_gl);
         _shadowMap = new ShadowMap(_gl);
         _terrainField = new TerrainField(seed: 1337);
         _terrain = new TerrainRenderer(_gl, _terrainField);
+        _objects = new WorldObjects(_terrainField, seed: 1337);
 
         Respawn();
 
@@ -117,6 +133,8 @@ public sealed class Game : IDisposable
         _dayCycle.Update((float)deltaTime * (fastTime ? FastTimeScale : 1f));
 
         _terrain.Update(_player.Eye);
+        _objects.Update(_player.Position);
+        _aimed = _mouseCaptured ? _objects.Pick(_player.Eye, _player.LookDirection, ReachDistance, out _) : null;
         UpdateTitle(deltaTime);
     }
 
@@ -136,9 +154,18 @@ public sealed class Game : IDisposable
 
         var atmosphere = _dayCycle.Sample();
         float time = (float)_time;
+        _lightCount = _objects.CollectLights(eye, time, _lights);
         var shadowCenter = _player.Position;
-        _shadowMap.Render(shadowCenter, atmosphere.LightDirection,
-            () => _terrain.DrawNear(shadowCenter, ShadowMap.Radius * 1.5f));
+        _shadowMap.Render(shadowCenter, atmosphere.LightDirection, () =>
+        {
+            _terrain.DrawNear(shadowCenter, ShadowMap.Radius * 1.5f);
+            foreach (var obj in _objects.All)
+            {
+                if (Vector3.DistanceSquared(obj.Position, shadowCenter) > ShadowMap.Radius * ShadowMap.Radius) continue;
+                _shadowMap.SetCasterModel(ObjectRenderer.ModelMatrix(obj));
+                _objectRenderer.Draw(obj.Kind);
+            }
+        });
         _gl.Viewport(0, 0, (uint)size.X, (uint)size.Y);
         var skyView = Matrix4x4.CreateLookAt(Vector3.Zero, look, Vector3.UnitY);
         Matrix4x4.Invert(skyView * projection, out var inverseSkyViewProj);
@@ -147,6 +174,16 @@ public sealed class Game : IDisposable
         _shadowMap.Bind(0);
         SetWorldUniforms(_terrainShader, view * projection, eye, atmosphere, time);
         _terrain.Draw(eye, look);
+
+        SetWorldUniforms(_objectShader, view * projection, eye, atmosphere, time);
+        foreach (var obj in _objects.All)
+        {
+            if (Vector3.DistanceSquared(obj.Position, eye) > ObjectDrawDistance * ObjectDrawDistance) continue;
+            _objectShader.Set("uModel", ObjectRenderer.ModelMatrix(obj));
+            _objectShader.Set("uGlow", WorldObjects.Glow(obj, time));
+            _objectShader.Set("uHighlight", ReferenceEquals(obj, _aimed) ? 1f : 0f);
+            _objectRenderer.Draw(obj.Kind);
+        }
 
         _crosshair.Draw();
     }
@@ -169,6 +206,13 @@ public sealed class Game : IDisposable
         shader.Set("uShadowTexel", 1f / ShadowMap.Size);
         shader.Set("uShadowBias", ShadowMap.DepthBias);
         shader.Set("uLightViewProj", _shadowMap.LightViewProjection);
+        shader.Set("uPointCount", _lightCount);
+        for (int i = 0; i < _lightCount; i++)
+        {
+            shader.Set($"uPointPos[{i}]", _lights[i].Position);
+            shader.Set($"uPointColor[{i}]", _lights[i].Color);
+            shader.Set($"uPointRadius[{i}]", _lights[i].Radius);
+        }
     }
 
     private void OnFramebufferResize(Vector2D<int> size)
@@ -191,6 +235,9 @@ public sealed class Game : IDisposable
                 if (_time - _lastForwardTap <= DoubleTapWindow) _sprinting = true;
                 _lastForwardTap = _time;
                 break;
+            case >= Key.Number1 and <= Key.Number3:
+                _selected = (ObjectKind)(key - Key.Number1);
+                break;
             case Key.F:
                 _player.Flying = !_player.Flying;
                 _player.Velocity = Vector3.Zero;
@@ -211,7 +258,34 @@ public sealed class Game : IDisposable
 
     private void OnMouseDown(IMouse mouse, MouseButton button)
     {
-        if (!_mouseCaptured) SetMouseCaptured(true);
+        if (!_mouseCaptured)
+        {
+            SetMouseCaptured(true);
+            return;
+        }
+
+        if (button == MouseButton.Left && _aimed is { } obj)
+        {
+            // Pick it up.
+            _objects.Remove(obj);
+            _inventory[(int)obj.Kind]++;
+            _selected = obj.Kind;
+            _aimed = null;
+        }
+        else if (button == MouseButton.Right && _inventory[(int)_selected] > 0
+                 && _terrainField.Raycast(_player.Eye, _player.LookDirection, ReachDistance, out var ground))
+        {
+            // Place it on the ground, facing the player.
+            _objects.Place(_selected, ground, -_player.Yaw);
+            _inventory[(int)_selected]--;
+        }
+    }
+
+    private void OnScroll(IMouse mouse, ScrollWheel wheel)
+    {
+        if (!_mouseCaptured || wheel.Y == 0) return;
+        int count = _inventory.Length;
+        _selected = (ObjectKind)((((int)_selected - Math.Sign(wheel.Y)) % count + count) % count);
     }
 
     private void SetMouseCaptured(bool captured)
@@ -234,7 +308,8 @@ public sealed class Game : IDisposable
         else if (_player.Sneaking) mode += " (furtivo)";
         string hint = _mouseCaptured ? "" : " | clicca per giocare, Esc per uscire";
         var (hours, minutes) = _dayCycle.Clock;
-        _window.Title = $"Mine | {mode} | ore {hours:00}:{minutes:00} | {fps} FPS | " +
+        string hand = $"{WorldObjects.Defs[(int)_selected].Name} x{_inventory[(int)_selected]}";
+        _window.Title = $"Mine | {hand} | {mode} | ore {hours:00}:{minutes:00} | {fps} FPS | " +
                         $"{p.X:0} {p.Y:0} {p.Z:0}{hint}";
         _titleTimer = 0;
         _frames = 0;
@@ -249,6 +324,8 @@ public sealed class Game : IDisposable
         _sky?.Dispose();
         _shadowMap?.Dispose();
         _terrainShader?.Dispose();
+        _objectShader?.Dispose();
+        _objectRenderer?.Dispose();
         _input?.Dispose();
     }
 

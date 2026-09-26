@@ -66,6 +66,33 @@ public sealed class TerrainField
         return Vector3.Normalize(new Vector3(-dx, 2 * epsilon, -dz));
     }
 
+    /// <summary>
+    /// First point where a ray meets the ground, within <paramref name="maxDistance"/>: small steps
+    /// until the ray dips below the surface, then a bisection to pin the crossing down.
+    /// </summary>
+    public bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out Vector3 hit)
+    {
+        const float step = 0.1f;
+        float previous = 0;
+        for (float t = step; t <= maxDistance; t += step)
+        {
+            var p = origin + direction * t;
+            if (p.Y > Height(p.X, p.Z)) { previous = t; continue; }
+
+            float lo = previous, hi = t;
+            for (int i = 0; i < 12; i++)
+            {
+                float mid = (lo + hi) * 0.5f;
+                var m = origin + direction * mid;
+                if (m.Y > Height(m.X, m.Z)) lo = mid; else hi = mid;
+            }
+            hit = origin + direction * hi;
+            return true;
+        }
+        hit = default;
+        return false;
+    }
+
     /// <summary>Rare tall rock needles with a steep flank and a rounded top.</summary>
     private float Spires(float x, float z)
     {

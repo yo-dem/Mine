@@ -24,10 +24,11 @@ public sealed unsafe class ShadowMap : IDisposable
         #version 330 core
         layout(location = 0) in vec3 aPos;
         uniform mat4 uLightViewProj;
+        uniform mat4 uModel;
 
         void main()
         {
-            gl_Position = uLightViewProj * vec4(aPos, 1.0);
+            gl_Position = uLightViewProj * uModel * vec4(aPos, 1.0);
         }
         """;
 
@@ -101,11 +102,15 @@ public sealed unsafe class ShadowMap : IDisposable
 
         _shader.Use();
         _shader.Set("uLightViewProj", LightViewProjection);
+        _shader.Set("uModel", Matrix4x4.Identity);
         drawCasters();
 
         _gl.Disable(EnableCap.PolygonOffsetFill);
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
     }
+
+    /// <summary>Model matrix for the casters drawn next; valid only inside <see cref="Render"/>'s callback.</summary>
+    public void SetCasterModel(Matrix4x4 model) => _shader.Set("uModel", model);
 
     public void Bind(int unit)
     {

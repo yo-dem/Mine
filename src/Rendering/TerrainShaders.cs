@@ -1,36 +1,20 @@
 namespace Mine.Rendering;
 
 /// <summary>
-/// GLSL for the terrain surface. Materials are painted procedurally from slope and height:
-/// grass on gentle ground, layered rock on steep flanks, pale sand in the lowlands, with
-/// broad colour drifts so the land shimmers between golden, green and teal. Lighting,
-/// shadows, haze and sky colours are shared with the rest of the scene.
+/// GLSL for the world: the terrain surface and the objects lying on it. Both share
+/// <see cref="Lighting"/> (sun, shadows, point lights, glowing halos, haze and edge fog),
+/// so everything sits in the same light and air.
 /// </summary>
 public static class TerrainShaders
 {
-    public const string Vertex = """
-        #version 330 core
-        layout(location = 0) in vec3 aPos;
-        layout(location = 1) in vec3 aNormal;
+    /// <summary>Most lights the shaders take at once (the nearest ones are sent).</summary>
+    public const int MaxPointLights = 16;
 
-        uniform mat4 uViewProj;
-
-        out vec3 vWorldPos;
-        out vec3 vNormal;
-
-        void main()
-        {
-            vWorldPos = aPos;
-            vNormal = aNormal;
-            gl_Position = uViewProj * vec4(aPos, 1.0);
-        }
-        """;
-
-    public const string Fragment = "#version 330 core\n" + SkyRenderer.Glsl + """
-
-        in vec3 vWorldPos;
-        in vec3 vNormal;
-
+    /// <summary>
+    /// Scene lighting shared by every world fragment shader; paste after <see cref="SkyRenderer.Glsl"/>.
+    /// <c>litColor</c> lights an albedo; <c>finishColor</c> adds haze, halos and fog and tone-maps.
+    /// </summary>
+    private const string Lighting = """
         uniform vec3 uCameraPos;
         uniform vec3 uAmbient;
         uniform vec3 uLightColor;
@@ -43,13 +27,17 @@ public static class TerrainShaders
         uniform float uFogEnd;
         uniform float uMistDensity; // soft aerial haze, per metre of distance
 
-        out vec4 FragColor;
+        #define MAX_POINT_LIGHTS 16
+        uniform int uPointCount;
+        uniform vec3 uPointPos[MAX_POINT_LIGHTS];
+        uniform vec3 uPointColor[MAX_POINT_LIGHTS]; // colour times intensity
+        uniform float uPointRadius[MAX_POINT_LIGHTS];
 
         // 1 = fully lit, 0 = in shadow; 3x3 PCF taps for soft edges, fading out
         // toward the border of the area covered by the shadow map.
-        float shadow(vec3 n)
+        float shadowAt(vec3 pos, vec3 n)
         {
-            vec4 lightSpace = uLightViewProj * vec4(vWorldPos + n * 0.08, 1.0);
+            vec4 lightSpace = uLightViewProj * vec4(pos + n * 0.08, 1.0);
             vec3 p = lightSpace.xyz / lightSpace.w * 0.5 + 0.5;
             float border = max(abs(p.x - 0.5), abs(p.y - 0.5)) * 2.0;
             if (border > 1.0 || p.z > 1.0) return 1.0;
@@ -72,7 +60,50 @@ public static class TerrainShaders
             return mix(mix(a, b, u.y), mix(c, d, u.y), u.z);
         }
 
-        float noise2(vec2 p, float layer) { return valueNoise3(vec3(p, layer)); }
+        // Point lights are weaker in daylight, where the sun would drown them out anyway.
+        float pointLightScale() { return mix(0.35, 1.0, uNight); }
+
+        // Light from lanterns, torches and crystals: smooth falloff to zero at the radius,
+        // slightly wrapped so it spills softly over the shapes it touches.
+        vec3 pointLighting(vec3 pos, vec3 n)
+        {
+            vec3 sum = vec3(0.0);
+            for (int i = 0; i < uPointCount; i++)
+            {
+                vec3 toLight = uPointPos[i] - pos;
+                float d = length(toLight);
+                float edge = clamp(1.0 - (d * d) / (uPointRadius[i] * uPointRadius[i]), 0.0, 1.0);
+                float falloff = edge * edge / (1.0 + d * d * 0.15);
+                float facing = max(dot(n, toLight / max(d, 1e-3)) * 0.8 + 0.2, 0.0);
+                sum += uPointColor[i] * falloff * facing;
+            }
+            return sum * pointLightScale();
+        }
+
+        // Glowing halos in the air around the lights: how close the view ray passes to each one.
+        vec3 lightHalos(vec3 ro, vec3 rd, float dist)
+        {
+            vec3 sum = vec3(0.0);
+            for (int i = 0; i < uPointCount; i++)
+            {
+                vec3 toLight = uPointPos[i] - ro;
+                float t = clamp(dot(toLight, rd), 0.0, dist);
+                float miss = length(toLight - rd * t);
+                float fade = 1.0 / (1.0 + length(toLight) * 0.04);
+                sum += uPointColor[i] * (0.05 / (1.0 + miss * miss * 1.2) + 0.12 / (1.0 + miss * miss * 30.0)) * fade;
+            }
+            return sum * mix(0.25, 1.0, uNight);
+        }
+
+        vec3 litColor(vec3 albedo, vec3 pos, vec3 n)
+        {
+            float diffuse = max(dot(n, uLightDir), 0.0);
+            // Sky light: surfaces pick up the colour of the sky they face; generous, so slopes
+            // turned away from the sun stay readable and colourful.
+            vec3 skyLight = skyColor(normalize(n + vec3(0.0, 0.6, 0.0)), false);
+            vec3 ambient = mix(uAmbient, skyLight, 0.35) * (0.9 + 0.2 * n.y) * 1.25;
+            return albedo * (ambient + uLightColor * diffuse * shadowAt(pos, n) + pointLighting(pos, n));
+        }
 
         // Gentle aerial haze with a faint, slowly drifting variation.
         float mist(vec3 ro, vec3 rd, float dist)
@@ -81,6 +112,60 @@ public static class TerrainShaders
             float drift = 0.85 + 0.3 * valueNoise3(p * 0.01 + vec3(uTime * 0.02, 0.0, uTime * 0.015));
             return 1.0 - exp(-uMistDensity * dist * drift);
         }
+
+        // cutThrough < 1 lets glowing things shine through the haze and fog.
+        vec4 finishColor(vec3 color, vec3 pos, float cutThrough)
+        {
+            vec3 toFragment = pos - uCameraPos;
+            float dist = length(toFragment);
+            vec3 rd = toFragment / dist;
+            vec3 sky = skyColor(rd, false);
+
+            // Soft haze: tints distance with the hue of the air but keeps brightness.
+            const vec3 luma = vec3(0.3, 0.59, 0.11);
+            vec3 airHue = sky / max(dot(sky, luma), 1e-3);
+            float brightness = dot(color, luma);
+            vec3 hazeTarget = mix(airHue * brightness, vec3(brightness), 0.4);
+            color = mix(color, hazeTarget, mist(uCameraPos, rd, dist) * cutThrough);
+            color += lightHalos(uCameraPos, rd, dist);
+
+            // Edge fog: only the last stretch before the end of the view fades into the sky.
+            float edge = smoothstep(uFogStart, uFogEnd, dist) * cutThrough;
+            return vec4(toneMap(mix(color, sky, edge)), 1.0);
+        }
+        """;
+
+    public const string TerrainVertex = """
+        #version 330 core
+        layout(location = 0) in vec3 aPos;
+        layout(location = 1) in vec3 aNormal;
+
+        uniform mat4 uViewProj;
+
+        out vec3 vWorldPos;
+        out vec3 vNormal;
+
+        void main()
+        {
+            vWorldPos = aPos;
+            vNormal = aNormal;
+            gl_Position = uViewProj * vec4(aPos, 1.0);
+        }
+        """;
+
+    /// <summary>
+    /// Materials are painted from slope and height: grass on gentle ground (drifting between
+    /// green, golden and a teal accent), warm sandstone with faint strata on steep flanks,
+    /// pale sand in the lowlands, and fine grain that fades with distance.
+    /// </summary>
+    public const string TerrainFragment = "#version 330 core\n" + SkyRenderer.Glsl + Lighting + """
+
+        in vec3 vWorldPos;
+        in vec3 vNormal;
+
+        out vec4 FragColor;
+
+        float noise2(vec2 p, float layer) { return valueNoise3(vec3(p, layer)); }
 
         vec3 terrainAlbedo(vec3 p, vec3 n, float dist)
         {
@@ -92,11 +177,9 @@ public static class TerrainShaders
             float grain = noise2(xz * 0.7, 3.0) * 0.5 + noise2(xz * 2.9, 4.0) * 0.3 + noise2(xz * 9.0, 5.0) * 0.2;
             float fine = mix(grain, 0.5, smoothstep(30.0, 140.0, dist));
 
-            // Grass drifting between fresh green, golden and a dreamy teal.
             vec3 grass = mix(vec3(0.33, 0.50, 0.15), vec3(0.64, 0.60, 0.22), broad);
             grass = mix(grass, vec3(0.20, 0.48, 0.38), smoothstep(0.65, 0.9, tint) * 0.35);
 
-            // Warm sandstone with faint, wavy strata.
             float strata = 0.5 + 0.5 * sin(p.y * 0.45 + mid * 6.0 + broad * 4.0);
             vec3 rock = mix(vec3(0.70, 0.55, 0.45), vec3(0.84, 0.71, 0.58), 0.5 + (strata - 0.5) * 0.35);
 
@@ -112,31 +195,57 @@ public static class TerrainShaders
         void main()
         {
             vec3 n = normalize(vNormal);
-            vec3 toFragment = vWorldPos - uCameraPos;
-            float dist = length(toFragment);
-            vec3 rd = toFragment / dist;
+            vec3 albedo = terrainAlbedo(vWorldPos, n, length(vWorldPos - uCameraPos));
+            FragColor = finishColor(litColor(albedo, vWorldPos, n), vWorldPos, 1.0);
+        }
+        """;
 
-            vec3 albedo = terrainAlbedo(vWorldPos, n, dist);
+    public const string ObjectVertex = """
+        #version 330 core
+        layout(location = 0) in vec3 aPos;
+        layout(location = 1) in vec3 aNormal;
+        layout(location = 2) in vec3 aColor;
+        layout(location = 3) in float aEmissive;
 
-            float diffuse = max(dot(n, uLightDir), 0.0);
-            // Sky light: surfaces pick up the colour of the sky they face.
-            vec3 skyLight = skyColor(normalize(n + vec3(0.0, 0.6, 0.0)), false);
-            // A generous ambient keeps slopes facing away from the sun readable and colourful.
-            vec3 ambient = mix(uAmbient, skyLight, 0.35) * (0.9 + 0.2 * n.y) * 1.25;
-            vec3 color = albedo * (ambient + uLightColor * diffuse * shadow(n));
+        uniform mat4 uViewProj;
+        uniform mat4 uModel;
 
-            vec3 sky = skyColor(rd, false);
+        out vec3 vWorldPos;
+        out vec3 vNormal;
+        out vec3 vColor;
+        out float vEmissive;
 
-            // Soft haze: tints distance with the hue of the air but keeps brightness.
-            const vec3 luma = vec3(0.3, 0.59, 0.11);
-            vec3 airHue = sky / max(dot(sky, luma), 1e-3);
-            float brightness = dot(color, luma);
-            vec3 hazeTarget = mix(airHue * brightness, vec3(brightness), 0.4);
-            color = mix(color, hazeTarget, mist(uCameraPos, rd, dist));
+        void main()
+        {
+            vec4 world = uModel * vec4(aPos, 1.0);
+            vWorldPos = world.xyz;
+            vNormal = mat3(uModel) * aNormal; // rotation and translation only
+            vColor = aColor;
+            vEmissive = aEmissive;
+            gl_Position = uViewProj * world;
+        }
+        """;
 
-            // Edge fog: only the last stretch before the end of the view fades into the sky.
-            float edge = smoothstep(uFogStart, uFogEnd, dist);
-            FragColor = vec4(toneMap(mix(color, sky, edge)), 1.0);
+    public const string ObjectFragment = "#version 330 core\n" + SkyRenderer.Glsl + Lighting + """
+
+        in vec3 vWorldPos;
+        in vec3 vNormal;
+        in vec3 vColor;
+        in float vEmissive;
+
+        uniform float uGlow;      // flicker of the object's own light
+        uniform float uHighlight; // 1 while the player aims at the object
+
+        out vec4 FragColor;
+
+        void main()
+        {
+            vec3 n = normalize(vNormal);
+            vec3 color = litColor(vColor, vWorldPos, n);
+            // Glowing parts shine with their own colour, brighter at night.
+            color = mix(color, vColor * uGlow * mix(1.3, 1.8, uNight), vEmissive);
+            color += vColor * 0.35 * uHighlight;
+            FragColor = finishColor(color, vWorldPos, 1.0 - 0.8 * vEmissive);
         }
         """;
 }

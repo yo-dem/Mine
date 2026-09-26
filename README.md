@@ -9,6 +9,9 @@ e guglie di roccia surreali, visibili fino a oltre un chilometro. Ha un ciclo gi
 (10 minuti di giorno e 10 di notte) con cielo, sole, grande luna, stelle e nuvole disegnati da shader,
 ombre proiettate dal sole e dalla luna e una foschia leggera che tinge la distanza.
 
+Nel mondo si trovano cristalli e lanterne da raccogliere, e puoi piazzare lanterne, torce e cristalli
+dove vuoi: ognuno emette una luce colorata che illumina il paesaggio attorno, con un alone nell'aria.
+
 > Nato come clone di Minecraft: la versione a blocchi è sul branch `main`.
 > Questo branch (`terreno-realistico`) la sostituisce con un terreno continuo.
 
@@ -30,6 +33,9 @@ dotnet run -c Release
 | Ctrl sinistro | Corri |
 | T (tenuto) | Fai scorrere il tempo più veloce |
 | F | Attiva/disattiva il volo |
+| Click sinistro | Raccogli l'oggetto che guardi |
+| Click destro | Piazza l'oggetto selezionato sul terreno |
+| 1 – 3 / rotella | Scegli l'oggetto: lanterna, torcia, cristallo |
 | Esc | Libera il mouse (di nuovo Esc: esci) |
 
 ## Struttura
@@ -43,9 +49,11 @@ src/
     Noise.cs              Perlin noise 2D
     TerrainField.cs       forma del terreno: altezza in ogni punto
     DayCycle.cs           orologio e colori di cielo e luce per ogni ora
+    WorldObjects.cs       lanterne, torce e cristalli: generati, raccolti, piazzati; le loro luci
   Rendering/
     TerrainRenderer.cs    tessere del terreno con livelli di dettaglio, costruite in background
-    TerrainShaders.cs     materiali, luce, ombre e foschia del terreno
+    TerrainShaders.cs     shader di terreno e oggetti: materiali, luce, ombre, luci, foschia
+    ObjectRenderer.cs     modelli procedurali degli oggetti
     SkyRenderer.cs        cielo, sole, luna, stelle, nuvole
     ShadowMap.cs          mappa delle ombre vista dal sole
     Shader.cs, Crosshair.cs
