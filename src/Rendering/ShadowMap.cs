@@ -15,20 +15,30 @@ public sealed unsafe class ShadowMap : IDisposable
 
     /// <summary>
     /// Depth bias for the shadow test, in shadow-map depth units: five centimetres.
-    /// Kept tiny so shadows stay attached to the blocks casting them; acne on lit faces
+    /// Kept tiny so shadows stay attached to what casts them; acne on lit faces
     /// is handled by polygon offset and the shader's normal offset instead.
     /// </summary>
     public const float DepthBias = 0.05f / (4 * DepthRange); // window depth spans 2*DepthRange over [0.5, 1]
 
-    private const string VertexSource = """
-        #version 330 core
+    // Two paths: plain meshes with a model matrix, and instanced trees placed and swayed exactly
+    // as in the tree shader, so their shadows move with them.
+    private const string VertexSource = "#version 330 core\n" + TerrainShaders.TreeTransform + """
+
         layout(location = 0) in vec3 aPos;
+        layout(location = 4) in float aSway;
+        layout(location = 5) in vec4 aInstance;
+        layout(location = 6) in float aScale;
         uniform mat4 uLightViewProj;
         uniform mat4 uModel;
+        uniform int uInstanced;
+        uniform float uTime;
 
         void main()
         {
-            gl_Position = uLightViewProj * uModel * vec4(aPos, 1.0);
+            vec3 world = uInstanced == 1
+                ? treeWorld(aPos, aSway, aInstance, aScale, uTime)
+                : (uModel * vec4(aPos, 1.0)).xyz;
+            gl_Position = uLightViewProj * vec4(world, 1.0);
         }
         """;
 
@@ -79,7 +89,7 @@ public sealed unsafe class ShadowMap : IDisposable
     /// <see cref="Radius"/> plus a margin, with only positions at attribute 0. Leaves the shadow
     /// framebuffer unbound; the caller restores the viewport.
     /// </summary>
-    public void Render(Vector3 center, Vector3 lightDirection, Action drawCasters)
+    public void Render(Vector3 center, Vector3 lightDirection, float time, Action drawCasters)
     {
         var view = Matrix4x4.CreateLookAt(Vector3.Zero, -lightDirection, Vector3.UnitY);
 
@@ -103,6 +113,8 @@ public sealed unsafe class ShadowMap : IDisposable
         _shader.Use();
         _shader.Set("uLightViewProj", LightViewProjection);
         _shader.Set("uModel", Matrix4x4.Identity);
+        _shader.Set("uInstanced", 0);
+        _shader.Set("uTime", time);
         drawCasters();
 
         _gl.Disable(EnableCap.PolygonOffsetFill);
@@ -111,6 +123,9 @@ public sealed unsafe class ShadowMap : IDisposable
 
     /// <summary>Model matrix for the casters drawn next; valid only inside <see cref="Render"/>'s callback.</summary>
     public void SetCasterModel(Matrix4x4 model) => _shader.Set("uModel", model);
+
+    /// <summary>Switches the casters drawn next to the instanced tree layout; valid only inside <see cref="Render"/>'s callback.</summary>
+    public void SetInstanced(bool instanced) => _shader.Set("uInstanced", instanced ? 1 : 0);
 
     public void Bind(int unit)
     {

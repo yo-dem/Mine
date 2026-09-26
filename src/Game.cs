@@ -23,6 +23,11 @@ public sealed class Game : IDisposable
     private IKeyboard _keyboard = null!;
     private Shader _terrainShader = null!;
     private Shader _objectShader = null!;
+    private Shader _grassShader = null!;
+    private Shader _treeShader = null!;
+    private GrassRenderer _grass = null!;
+    private TreeField _treeField = null!;
+    private TreeRenderer _trees = null!;
     private ObjectRenderer _objectRenderer = null!;
     private WorldObjects _objects = null!;
     private Crosshair _crosshair = null!;
@@ -87,12 +92,17 @@ public sealed class Game : IDisposable
         _terrainShader = new Shader(_gl, TerrainShaders.TerrainVertex, TerrainShaders.TerrainFragment);
         _objectShader = new Shader(_gl, TerrainShaders.ObjectVertex, TerrainShaders.ObjectFragment);
         _objectRenderer = new ObjectRenderer(_gl);
+        _grassShader = new Shader(_gl, TerrainShaders.GrassVertex, TerrainShaders.GrassFragment);
+        _treeShader = new Shader(_gl, TerrainShaders.TreeVertex, TerrainShaders.TreeFragment);
+        _trees = new TreeRenderer(_gl);
         _crosshair = new Crosshair(_gl);
         _sky = new SkyRenderer(_gl);
         _shadowMap = new ShadowMap(_gl);
         _terrainField = new TerrainField(seed: 1337);
         _terrain = new TerrainRenderer(_gl, _terrainField);
         _objects = new WorldObjects(_terrainField, seed: 1337);
+        _grass = new GrassRenderer(_gl, _terrainField);
+        _treeField = new TreeField(_terrainField, seed: 1337);
 
         Respawn();
 
@@ -132,7 +142,11 @@ public sealed class Game : IDisposable
         bool fastTime = _mouseCaptured && _keyboard.IsKeyPressed(Key.T);
         _dayCycle.Update((float)deltaTime * (fastTime ? FastTimeScale : 1f));
 
+        _treeField.Update(_player.Position);
+        _treeField.ResolveCollision(ref _player.Position, 0.35f);
         _terrain.Update(_player.Eye);
+        _trees.Update(_treeField, _player.Eye);
+        _grass.Update(_player.Eye);
         _objects.Update(_player.Position);
         _aimed = _mouseCaptured ? _objects.Pick(_player.Eye, _player.LookDirection, ReachDistance, out _) : null;
         UpdateTitle(deltaTime);
@@ -156,9 +170,12 @@ public sealed class Game : IDisposable
         float time = (float)_time;
         _lightCount = _objects.CollectLights(eye, time, _lights);
         var shadowCenter = _player.Position;
-        _shadowMap.Render(shadowCenter, atmosphere.LightDirection, () =>
+        _shadowMap.Render(shadowCenter, atmosphere.LightDirection, time, () =>
         {
             _terrain.DrawNear(shadowCenter, ShadowMap.Radius * 1.5f);
+            _shadowMap.SetInstanced(true);
+            _trees.DrawShadowCasters();
+            _shadowMap.SetInstanced(false);
             foreach (var obj in _objects.All)
             {
                 if (Vector3.DistanceSquared(obj.Position, shadowCenter) > ShadowMap.Radius * ShadowMap.Radius) continue;
@@ -174,6 +191,16 @@ public sealed class Game : IDisposable
         _shadowMap.Bind(0);
         SetWorldUniforms(_terrainShader, view * projection, eye, atmosphere, time);
         _terrain.Draw(eye, look);
+
+        // Grass blades are seen from both sides.
+        SetWorldUniforms(_grassShader, view * projection, eye, atmosphere, time);
+        _grassShader.Set("uGrassRadius", GrassRenderer.Radius);
+        _gl.Disable(EnableCap.CullFace);
+        _grass.Draw(eye, look);
+        _gl.Enable(EnableCap.CullFace);
+
+        SetWorldUniforms(_treeShader, view * projection, eye, atmosphere, time);
+        _trees.Draw();
 
         SetWorldUniforms(_objectShader, view * projection, eye, atmosphere, time);
         foreach (var obj in _objects.All)
@@ -326,6 +353,10 @@ public sealed class Game : IDisposable
         _terrainShader?.Dispose();
         _objectShader?.Dispose();
         _objectRenderer?.Dispose();
+        _grassShader?.Dispose();
+        _treeShader?.Dispose();
+        _grass?.Dispose();
+        _trees?.Dispose();
         _input?.Dispose();
     }
 

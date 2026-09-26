@@ -12,6 +12,10 @@ ombre proiettate dal sole e dalla luna e una foschia leggera che tinge la distan
 Nel mondo si trovano cristalli e lanterne da raccogliere, e puoi piazzare lanterne, torce e cristalli
 dove vuoi: ognuno emette una luce colorata che illumina il paesaggio attorno, con un alone nell'aria.
 
+I prati sono coperti di erba che ondeggia al vento e brilla in controluce, e il paesaggio è punteggiato
+di boschi e alberi isolati in stile fiabesco: querce, cipressi, alberi dorati, turchesi, fioriti di lilla,
+ad ombrello, e alcuni con sfere luminose appese che si accendono di notte.
+
 > Nato come clone di Minecraft: la versione a blocchi è sul branch `main`.
 > Questo branch (`terreno-realistico`) la sostituisce con un terreno continuo.
 
@@ -20,6 +24,9 @@ dove vuoi: ognuno emette una luce colorata che illumina il paesaggio attorno, co
 ```
 dotnet run -c Release
 ```
+
+Sui portatili con due schede video Windows può avviare il gioco su quella integrata, molto più lenta.
+In quel caso: Impostazioni → Sistema → Schermo → Grafica → aggiungi `Mine.exe` → "Prestazioni elevate".
 
 ## Comandi
 
@@ -50,10 +57,15 @@ src/
     TerrainField.cs       forma del terreno: altezza in ogni punto
     DayCycle.cs           orologio e colori di cielo e luce per ogni ora
     WorldObjects.cs       lanterne, torce e cristalli: generati, raccolti, piazzati; le loro luci
+    TreeField.cs          dove crescono gli alberi (boschi, alberi isolati), collisione con i tronchi
+    GroundMaterials.cs    colore e copertura dell'erba (copia in C# delle funzioni dello shader)
   Rendering/
     TerrainRenderer.cs    tessere del terreno con livelli di dettaglio, costruite in background
     TerrainShaders.cs     shader di terreno e oggetti: materiali, luce, ombre, luci, foschia
     ObjectRenderer.cs     modelli procedurali degli oggetti
+    GrassRenderer.cs      fili d'erba attorno al giocatore (instancing, costruiti in background)
+    TreeModels.cs         modelli procedurali degli alberi, 8 stili e 4 livelli di dettaglio
+    TreeRenderer.cs       disegno degli alberi (instancing per stile e livello di dettaglio)
     SkyRenderer.cs        cielo, sole, luna, stelle, nuvole
     ShadowMap.cs          mappa delle ombre vista dal sole
     Shader.cs, Crosshair.cs

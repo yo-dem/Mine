@@ -10,8 +10,22 @@ namespace Mine.Rendering;
 /// </summary>
 public sealed class SkyRenderer : IDisposable
 {
-    /// <summary>Uniforms, <c>skyColor(dir, bodies)</c> and <c>toneMap</c>, to paste after <c>#version</c>.</summary>
-    public const string Glsl = """
+    /// <summary><c>hash13</c>: a cheap pseudo-random value in [0, 1) for a 3D point. Usable in any shader stage.</summary>
+    public const string Hash = """
+        float hash13(vec3 p)
+        {
+            p = fract(p * 0.1031);
+            p += dot(p, p.zyx + 31.32);
+            return fract((p.x + p.y) * p.z);
+        }
+
+        """;
+
+    /// <summary>
+    /// Uniforms, <see cref="Hash"/>, <c>skyColor(dir, bodies)</c> and <c>toneMap</c>, to paste after
+    /// <c>#version</c> in fragment shaders (it uses <c>fwidth</c>).
+    /// </summary>
+    public const string Glsl = Hash + """
         uniform vec3 uZenith;
         uniform vec3 uHorizon;
         uniform vec3 uSunHorizon;
@@ -22,13 +36,6 @@ public sealed class SkyRenderer : IDisposable
         uniform float uNight;
         uniform float uSkyAngle;
         uniform float uTime;
-
-        float hash13(vec3 p)
-        {
-            p = fract(p * 0.1031);
-            p += dot(p, p.zyx + 31.32);
-            return fract((p.x + p.y) * p.z);
-        }
 
         // Coordinates of d on a square facing `center`, tilted by `tilt`: |q| < 1 is inside.
         vec2 bodyCoords(vec3 d, vec3 center, float halfSize, float tilt)
