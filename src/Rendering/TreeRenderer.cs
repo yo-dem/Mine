@@ -81,6 +81,7 @@ public sealed unsafe class TreeRenderer : IDisposable
     {
         for (int v = 0; v < TreeModels.VariantCount; v++)
         {
+            if (!TreeModels.CastsShadow(v)) continue;
             DrawBatch(_batches[v, 0]);
             DrawBatch(_batches[v, 1]);
         }

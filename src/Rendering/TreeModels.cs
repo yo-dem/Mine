@@ -55,6 +55,10 @@ public static class TreeModels
         GlowBells,
         Reeds,
         Palm,
+        Daisies,     // flat pastel stars
+        Tulips,      // upright cups, strong colours
+        Starflowers, // small glowing stars, also under the trees
+        Lupins,      // tall spikes of florets with glowing tips
     }
 
     public static int TreeStyleCount => Styles.Length;
@@ -69,10 +73,16 @@ public static class TreeModels
     {
         Decoration.Lotus => 160f,
         Decoration.GlowBells => 140f,
+        Decoration.Daisies or Decoration.Tulips or Decoration.Starflowers => 110f,
+        Decoration.Lupins => 140f,
         Decoration.Reeds => 400f,
         Decoration.Palm => float.MaxValue,
         _ => 700f,
     };
+
+    /// <summary>Whether a variant is drawn into the shadow map: small flowers are not worth it.</summary>
+    public static bool CastsShadow(int variant) => variant < Styles.Length || (Decoration)(variant - Styles.Length) is not
+        (Decoration.Lotus or Decoration.GlowBells or Decoration.Daisies or Decoration.Tulips or Decoration.Starflowers or Decoration.Lupins);
 
     /// <summary>The colour a decoration lights its surroundings with, or null if it gives no light.</summary>
     public static System.Numerics.Vector3? GlowColor(int variant) => variant < Styles.Length ? null : (Decoration)(variant - Styles.Length) switch
@@ -306,14 +316,72 @@ public static class TreeModels
                 {
                     float a = random.NextSingle() * MathF.Tau;
                     float r = 0.1f + 0.25f * random.NextSingle();
-                    float height = 0.5f + 0.6f * random.NextSingle();
+                    float height = 0.8f + 0.5f * random.NextSingle();
                     var foot = new Vector3(MathF.Cos(a) * r, 0, MathF.Sin(a) * r);
                     var bend = new Vector3(MathF.Cos(a) * 0.25f, 0, MathF.Sin(a) * 0.25f);
                     var top = foot + new Vector3(0, height, 0) + bend;
                     Cylinder(mesh, new Segment(foot, top, 0.018f, 0.012f, 0, BellSway), 3, new Vector3(0.10f, 0.20f, 0.26f));
                     // A drooping bell: a small cone hanging from the tip.
                     var color = i % 2 == 0 ? new Vector3(0.2f, 0.75f, 1.0f) : new Vector3(0.7f, 0.35f, 1.0f);
-                    Bell(mesh, top, 0.07f + 0.04f * random.NextSingle(), color, lod >= 2 ? 5 : 8);
+                    Bell(mesh, top, 0.08f + 0.04f * random.NextSingle(), color, lod >= 2 ? 5 : 8);
+                }
+                break;
+            }
+            case Decoration.Daisies:
+            {
+                Vector3[] colors = [new(1.0f, 0.62f, 0.82f), new(0.92f, 0.86f, 1.0f), new(1.0f, 0.84f, 0.48f), new(0.78f, 0.62f, 1.0f)];
+                for (int i = 0; i < (lod >= 1 ? 4 : 7); i++)
+                {
+                    var top = FlowerStem(mesh, random, 0.75f, 0.4f, 0.3f);
+                    Flower(mesh, top, 8, 0.13f + 0.04f * random.NextSingle(), 0.07f, 0.15f, colors[random.Next(colors.Length)], 0f,
+                        new Vector3(1.0f, 0.75f, 0.25f), random.NextSingle());
+                }
+                break;
+            }
+            case Decoration.Tulips:
+            {
+                Vector3[] colors = [new(0.95f, 0.22f, 0.55f), new(1.0f, 0.45f, 0.30f), new(0.58f, 0.24f, 0.95f), new(1.0f, 0.75f, 0.30f)];
+                for (int i = 0; i < (lod >= 1 ? 3 : 5); i++)
+                {
+                    var top = FlowerStem(mesh, random, 0.8f, 0.35f, 0.2f);
+                    Flower(mesh, top, 5, 0.13f + 0.04f * random.NextSingle(), 0.1f, 2.2f, colors[random.Next(colors.Length)], 0.05f,
+                        new Vector3(0.3f, 0.1f, 0.2f), random.NextSingle());
+                }
+                break;
+            }
+            case Decoration.Starflowers:
+            {
+                Vector3[] colors = [new(0.3f, 0.95f, 1.0f), new(1.0f, 0.8f, 0.35f), new(0.5f, 1.0f, 0.75f), new(0.95f, 0.5f, 1.0f)];
+                for (int i = 0; i < (lod >= 1 ? 4 : 6); i++)
+                {
+                    var top = FlowerStem(mesh, random, 0.6f, 0.5f, 0.35f);
+                    Flower(mesh, top, 5, 0.1f + 0.04f * random.NextSingle(), 0.05f, 0.3f, colors[random.Next(colors.Length)], 0.85f,
+                        new Vector3(1.0f, 1.0f, 0.9f), random.NextSingle());
+                }
+                break;
+            }
+            case Decoration.Lupins:
+            {
+                // Spikes of small florets, darker at the foot and glowing toward the tip.
+                Vector3[] foot = [new(0.25f, 0.2f, 0.75f), new(0.6f, 0.2f, 0.7f), new(0.2f, 0.45f, 0.8f)];
+                Vector3[] tip = [new(0.95f, 0.55f, 1.0f), new(1.0f, 0.7f, 0.85f), new(0.5f, 0.95f, 1.0f)];
+                for (int i = 0; i < (lod >= 1 ? 3 : 4); i++)
+                {
+                    float a = random.NextSingle() * MathF.Tau;
+                    float r = 0.05f + 0.25f * random.NextSingle();
+                    var start = new Vector3(MathF.Cos(a) * r, 0, MathF.Sin(a) * r);
+                    var end = start + new Vector3(MathF.Cos(a) * 0.1f, 1.1f + 0.6f * random.NextSingle(), MathF.Sin(a) * 0.1f);
+                    Cylinder(mesh, new Segment(start, end, 0.02f, 0.012f, 0, BellSway), 3, new Vector3(0.12f, 0.2f, 0.25f));
+                    int c = random.Next(foot.Length);
+                    int florets = lod >= 1 ? 6 : 12;
+                    for (int k = 0; k < florets; k++)
+                    {
+                        float t = 0.55f + 0.45f * k / (florets - 1);
+                        float spin = k * 2.4f;
+                        var p = Vector3.Lerp(start, end, t) + new Vector3(MathF.Cos(spin), 0, MathF.Sin(spin)) * 0.035f * (1.2f - t);
+                        float u = (t - 0.55f) / 0.45f;
+                        Bud(mesh, p, 0.06f * (1.2f - 0.6f * u), Vector3.Lerp(foot[c], tip[c], u), 0.1f + 0.6f * u * u, BellSway * t);
+                    }
                 }
                 break;
             }
@@ -487,6 +555,69 @@ public static class TreeModels
             // Same sway as the tip of the stem, so the bell stays on it in the wind.
             Vertex(mesh, top, n, color, 0.55f, BellSway); Vertex(mesh, p1, n, color, 0.4f, BellSway); Vertex(mesh, p0, n, color, 0.4f, BellSway);
             Vertex(mesh, top, -n, color, 0.55f, BellSway); Vertex(mesh, p0, -n, color, 0.4f, BellSway); Vertex(mesh, p1, -n, color, 0.4f, BellSway);
+        }
+    }
+
+    /// <summary>
+    /// A thin stem from a random foot near the centre, <paramref name="height"/> plus up to
+    /// <paramref name="extra"/> tall and leaning out by up to <paramref name="lean"/>; returns its tip.
+    /// </summary>
+    private static Vector3 FlowerStem(List<float> mesh, Random random, float height, float extra, float lean)
+    {
+        float a = random.NextSingle() * MathF.Tau;
+        float r = 0.05f + 0.3f * random.NextSingle();
+        float out_ = lean * random.NextSingle();
+        var foot = new Vector3(MathF.Cos(a) * r, 0, MathF.Sin(a) * r);
+        var top = foot + new Vector3(MathF.Cos(a) * out_, height + extra * random.NextSingle(), MathF.Sin(a) * out_);
+        Cylinder(mesh, new Segment(foot, top, 0.014f, 0.01f, 0, BellSway), 3, new Vector3(0.12f, 0.22f, 0.26f));
+        return top;
+    }
+
+    /// <summary>
+    /// A flower head at <paramref name="center"/>: a ring of diamond petals rising by
+    /// <paramref name="lift"/> (0 = flat star, 2 = upright cup) around a small heart.
+    /// </summary>
+    private static void Flower(List<float> mesh, Vector3 center, int petals, float length, float width, float lift,
+        Vector3 color, float emissive, Vector3 heart, float twist)
+    {
+        for (int i = 0; i < petals; i++)
+        {
+            float a = (i + twist) * MathF.Tau / petals;
+            var outward = new Vector3(MathF.Cos(a), 0, MathF.Sin(a));
+            var across = new Vector3(-outward.Z, 0, outward.X);
+            var dir = Vector3.Normalize(outward + new Vector3(0, lift, 0));
+            var tip = center + dir * length;
+            var mid = center + dir * length * 0.5f;
+            var l = mid - across * width * 0.5f;
+            var r = mid + across * width * 0.5f;
+            var n = Vector3.Normalize(Vector3.Cross(r - center, tip - center));
+            var pale = color * 1.15f;
+            // Both windings, so the petals are seen from both sides with culling on.
+            Vertex(mesh, center, n, color, emissive, BellSway); Vertex(mesh, l, n, color, emissive, BellSway); Vertex(mesh, tip, n, pale, emissive, BellSway);
+            Vertex(mesh, center, n, color, emissive, BellSway); Vertex(mesh, tip, n, pale, emissive, BellSway); Vertex(mesh, r, n, color, emissive, BellSway);
+            Vertex(mesh, center, -n, color, emissive, BellSway); Vertex(mesh, tip, -n, pale, emissive, BellSway); Vertex(mesh, l, -n, color, emissive, BellSway);
+            Vertex(mesh, center, -n, color, emissive, BellSway); Vertex(mesh, r, -n, color, emissive, BellSway); Vertex(mesh, tip, -n, pale, emissive, BellSway);
+        }
+        Bud(mesh, center + new Vector3(0, 0.01f, 0), length * 0.22f, heart, MathF.Max(emissive, 0.2f), BellSway);
+    }
+
+    /// <summary>A tiny octahedron: a floret, or the heart of a flower.</summary>
+    private static void Bud(List<float> mesh, Vector3 c, float r, Vector3 color, float emissive, float sway)
+    {
+        Vector3[] axes = [Vector3.UnitX, Vector3.UnitZ, -Vector3.UnitX, -Vector3.UnitZ];
+        for (int half = 0; half < 2; half++)
+        {
+            float up = half == 0 ? 1f : -1f;
+            var pole = c + new Vector3(0, r * up, 0);
+            for (int i = 0; i < 4; i++)
+            {
+                var a = c + axes[i] * r;
+                var b = c + axes[(i + 1) % 4] * r;
+                var n = Vector3.Normalize(axes[i] + axes[(i + 1) % 4] + new Vector3(0, up, 0));
+                // Counter-clockwise from outside: check against the outward normal.
+                if (Vector3.Dot(Vector3.Cross(b - a, pole - a), n) < 0) (a, b) = (b, a);
+                Vertex(mesh, a, n, color, emissive, sway); Vertex(mesh, b, n, color, emissive, sway); Vertex(mesh, pole, n, color, emissive, sway);
+            }
         }
     }
 

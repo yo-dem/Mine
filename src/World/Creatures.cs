@@ -44,6 +44,7 @@ public sealed class Creatures
     private struct Flock
     {
         public float Angle, Spin, Radius, Height, Spacing;
+        public float Altitude; // eased toward the ground below plus Height, NaN until first placed
         public int Count;
         public Formation Formation;
     }
@@ -66,6 +67,7 @@ public sealed class Creatures
                 Radius = 60f + 130f * _random.NextSingle(),
                 Height = 45f + 30f * i + 15f * _random.NextSingle(),
                 Spacing = 2.4f + 1.8f * _random.NextSingle(),
+                Altitude = float.NaN,
                 Count = Math.Min(sizes[i], MaxBirdsPerFlock),
                 Formation = sizes[i] <= 2 ? Formation.Cloud : formations[i],
             };
@@ -152,7 +154,11 @@ public sealed class Creatures
             flock.Angle += flock.Spin * dt;
             float angle = flock.Angle, spin = flock.Spin, radius = flock.Radius, height = flock.Height;
             var center = _flockAnchor + new Vector3(MathF.Cos(angle) * radius, 0, MathF.Sin(angle) * radius);
-            center.Y = MathF.Max(_terrain.Height(center.X, center.Z), water) + height;
+            // Follow the smooth land shape, eased, never the layered tiles: their half-metre steps
+            // would make the whole flock jump.
+            float target = MathF.Max(_terrain.SmoothHeight(center.X, center.Z), water) + height;
+            flock.Altitude = float.IsNaN(flock.Altitude) ? target : flock.Altitude + (target - flock.Altitude) * (1f - MathF.Exp(-0.3f * dt));
+            center.Y = flock.Altitude;
             var heading = new Vector3(-MathF.Sin(angle), 0, MathF.Cos(angle)) * spin * radius;
             var forward = Vector3.Normalize(heading);
             var side = new Vector3(-forward.Z, 0, forward.X);

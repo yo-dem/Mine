@@ -14,7 +14,7 @@ e una notte cosmica dominata da un'enorme galassia a spirale, una grande luna pi
 Nelle zone basse ci sono mari e laghi che riflettono il cielo, galassia compresa, con spiagge di sabbia viola:
 nell'acqua bassa pulsano venature di luce ciano bioluminescente, la riva è segnata da una linea luminosa
 e sulla superficie brillano scintille come stelle cadute. Vicino alla riva si cammina nell'acqua; al largo è profonda e si **nuota**: ci si muove come in volo ma lentamente, Spazio per salire, Shift per immergersi, e da fermi si torna a galla.
-Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno; nell'acqua bassa galleggiano fiori di loto luminosi e sui prati spuntano campanule che brillano.
+Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno; nell'acqua bassa galleggiano fiori di loto luminosi e tra l'erba spuntano fiori di ogni colore: campanule luminose, margherite pastello, tulipani, lupini dalle punte che brillano e piccoli fiori a stella luminosi, che crescono anche sotto i boschi.
 Sulle spiagge svettano palme scure in controluce, farfalle
 luminose svolazzano sui prati, pesci che brillano nuotano nell'acqua bassa e stormi di uccelli,
 ogni volta diversi per numero e disposizione (a V, in fila, in diagonale, sparsi), volteggiano in cielo, sagome scure al crepuscolo e luminosi di notte.

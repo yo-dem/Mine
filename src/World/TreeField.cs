@@ -111,6 +111,44 @@ public sealed class TreeField
     }
 
     /// <summary>
+    /// Flowers mixed with the grass: in the meadows, patches where one kind dominates (daisies,
+    /// tulips, lupins, starflowers) with a few others mixed in; under the woods, glowing starflowers
+    /// and bells.
+    /// </summary>
+    private void AddFlowers(List<TreeInstance> list, int cx, int cz, Random random)
+    {
+        const float water = TerrainField.WaterLevel;
+        TreeModels.Decoration[] meadow =
+            [TreeModels.Decoration.Daisies, TreeModels.Decoration.Tulips, TreeModels.Decoration.Lupins, TreeModels.Decoration.Starflowers];
+        for (int i = 0; i < 70; i++)
+        {
+            float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.35f);
+            float z = TerrainField.InsideTile((cz + random.NextSingle()) * CellSize, 0.35f);
+            float y = _terrain.Height(x, z);
+            float roll = random.NextSingle();
+            if (y < water + 2f || _terrain.Normal(x, z, 1f).Y < 0.8f) continue;
+
+            TreeModels.Decoration kind;
+            if (_forest.Fractal(x * 0.0025f, z * 0.0025f, 3) > 0.05f)
+            {
+                // Under the woods.
+                if (roll > 0.35f) continue;
+                kind = random.NextSingle() < 0.6f ? TreeModels.Decoration.Starflowers : TreeModels.Decoration.GlowBells;
+            }
+            else
+            {
+                float patch = _forest.Fractal(x * 0.015f + 90f, z * 0.015f - 30f, 2);
+                if (roll > 0.18f + 0.6f * Math.Clamp(patch + 0.1f, 0f, 1f)) continue;
+                float species = _forest.Fractal(x * 0.008f - 70f, z * 0.008f + 55f, 2);
+                int dominant = species < -0.15f ? 0 : species < 0.05f ? 1 : species < 0.2f ? 2 : 3;
+                kind = meadow[random.NextSingle() < 0.2f ? random.Next(meadow.Length) : dominant];
+            }
+            list.Add(new TreeInstance(new Vector3(x, y - 0.03f, z), random.NextSingle() * MathF.Tau,
+                0.8f + 0.5f * random.NextSingle(), TreeModels.VariantOf(kind)));
+        }
+    }
+
+    /// <summary>
     /// Scattered reed clumps in the reed beds along the shores and in the shallows, of very different
     /// heights: mostly middling, some low, the odd one towering over the rest.
     /// </summary>
@@ -231,6 +269,7 @@ public sealed class TreeField
     private void AddDecorations(List<TreeInstance> list, int cx, int cz, Random random, float biome)
     {
         AddReeds(list, cx, cz, random);
+        AddFlowers(list, cx, cz, random);
         const float water = TerrainField.WaterLevel;
         var crystals = TreeModels.VariantOf(biome < 0f ? TreeModels.Decoration.CyanCrystals : TreeModels.Decoration.VioletCrystals);
         for (int i = 0; i < 20; i++)
@@ -266,7 +305,7 @@ public sealed class TreeField
                     if (roll < 0.012f)
                         list.Add(new TreeInstance(new Vector3(x, y - 0.3f, z), yaw, 0.6f + 1.2f * random.NextSingle(), crystals));
                 }
-                else if (roll < 0.12f && _forest.Fractal(x * 0.02f + 40f, z * 0.02f, 2) > 0.15f)
+                else if (roll < 0.3f && _forest.Fractal(x * 0.02f + 40f, z * 0.02f, 2) > 0.0f)
                 {
                     // Meadows: glowing bells, in patches.
                     list.Add(new TreeInstance(new Vector3(x, y - 0.05f, z), yaw, 0.8f + 0.6f * random.NextSingle(),
