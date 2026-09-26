@@ -16,6 +16,7 @@ public sealed class Game : IDisposable
     private const float ObjectDrawDistance = 350f;
     private const double DoubleTapWindow = 0.3; // seconds between two W presses to start sprinting
     private const float FastTimeScale = 60f;     // holding T speeds up the day
+    private const float FieldOfView = 70f * MathF.PI / 180f;
 
     private readonly IWindow _window;
     private GL _gl = null!;
@@ -35,6 +36,12 @@ public sealed class Game : IDisposable
     private ShadowMap _shadowMap = null!;
     private TerrainField _terrainField = null!;
     private TerrainRenderer _terrain = null!;
+    private IslandField _islands = null!;
+    private IslandRenderer _islandRenderer = null!;
+    private Ground _ground = null!;
+    private CloudNoise _cloudNoise = null!;
+    private MoteRenderer _motes = null!;
+    private PostProcess _post = null!;
     private readonly Player _player = new();
     private readonly DayCycle _dayCycle = new();
     private readonly PointLight[] _lights = new PointLight[TerrainShaders.MaxPointLights];
@@ -103,6 +110,16 @@ public sealed class Game : IDisposable
         _objects = new WorldObjects(_terrainField, seed: 1337);
         _grass = new GrassRenderer(_gl, _terrainField);
         _treeField = new TreeField(_terrainField, seed: 1337);
+        _islands = new IslandField(_terrainField, seed: 1337);
+        _islandRenderer = new IslandRenderer(_gl);
+        _ground = new Ground(_terrainField, _islands);
+        _cloudNoise = new CloudNoise(_gl);
+        _motes = new MoteRenderer(_gl);
+        _post = new PostProcess(_gl);
+        // Integrated GPUs get the lighter clouds and light shafts; Q switches at any time.
+        string renderer = _gl.GetStringS(StringName.Renderer) ?? "";
+        SetLowQuality(renderer.Contains("Intel", StringComparison.OrdinalIgnoreCase)
+                      || renderer.Contains("llvmpipe", StringComparison.OrdinalIgnoreCase));
 
         Respawn();
 
@@ -134,7 +151,7 @@ public sealed class Game : IDisposable
         bool sneak = _mouseCaptured && !_player.Flying && _keyboard.IsKeyPressed(Key.ShiftLeft);
         if (move.Y <= 0 || sneak) _sprinting = false;
 
-        _player.Update(_terrainField, dt, move,
+        _player.Update(_ground, dt, move,
             up: _mouseCaptured && _keyboard.IsKeyPressed(Key.Space),
             down: _mouseCaptured && _keyboard.IsKeyPressed(Key.ShiftLeft),
             sprint: _sprinting || _keyboard.IsKeyPressed(Key.ControlLeft));
@@ -142,6 +159,10 @@ public sealed class Game : IDisposable
         bool fastTime = _mouseCaptured && _keyboard.IsKeyPressed(Key.T);
         _dayCycle.Update((float)deltaTime * (fastTime ? FastTimeScale : 1f));
 
+        int islandVersion = _islands.Version;
+        _islands.Update(_player.Position);
+        if (_islands.Version != islandVersion) _treeField.SetFixedTrees(_islands.Trees);
+        _islandRenderer.Update(_islands);
         _treeField.Update(_player.Position);
         _treeField.ResolveCollision(ref _player.Position, 0.35f);
         _terrain.Update(_player.Eye);
@@ -158,13 +179,10 @@ public sealed class Game : IDisposable
         var size = _window.FramebufferSize;
         if (size.X == 0 || size.Y == 0) return; // minimised
 
-        _gl.Clear(ClearBufferMask.DepthBufferBit); // the sky covers every pixel
-
         var eye = _player.Eye;
         var look = _player.LookDirection;
         var view = Matrix4x4.CreateLookAt(eye, eye + look, Vector3.UnitY);
-        var projection = Matrix4x4.CreatePerspectiveFieldOfView(
-            70f * MathF.PI / 180f, (float)size.X / size.Y, 0.1f, 4000f);
+        var projection = Matrix4x4.CreatePerspectiveFieldOfView(FieldOfView, (float)size.X / size.Y, 0.1f, 4000f);
 
         var atmosphere = _dayCycle.Sample();
         float time = (float)_time;
@@ -176,6 +194,8 @@ public sealed class Game : IDisposable
             _shadowMap.SetInstanced(true);
             _trees.DrawShadowCasters();
             _shadowMap.SetInstanced(false);
+            _shadowMap.SetCasterModel(Matrix4x4.Identity);
+            _islandRenderer.Draw(); // floating islands throw their shadows on the land
             foreach (var obj in _objects.All)
             {
                 if (Vector3.DistanceSquared(obj.Position, shadowCenter) > ShadowMap.Radius * ShadowMap.Radius) continue;
@@ -183,10 +203,12 @@ public sealed class Game : IDisposable
                 _objectRenderer.Draw(obj.Kind);
             }
         });
-        _gl.Viewport(0, 0, (uint)size.X, (uint)size.Y);
+        // Everything from here to the post-process goes into the HDR scene buffer.
+        _post.BeginScene();
+        _gl.Clear(ClearBufferMask.DepthBufferBit); // the sky covers every pixel
+        _cloudNoise.Bind(SkyRenderer.CloudNoiseUnit);
         var skyView = Matrix4x4.CreateLookAt(Vector3.Zero, look, Vector3.UnitY);
-        Matrix4x4.Invert(skyView * projection, out var inverseSkyViewProj);
-        _sky.Draw(inverseSkyViewProj, eye, (float)_dayCycle.Elapsed, atmosphere, time);
+        var skyViewProjection = skyView * projection;
 
         _shadowMap.Bind(0);
         SetWorldUniforms(_terrainShader, view * projection, eye, atmosphere, time);
@@ -212,7 +234,45 @@ public sealed class Game : IDisposable
             _objectRenderer.Draw(obj.Kind);
         }
 
+        // Floating islands use the object shader, their vertices already in world space.
+        _objectShader.Set("uModel", Matrix4x4.Identity);
+        _objectShader.Set("uGlow", 1f + 0.15f * MathF.Sin(time * 1.3f));
+        _objectShader.Set("uHighlight", 0f);
+        _islandRenderer.Draw();
+
+        // The sky last, only where nothing covers it (see SkyRenderer).
+        Matrix4x4.Invert(skyViewProjection, out var inverseSkyViewProj);
+        _sky.Draw(inverseSkyViewProj, eye, (float)_dayCycle.Elapsed, atmosphere, time);
+
+        float heightAboveGround = eye.Y - _ground.Height(eye.X, eye.Z, eye.Y);
+        float pointScale = _post.SceneHeight / (2f * MathF.Tan(FieldOfView / 2));
+        _motes.Draw(view * projection, eye, atmosphere, time, heightAboveGround, pointScale);
+
+        var (lightUv, shaftColor) = LightShafts(atmosphere, look, skyViewProjection);
+        _post.Finish(lightUv, shaftColor, atmosphere.Night);
+
         _crosshair.Draw();
+    }
+
+    /// <summary>
+    /// Where the sun (by night, the moon) is on screen and how strong its light shafts are:
+    /// strongest looking toward it, fading as it leaves the screen or sinks below the horizon.
+    /// </summary>
+    private static (Vector2 Uv, Vector3 Color) LightShafts(in Atmosphere atmosphere, Vector3 look, Matrix4x4 skyViewProjection)
+    {
+        bool moon = atmosphere.Night > 0.5f;
+        var direction = moon ? atmosphere.MoonDirection : atmosphere.SunDirection;
+        var clip = Vector4.Transform(new Vector4(direction * 1000f, 1f), skyViewProjection);
+        if (clip.W <= 0) return (Vector2.Zero, Vector3.Zero);
+        var ndc = new Vector2(clip.X, clip.Y) / clip.W;
+        float onScreen = Math.Clamp((1.6f - MathF.Max(MathF.Abs(ndc.X), MathF.Abs(ndc.Y))) / 0.6f, 0f, 1f);
+        float facing = Math.Clamp((Vector3.Dot(look, direction) - 0.3f) / 0.7f, 0f, 1f);
+        float aboveHorizon = Math.Clamp(direction.Y / 0.05f + 0.5f, 0f, 1f);
+        float strength = onScreen * facing * aboveHorizon;
+        var color = moon
+            ? new Vector3(0.45f, 0.45f, 0.8f) * atmosphere.Night * 0.9f
+            : (atmosphere.SunGlow * 0.8f + new Vector3(0.25f)) * (1f - atmosphere.Night) * (0.8f + 0.8f * atmosphere.Haze);
+        return (ndc * 0.5f + new Vector2(0.5f), color * strength);
     }
 
     /// <summary>Binds a world shader and sets everything it needs for this frame.</summary>
@@ -220,7 +280,7 @@ public sealed class Game : IDisposable
     {
         const float fogEnd = TerrainRenderer.ViewDistance;
         shader.Use();
-        SkyRenderer.SetUniforms(shader, atmosphere, time);
+        SkyRenderer.SetUniforms(shader, atmosphere, time, (float)_dayCycle.Elapsed);
         shader.Set("uViewProj", viewProjection);
         shader.Set("uCameraPos", eye);
         shader.Set("uAmbient", atmosphere.Ambient);
@@ -246,6 +306,7 @@ public sealed class Game : IDisposable
     {
         _gl.Viewport(0, 0, (uint)size.X, (uint)size.Y);
         _crosshair.Resize(size.X, size.Y);
+        _post.Resize(size.X, size.Y);
     }
 
     private void OnKeyDown(IKeyboard keyboard, Key key, int scancode)
@@ -264,6 +325,9 @@ public sealed class Game : IDisposable
                 break;
             case >= Key.Number1 and <= Key.Number3:
                 _selected = (ObjectKind)(key - Key.Number1);
+                break;
+            case Key.Q:
+                SetLowQuality(!_sky.LowQuality);
                 break;
             case Key.F:
                 _player.Flying = !_player.Flying;
@@ -315,6 +379,12 @@ public sealed class Game : IDisposable
         _selected = (ObjectKind)((((int)_selected - Math.Sign(wheel.Y)) % count + count) % count);
     }
 
+    private void SetLowQuality(bool low)
+    {
+        _sky.LowQuality = low;
+        _post.LowQuality = low;
+    }
+
     private void SetMouseCaptured(bool captured)
     {
         _mouseCaptured = captured;
@@ -336,6 +406,7 @@ public sealed class Game : IDisposable
         string hint = _mouseCaptured ? "" : " | clicca per giocare, Esc per uscire";
         var (hours, minutes) = _dayCycle.Clock;
         string hand = $"{WorldObjects.Defs[(int)_selected].Name} x{_inventory[(int)_selected]}";
+        if (_sky.LowQuality) mode += " | qualità bassa";
         _window.Title = $"Mine | {hand} | {mode} | ore {hours:00}:{minutes:00} | {fps} FPS | " +
                         $"{p.X:0} {p.Y:0} {p.Z:0}{hint}";
         _titleTimer = 0;
@@ -347,6 +418,10 @@ public sealed class Game : IDisposable
     private void OnClosing()
     {
         _terrain?.Dispose();
+        _islandRenderer?.Dispose();
+        _cloudNoise?.Dispose();
+        _motes?.Dispose();
+        _post?.Dispose();
         _crosshair?.Dispose();
         _sky?.Dispose();
         _shadowMap?.Dispose();

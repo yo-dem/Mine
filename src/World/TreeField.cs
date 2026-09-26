@@ -33,6 +33,7 @@ public sealed class TreeField
     private readonly ConcurrentQueue<((int X, int Z) Key, TreeInstance[] Trees)> _done = new();
     private readonly List<(int X, int Z)> _batch = new();
     private readonly List<(int X, int Z)> _toDrop = new();
+    private TreeInstance[] _fixed = []; // trees placed by others, like those on the floating islands
 
     public int Version { get; private set; }
 
@@ -44,7 +45,14 @@ public sealed class TreeField
         _biome = new PerlinNoise(seed + 21);
     }
 
-    public IEnumerable<TreeInstance> All => _cells.Values.SelectMany(c => c);
+    public IEnumerable<TreeInstance> All => _cells.Values.SelectMany(c => c).Concat(_fixed);
+
+    /// <summary>Replaces the trees that do not come from the cells (the floating islands' trees).</summary>
+    public void SetFixedTrees(IEnumerable<TreeInstance> trees)
+    {
+        _fixed = trees.ToArray();
+        Version++;
+    }
 
     public void Update(Vector3 player)
     {
@@ -81,24 +89,27 @@ public sealed class TreeField
     /// <summary>Pushes a point (the player's feet) out of any tree trunk it overlaps.</summary>
     public void ResolveCollision(ref Vector3 position, float radius)
     {
+        foreach (var tree in _fixed) PushOut(ref position, radius, tree);
         int cx = (int)MathF.Floor(position.X / CellSize), cz = (int)MathF.Floor(position.Z / CellSize);
         for (int dz = -1; dz <= 1; dz++)
         for (int dx = -1; dx <= 1; dx++)
         {
             if (!_cells.TryGetValue((cx + dx, cz + dz), out var trees)) continue;
-            foreach (var tree in trees)
-            {
-                // Only the lower trunk blocks the way; flying over the crowns is fine.
-                if (position.Y > tree.Position.Y + 4f * tree.Scale) continue;
-                float reach = TreeModels.TrunkRadius(tree.Variant) * tree.Scale + radius;
-                var offset = new Vector2(position.X - tree.Position.X, position.Z - tree.Position.Z);
-                float distance = offset.Length();
-                if (distance >= reach || distance < 1e-4f) continue;
-                offset *= reach / distance;
-                position.X = tree.Position.X + offset.X;
-                position.Z = tree.Position.Z + offset.Y;
-            }
+            foreach (var tree in trees) PushOut(ref position, radius, tree);
         }
+    }
+
+    private static void PushOut(ref Vector3 position, float radius, in TreeInstance tree)
+    {
+        // Only the lower trunk blocks the way; flying over the crowns (or under them) is fine.
+        if (position.Y > tree.Position.Y + 4f * tree.Scale || position.Y < tree.Position.Y - 2f) return;
+        float reach = TreeModels.TrunkRadius(tree.Variant) * tree.Scale + radius;
+        var offset = new Vector2(position.X - tree.Position.X, position.Z - tree.Position.Z);
+        float distance = offset.Length();
+        if (distance >= reach || distance < 1e-4f) return;
+        offset *= reach / distance;
+        position.X = tree.Position.X + offset.X;
+        position.Z = tree.Position.Z + offset.Y;
     }
 
     private void Dispatch()

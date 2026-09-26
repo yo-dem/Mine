@@ -16,6 +16,12 @@ I prati sono coperti di erba che ondeggia al vento e brilla in controluce, e il 
 di boschi e alberi isolati in stile fiabesco: querce, cipressi, alberi dorati, turchesi, fioriti di lilla,
 ad ombrello, e alcuni con sfere luminose appese che si accendono di notte.
 
+Nel cielo galleggiano isole fluttuanti con alberi in cima e cristalli luminosi appesi sotto: in volo
+ci puoi atterrare e camminarci sopra. Le nuvole sono volumetriche, si colorano all'alba e al tramonto
+e proiettano ombre in movimento sul paesaggio. Il bloom fa brillare sole, luci e cristalli, i raggi
+di luce filtrano tra nuvole e alberi, e l'aria è piena di particelle: granelli dorati di giorno,
+spore lilla al tramonto, lucciole di notte.
+
 > Nato come clone di Minecraft: la versione a blocchi è sul branch `main`.
 > Questo branch (`terreno-realistico`) la sostituisce con un terreno continuo.
 
@@ -43,6 +49,7 @@ In quel caso: Impostazioni → Sistema → Schermo → Grafica → aggiungi `Min
 | Click sinistro | Raccogli l'oggetto che guardi |
 | Click destro | Piazza l'oggetto selezionato sul terreno |
 | 1 – 3 / rotella | Scegli l'oggetto: lanterna, torcia, cristallo |
+| Q | Qualità alta / bassa (bassa: automatica sulle schede integrate) |
 | Esc | Libera il mouse (di nuovo Esc: esci) |
 
 ## Struttura
@@ -57,6 +64,8 @@ src/
     TerrainField.cs       forma del terreno: altezza in ogni punto
     DayCycle.cs           orologio e colori di cielo e luce per ogni ora
     WorldObjects.cs       lanterne, torce e cristalli: generati, raccolti, piazzati; le loro luci
+    IslandField.cs        isole fluttuanti: dove sono, forma, alberi in cima
+    Ground.cs             dove si può camminare: terreno e cime delle isole
     TreeField.cs          dove crescono gli alberi (boschi, alberi isolati), collisione con i tronchi
     GroundMaterials.cs    colore e copertura dell'erba (copia in C# delle funzioni dello shader)
   Rendering/
@@ -66,7 +75,12 @@ src/
     GrassRenderer.cs      fili d'erba attorno al giocatore (instancing, costruiti in background)
     TreeModels.cs         modelli procedurali degli alberi, 8 stili e 4 livelli di dettaglio
     TreeRenderer.cs       disegno degli alberi (instancing per stile e livello di dettaglio)
-    SkyRenderer.cs        cielo, sole, luna, stelle, nuvole
+    SkyRenderer.cs        cielo, sole, luna, stelle, nuvole volumetriche
+    CloudNoise.cs         texture di rumore 3D per le nuvole
+    PostProcess.cs        buffer HDR, bloom, raggi di luce, color grading
+    MoteRenderer.cs       particelle magiche: granelli, spore, lucciole
+    IslandRenderer.cs     modelli delle isole fluttuanti
+    MeshBuilder.cs        costruzione di modelli (oggetti, isole)
     ShadowMap.cs          mappa delle ombre vista dal sole
     Shader.cs, Crosshair.cs
 ```

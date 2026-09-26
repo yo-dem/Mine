@@ -5,7 +5,10 @@ using Silk.NET.OpenGL;
 namespace Mine.Rendering;
 
 /// <summary>
-/// Draws the sky (gradient, square sun and moon, stars, clouds) as a full-screen triangle.
+/// Draws the sky (gradient, square sun and moon, stars, volumetric clouds) as a full-screen triangle.
+/// Output is HDR (bright things above 1, for the bloom); tone mapping happens in the post-process pass.
+/// It is drawn after the opaque geometry, at the far plane with a less-or-equal depth test, so the
+/// expensive cloud ray march only runs on the pixels where the sky is actually visible.
 /// The sky GLSL is shared with the terrain shader so the fog matches the sky exactly.
 /// </summary>
 public sealed class SkyRenderer : IDisposable
@@ -22,10 +25,32 @@ public sealed class SkyRenderer : IDisposable
         """;
 
     /// <summary>
-    /// Uniforms, <see cref="Hash"/>, <c>skyColor(dir, bodies)</c> and <c>toneMap</c>, to paste after
-    /// <c>#version</c> in fragment shaders (it uses <c>fwidth</c>).
+    /// Uniforms, <see cref="Hash"/>, <c>skyColor(dir, bodies)</c> and <c>cloudDensity(p, detail)</c>,
+    /// to paste after <c>#version</c> in fragment shaders (it uses <c>fwidth</c>). The cloud noise
+    /// texture must be bound to unit <see cref="CloudNoiseUnit"/>.
     /// </summary>
     public const string Glsl = Hash + """
+        uniform sampler3D uCloudNoise;
+        uniform float uCloudTime; // game seconds, so clouds speed up with the clock
+        const float CloudBottom = 260.0;
+        const float CloudTop = 580.0;
+
+        // Cloud density at a point: broad shapes from low-frequency noise, rounded at the base and
+        // thinning toward the top of the layer; detail erodes the edges into wisps. lod blurs the
+        // noise (mip level), for long ray-march steps and soft cloud shadows.
+        float cloudDensity(vec3 p, bool detail, float lod)
+        {
+            float h = (p.y - CloudBottom) / (CloudTop - CloudBottom);
+            if (h < 0.0 || h > 1.0) return 0.0;
+            vec3 wind = vec3(1.0, 0.0, 0.35) * uCloudTime * 3.0;
+            vec3 q = (p + wind) * 0.0011;
+            float shape = textureLod(uCloudNoise, q * vec3(1.0, 1.8, 1.0), lod).r * 0.7 + textureLod(uCloudNoise, q * 2.7 + 0.37, lod + 1.4).r * 0.3;
+            float profile = smoothstep(0.0, 0.12, h) * smoothstep(1.0, 0.4, h);
+            float d = (shape * profile - 0.6) * 3.0;
+            if (detail && d > 0.0) d -= (1.0 - textureLod(uCloudNoise, q * 5.0 + 0.71, lod + 2.3).r) * 0.2;
+            return clamp(d, 0.0, 1.0);
+        }
+
         uniform vec3 uZenith;
         uniform vec3 uHorizon;
         uniform vec3 uSunHorizon;
@@ -73,13 +98,6 @@ public sealed class SkyRenderer : IDisposable
                 if (r < 1.0) shade *= r > 0.7 ? 0.92 : 0.84;
             }
             return vec3(0.55, 0.6, 0.72) * shade;
-        }
-
-        // Soft shoulder above 0.7: bright sunsets saturate instead of clipping to white.
-        vec3 toneMap(vec3 c)
-        {
-            vec3 over = max(c - 0.7, 0.0);
-            return min(c, 0.7) + 0.3 * (1.0 - exp(-over / 0.3));
         }
 
         // bodies = false leaves out sun, moon and stars (used for fog and sky light).
@@ -134,13 +152,13 @@ public sealed class SkyRenderer : IDisposable
                                + 0.2 * sin(uTime * 9.3 + phase * 7.3);
                     float twinkle = max(1.0 + wave * mix(0.7, 0.35, up), 0.0);
                     float fade = smoothstep(0.0, 0.25, d.y); // extinction near the horizon
-                    c += vec3(1.1, 1.1, 1.25) * smoothstep(0.45, 0.0, r) * magnitude * twinkle * fade * starVisibility;
+                    c += vec3(1.8, 1.8, 2.1) * smoothstep(0.45, 0.0, r) * magnitude * twinkle * fade * starVisibility;
                 }
             }
 
             // Slightly tilted squares: a small sun and a big, faint and hazy moon.
             vec2 sq = bodyCoords(d, uSunDir, 0.045, 0.3);
-            c += vec3(1.5, 1.35, 1.1) * squareMask(sq, d, uSunDir, 0.0) * aboveHorizon * (1.0 - uNight);
+            c += vec3(9.0, 8.0, 6.5) * squareMask(sq, d, uSunDir, 0.0) * aboveHorizon * (1.0 - uNight);
             vec2 mq = bodyCoords(d, uMoonDir, 0.14, -0.35);
             float moonAlpha = 0.95 * smoothstep(-0.02, 0.3, d.y) * uNight;
             c = mix(c, c * 0.5 + moonSurface(mq), squareMask(mq, d, uMoonDir, 0.1) * moonAlpha);
@@ -156,7 +174,7 @@ public sealed class SkyRenderer : IDisposable
         {
             // Full-screen triangle from the vertex index, no buffers needed.
             vNdc = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2) * 2.0 - 1.0;
-            gl_Position = vec4(vNdc, 0.0, 1.0);
+            gl_Position = vec4(vNdc, 1.0, 1.0); // on the far plane: only where nothing else was drawn
         }
         """;
 
@@ -165,63 +183,81 @@ public sealed class SkyRenderer : IDisposable
         in vec2 vNdc;
         uniform mat4 uInvViewProj; // rotation-only view, so the camera sits at the origin
         uniform vec3 uCameraPos;
-        uniform float uCloudTime;  // game seconds, so clouds speed up with the clock
+        uniform int uCloudSteps;      // ray-march samples (quality)
+        uniform int uCloudLightSteps; // samples toward the light per ray-march sample
         out vec4 FragColor;
 
-        float hash12(vec2 p)
+        float henyeyGreenstein(float cosAngle, float g)
         {
-            vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-            p3 += dot(p3, p3.yzx + 33.33);
-            return fract((p3.x + p3.y) * p3.z);
+            float g2 = g * g;
+            return (1.0 - g2) / (4.0 * 3.14159 * pow(1.0 + g2 - 2.0 * g * cosAngle, 1.5));
         }
 
-        float valueNoise(vec2 p)
+        // Ray-marches the cloud layer. Returns the light scattered toward the camera (rgb) and the
+        // transmittance (a). Each sample also marches a few steps toward the sun (or the moon) to
+        // shade itself: thick cores go dark, thin edges glow, and seen against the light they get
+        // a silver lining (forward scattering).
+        vec4 marchClouds(vec3 ro, vec3 rd)
         {
-            vec2 i = floor(p), f = fract(p);
-            vec2 u = f * f * (3.0 - 2.0 * f);
-            return mix(mix(hash12(i), hash12(i + vec2(1.0, 0.0)), u.x),
-                       mix(hash12(i + vec2(0.0, 1.0)), hash12(i + vec2(1.0, 1.0)), u.x), u.y);
-        }
+            if (abs(rd.y) < 1e-4) return vec4(0.0, 0.0, 0.0, 1.0);
+            float tb = (CloudBottom - ro.y) / rd.y, tt = (CloudTop - ro.y) / rd.y;
+            float t0 = max(min(tb, tt), 0.0), t1 = max(tb, tt);
+            if (t1 <= 0.0 || t0 > 12000.0) return vec4(0.0, 0.0, 0.0, 1.0);
+            t1 = min(t1, t0 + 3500.0);
 
-        float fbm(vec2 p)
-        {
-            float value = 0.0, amplitude = 0.5;
-            for (int i = 0; i < 5; i++)
+            float stepLength = (t1 - t0) / float(uCloudSteps);
+            // Interleaved gradient noise: an even, fine-grained jitter that hides the step banding.
+            float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+            float t = t0 + stepLength * jitter;
+            // One noise texel spans about 14 m: blur the noise as the steps grow longer than that.
+            float lod = max(log2(stepLength / 14.0), 0.0);
+
+            bool moonlit = uNight > 0.5;
+            vec3 lightDir = moonlit ? uMoonDir : uSunDir;
+            vec3 lightColor = moonlit ? vec3(0.22, 0.26, 0.45) * uNight : uSunGlow * 1.7;
+            vec3 ambient = mix(uHorizon, uZenith, 0.55) * 0.75 + uSunHorizon * uHaze * 0.25;
+            float cosAngle = dot(rd, lightDir);
+            float phase = mix(henyeyGreenstein(cosAngle, 0.7), henyeyGreenstein(cosAngle, -0.2), 0.4) * 4.0;
+
+            float transmittance = 1.0;
+            vec3 light = vec3(0.0);
+            for (int i = 0; i < 64; i++)
             {
-                value += amplitude * valueNoise(p);
-                p = p * 2.03 + vec2(17.1, 3.7);
-                amplitude *= 0.5;
+                if (i >= uCloudSteps) break;
+                vec3 p = ro + rd * t;
+                float density = cloudDensity(p, true, lod);
+                if (density > 0.001)
+                {
+                    float depth = 0.0;
+                    float lightStep = 135.0 / float(uCloudLightSteps);
+                    for (int j = 1; j <= 4; j++)
+                    {
+                        if (j > uCloudLightSteps) break;
+                        depth += cloudDensity(p + lightDir * (float(j) * lightStep), false, lod + 1.0) * lightStep;
+                    }
+                    float toLight = exp(-depth * 0.03);
+                    float powder = 1.0 - exp(-density * 5.0);
+                    float height = (p.y - CloudBottom) / (CloudTop - CloudBottom);
+                    vec3 scattered = lightColor * toLight * phase * powder + ambient * (0.45 + 0.55 * height);
+                    float stepTransmittance = exp(-density * 0.025 * stepLength);
+                    light += transmittance * scattered * (1.0 - stepTransmittance);
+                    transmittance *= stepTransmittance;
+                    if (transmittance < 0.02) break;
+                }
+                t += stepLength;
             }
-            return value;
-        }
 
-        // A flat layer of soft clouds high above the world, drifting with the wind.
-        vec3 clouds(vec3 d, vec3 sky)
-        {
-            if (d.y < 0.01) return sky;
-            const float height = 220.0;
-            float dist = (height - uCameraPos.y) / d.y;
-            vec2 p = uCameraPos.xz + d.xz * dist + vec2(1.0, 0.35) * uCloudTime * 2.0;
-            float density = smoothstep(0.5, 0.8, fbm(p / 140.0));
-            if (density <= 0.0) return sky;
-
-            // White by day, dim blue at night, coloured by the sun at dawn and dusk,
-            // with a bright rim when seen toward the sun.
-            float sd = max(dot(d, uSunDir), 0.0);
-            vec3 light = mix(vec3(0.95, 0.95, 0.98), vec3(0.07, 0.08, 0.15), uNight)
-                       + uSunGlow * (0.5 + 1.5 * pow(sd, 4.0))
-                       + uSunHorizon * uHaze * 0.4;
-            light *= 1.0 - 0.3 * density; // thicker parts are a bit darker
-
-            float alpha = density * 0.7 * smoothstep(0.01, 0.2, d.y) * (1.0 - smoothstep(2500.0, 8000.0, dist));
-            return mix(sky, light, alpha);
+            // Far clouds melt into the sky.
+            float fade = exp(-t0 * 0.00016);
+            return vec4(light * fade, mix(1.0, transmittance, fade));
         }
 
         void main()
         {
             vec4 far = uInvViewProj * vec4(vNdc, 1.0, 1.0);
             vec3 d = normalize(far.xyz / far.w);
-            FragColor = vec4(toneMap(clouds(d, skyColor(d, true))), 1.0);
+            vec4 clouds = marchClouds(uCameraPos, d);
+            FragColor = vec4(skyColor(d, true) * clouds.a + clouds.rgb, 1.0);
         }
         """;
 
@@ -236,9 +272,14 @@ public sealed class SkyRenderer : IDisposable
         _vao = gl.GenVertexArray();
     }
 
+    /// <summary>Texture unit the cloud noise is bound to while drawing the sky and the world.</summary>
+    public const int CloudNoiseUnit = 2;
+
     /// <summary>Sets the uniforms declared in <see cref="Glsl"/>.</summary>
-    public static void SetUniforms(Shader shader, in Atmosphere atmosphere, float time)
+    public static void SetUniforms(Shader shader, in Atmosphere atmosphere, float time, float cloudTime)
     {
+        shader.Set("uCloudNoise", CloudNoiseUnit);
+        shader.Set("uCloudTime", cloudTime);
         shader.Set("uZenith", atmosphere.Zenith);
         shader.Set("uHorizon", atmosphere.Horizon);
         shader.Set("uSunHorizon", atmosphere.SunHorizon);
@@ -251,20 +292,24 @@ public sealed class SkyRenderer : IDisposable
         shader.Set("uTime", time);
     }
 
+    /// <summary>Low quality (integrated GPUs): fewer cloud samples.</summary>
+    public bool LowQuality;
+
     public void Draw(Matrix4x4 inverseViewProjection, Vector3 cameraPosition, float cloudTime, in Atmosphere atmosphere, float time)
     {
         _shader.Use();
+        _shader.Set("uCloudSteps", LowQuality ? 16 : 40);
+        _shader.Set("uCloudLightSteps", LowQuality ? 2 : 3);
         _shader.Set("uInvViewProj", inverseViewProjection);
         _shader.Set("uCameraPos", cameraPosition);
-        _shader.Set("uCloudTime", cloudTime);
-        SetUniforms(_shader, atmosphere, time);
+        SetUniforms(_shader, atmosphere, time, cloudTime);
 
-        _gl.Disable(EnableCap.DepthTest);
+        _gl.DepthFunc(DepthFunction.Lequal); // the far plane still passes where the buffer is clear
         _gl.DepthMask(false);
         _gl.BindVertexArray(_vao);
         _gl.DrawArrays(PrimitiveType.Triangles, 0, 3);
         _gl.DepthMask(true);
-        _gl.Enable(EnableCap.DepthTest);
+        _gl.DepthFunc(DepthFunction.Less);
     }
 
     public void Dispose()

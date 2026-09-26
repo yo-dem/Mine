@@ -160,6 +160,14 @@ public static class TerrainShaders
             return sum * mix(0.25, 1.0, uNight);
         }
 
+        // Shade of the clouds drifting between the surface and the sun (or the moon).
+        float cloudShadow(vec3 pos)
+        {
+            float t = ((CloudBottom + CloudTop) * 0.5 - pos.y) / max(uLightDir.y, 0.15);
+            float d = cloudDensity(pos + uLightDir * t, false, 1.5);
+            return 1.0 - 0.7 * smoothstep(0.0, 0.6, d);
+        }
+
         // wrap > 0 lets light bend around soft shapes (foliage, grass) instead of cutting off at 90 degrees.
         vec3 litColor(vec3 albedo, vec3 pos, vec3 n, float wrap)
         {
@@ -168,7 +176,8 @@ public static class TerrainShaders
             // turned away from the sun stay readable and colourful.
             vec3 skyLight = skyColor(normalize(n + vec3(0.0, 0.6, 0.0)), false);
             vec3 ambient = mix(uAmbient, skyLight, 0.35) * (0.9 + 0.2 * n.y) * 1.25;
-            return albedo * (ambient + uLightColor * diffuse * shadowAt(pos, n) + pointLighting(pos, n));
+            vec3 direct = uLightColor * diffuse * shadowAt(pos, n) * cloudShadow(pos);
+            return albedo * (ambient + direct + pointLighting(pos, n));
         }
 
         // Gentle aerial haze with a faint, slowly drifting variation.
@@ -182,7 +191,8 @@ public static class TerrainShaders
             return 1.0 - exp(-uMistDensity * dist * drift);
         }
 
-        // cutThrough < 1 lets glowing things shine through the haze and fog.
+        // cutThrough < 1 lets glowing things shine through the haze and fog. The result is HDR:
+        // tone mapping happens in the post-process pass.
         vec4 finishColor(vec3 color, vec3 pos, float cutThrough)
         {
             vec3 toFragment = pos - uCameraPos;
@@ -202,7 +212,7 @@ public static class TerrainShaders
 
             // Edge fog: only the last stretch before the end of the view fades into the sky.
             float edge = smoothstep(uFogStart, uFogEnd, dist) * cutThrough;
-            return vec4(toneMap(mix(color, sky, edge)), 1.0);
+            return vec4(mix(color, sky, edge), 1.0);
         }
         """;
 
@@ -399,7 +409,7 @@ public static class TerrainShaders
             color += vColor * uLightColor * pow(max(dot(rd, uLightDir), 0.0), 4.0) * 0.5 * vFoliage;
             color += skyColor(n, false) * pow(1.0 - max(dot(n, -rd), 0.0), 3.0) * 0.18 * vFoliage;
             // Glowing orbs shine with their own colour, brighter at night.
-            color = mix(color, vColor * mix(1.4, 2.2, uNight), vEmissive);
+            color = mix(color, vColor * mix(2.5, 4.5, uNight), vEmissive);
             FragColor = finishColor(color, vWorldPos, 1.0 - 0.8 * vEmissive);
         }
         """;
@@ -449,7 +459,7 @@ public static class TerrainShaders
             vec3 n = normalize(vNormal);
             vec3 color = litColor(vColor, vWorldPos, n, 0.0);
             // Glowing parts shine with their own colour, brighter at night.
-            color = mix(color, vColor * uGlow * mix(1.3, 1.8, uNight), vEmissive);
+            color = mix(color, vColor * uGlow * mix(2.5, 4.0, uNight), vEmissive);
             color += vColor * 0.35 * uHighlight;
             FragColor = finishColor(color, vWorldPos, 1.0 - 0.8 * vEmissive);
         }

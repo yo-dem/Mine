@@ -4,8 +4,8 @@ using Mine.World;
 namespace Mine;
 
 /// <summary>
-/// First-person player walking on the smooth terrain: gravity, jumping, inertia,
-/// and sliding down slopes too steep to climb.
+/// First-person player walking on the smooth terrain (and the floating islands): gravity,
+/// jumping, inertia, and sliding down slopes too steep to climb.
 /// </summary>
 public sealed class Player
 {
@@ -62,7 +62,7 @@ public sealed class Player
 
     /// <param name="move">x = strafe right, y = forward, both in [-1, 1].</param>
     /// <param name="down">Descends while flying, sneaks while walking.</param>
-    public void Update(TerrainField terrain, float dt, Vector2 move, bool up, bool down, bool sprint)
+    public void Update(Ground ground, float dt, Vector2 move, bool up, bool down, bool sprint)
     {
         Sneaking = down && !Flying;
         float eyeTarget = Sneaking ? SneakEyeHeight : EyeHeight;
@@ -88,7 +88,7 @@ public sealed class Player
             float rate = OnGround ? (moving ? GroundAccel : GroundFriction) : (moving ? AirAccel : AirFriction);
             var horizontal = Approach(new Vector3(Velocity.X, 0, Velocity.Z), target, rate, dt);
 
-            var normal = terrain.Normal(Position.X, Position.Z);
+            var normal = ground.Normal(Position.X, Position.Z, Position.Y);
             bool tooSteep = normal.Y < MaxWalkableNormalY;
             if (OnGround && tooSteep)
             {
@@ -105,14 +105,14 @@ public sealed class Player
             if (up && OnGround && !tooSteep) Velocity.Y = JumpSpeed;
         }
 
-        Move(terrain, Velocity * dt);
+        Move(ground, Velocity * dt);
     }
 
-    private void Move(TerrainField terrain, Vector3 delta)
+    private void Move(Ground surface, Vector3 delta)
     {
         bool wasOnGround = OnGround;
         Position += delta;
-        float ground = terrain.Height(Position.X, Position.Z);
+        float ground = surface.Height(Position.X, Position.Z, Position.Y);
 
         OnGround = false;
         if (Position.Y <= ground)
