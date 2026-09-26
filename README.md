@@ -13,6 +13,8 @@ e stelle cadenti. La sabbia e i prati scintillano di granelli luminosi.
 Nelle zone basse ci sono mari e laghi che riflettono il cielo, galassia compresa, con spiagge di sabbia viola:
 nell'acqua bassa pulsano venature di luce ciano bioluminescente, la riva è segnata da una linea luminosa
 e sulla superficie brillano scintille come stelle cadute. Nell'acqua si cammina a mezza gamba.
+Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno, tra scogli
+scuri; nell'acqua bassa galleggiano fiori di loto luminosi e sui prati spuntano campanule che brillano.
 
 Nel mondo si trovano cristalli e lanterne da raccogliere, e puoi piazzare lanterne, torce e cristalli
 dove vuoi: ognuno emette una luce colorata che illumina il paesaggio attorno, con un alone nell'aria.

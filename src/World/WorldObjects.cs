@@ -134,29 +134,36 @@ public sealed class WorldObjects
         return obj;
     }
 
-    /// <summary>The brightest nearby lights, nearest first, with torch flicker and crystal pulse applied.</summary>
-    public int CollectLights(Vector3 center, float time, Span<PointLight> lights)
+    /// <summary>
+    /// The nearest lights, nearest first: the objects' (with torch flicker and crystal pulse applied)
+    /// and any <paramref name="extra"/> ones, such as the glowing crystal clusters.
+    /// </summary>
+    public int CollectLights(Vector3 center, float time, Span<PointLight> lights, IEnumerable<PointLight> extra)
     {
         var candidates = All
-            .Select(o => (Obj: o, DistSq: Vector3.DistanceSquared(o.LightPosition, center)))
-            .Where(c => c.DistSq < 150f * 150f)
-            .OrderBy(c => c.DistSq)
+            .Where(o => Vector3.DistanceSquared(o.LightPosition, center) < 150f * 150f)
+            .Select(o => ObjectLight(o, time))
+            .Concat(extra)
+            .OrderBy(l => Vector3.DistanceSquared(l.Position, center))
             .Take(lights.Length);
 
         int count = 0;
-        foreach (var (obj, _) in candidates)
-        {
-            var def = obj.Def;
-            float phase = (obj.Id & 1023) * 0.618f;
-            float flicker = obj.Kind switch
-            {
-                ObjectKind.Torch => 0.82f + 0.1f * MathF.Sin(time * 9.1f + phase) + 0.08f * MathF.Sin(time * 23.7f + phase * 3),
-                ObjectKind.Crystal => 0.8f + 0.2f * MathF.Sin(time * 1.4f + phase),
-                _ => 0.95f + 0.05f * MathF.Sin(time * 2.3f + phase),
-            };
-            lights[count++] = new PointLight(obj.LightPosition, def.LightColor * def.LightIntensity * flicker, def.LightRadius);
-        }
+        foreach (var light in candidates)
+            lights[count++] = light;
         return count;
+    }
+
+    private static PointLight ObjectLight(WorldObject obj, float time)
+    {
+        var def = obj.Def;
+        float phase = (obj.Id & 1023) * 0.618f;
+        float flicker = obj.Kind switch
+        {
+            ObjectKind.Torch => 0.82f + 0.1f * MathF.Sin(time * 9.1f + phase) + 0.08f * MathF.Sin(time * 23.7f + phase * 3),
+            ObjectKind.Crystal => 0.8f + 0.2f * MathF.Sin(time * 1.4f + phase),
+            _ => 0.95f + 0.05f * MathF.Sin(time * 2.3f + phase),
+        };
+        return new PointLight(obj.LightPosition, def.LightColor * def.LightIntensity * flicker, def.LightRadius);
     }
 
     /// <summary>How bright the object's own glowing parts are right now (matches its light).</summary>

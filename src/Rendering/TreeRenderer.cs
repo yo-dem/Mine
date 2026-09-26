@@ -50,7 +50,7 @@ public sealed unsafe class TreeRenderer : IDisposable
         foreach (var tree in field.All)
         {
             float distance = new Vector2(tree.Position.X - camera.X, tree.Position.Z - camera.Z).Length();
-            if (distance > TreeField.Radius) continue;
+            if (distance > TreeField.Radius || distance > TreeModels.MaxDistance(tree.Variant)) continue;
             int lod = 0;
             while (lod < LodDistances.Length && distance >= LodDistances[lod]) lod++;
             var list = _batches[tree.Variant, lod].Instances;

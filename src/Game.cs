@@ -191,7 +191,7 @@ public sealed class Game : IDisposable
 
         var atmosphere = _dayCycle.Sample();
         float time = (float)_time;
-        _lightCount = _objects.CollectLights(eye, time, _lights);
+        _lightCount = _objects.CollectLights(eye, time, _lights, _treeField.GlowingLights(eye, 80f));
         var shadowCenter = _player.Position;
         _shadowMap.Render(shadowCenter, atmosphere.LightDirection, time, () =>
         {
@@ -282,12 +282,13 @@ public sealed class Game : IDisposable
         var clip = Vector4.Transform(new Vector4(direction * 1000f, 1f), skyViewProjection);
         if (clip.W <= 0) return (Vector2.Zero, Vector3.Zero);
         var ndc = new Vector2(clip.X, clip.Y) / clip.W;
-        float onScreen = Math.Clamp((1.6f - MathF.Max(MathF.Abs(ndc.X), MathF.Abs(ndc.Y))) / 0.6f, 0f, 1f);
+        // Fade out as the light nears the edge: off-screen, the radial blur would smear long streaks.
+        float onScreen = Math.Clamp((1.1f - MathF.Max(MathF.Abs(ndc.X), MathF.Abs(ndc.Y))) / 0.3f, 0f, 1f);
         float facing = Math.Clamp((Vector3.Dot(look, direction) - 0.3f) / 0.7f, 0f, 1f);
         float aboveHorizon = Math.Clamp(direction.Y / 0.05f + 0.5f, 0f, 1f);
         float strength = onScreen * facing * aboveHorizon;
         var color = moon
-            ? new Vector3(0.45f, 0.45f, 0.8f) * atmosphere.Night * 0.9f
+            ? new Vector3(0.45f, 0.45f, 0.8f) * atmosphere.Night * 0.5f
             : (atmosphere.SunGlow * 0.5f + new Vector3(0.15f)) * (1f - atmosphere.Night) * (0.6f + 0.4f * atmosphere.Haze);
         return (ndc * 0.5f + new Vector2(0.5f), color * strength);
     }

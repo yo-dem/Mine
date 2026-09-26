@@ -65,6 +65,14 @@ public static class TreeModels
         _ => 700f,
     };
 
+    /// <summary>The colour a decoration lights its surroundings with, or null if it gives no light.</summary>
+    public static System.Numerics.Vector3? GlowColor(int variant) => variant < Styles.Length ? null : (Decoration)(variant - Styles.Length) switch
+    {
+        Decoration.VioletCrystals => new Vector3(0.66f, 0.42f, 1.0f),
+        Decoration.CyanCrystals => new Vector3(0.40f, 0.85f, 1.0f),
+        _ => null,
+    };
+
     /// <summary>Radius of a variant's trunk at the foot, before instance scaling (for collisions).</summary>
     public static float TrunkRadius(int variant) => variant < Styles.Length ? Styles[variant].TrunkRadius : (Decoration)(variant - Styles.Length) switch
     {
@@ -289,7 +297,7 @@ public static class TreeModels
                     var top = foot + new Vector3(0, height, 0) + bend;
                     Cylinder(mesh, new Segment(foot, top, 0.018f, 0.012f, 0, 0.8f), 3, new Vector3(0.10f, 0.20f, 0.26f));
                     // A drooping bell: a small cone hanging from the tip.
-                    var color = i % 2 == 0 ? new Vector3(0.45f, 0.9f, 1.0f) : new Vector3(0.8f, 0.55f, 1.0f);
+                    var color = i % 2 == 0 ? new Vector3(0.2f, 0.75f, 1.0f) : new Vector3(0.7f, 0.35f, 1.0f);
                     Bell(mesh, top + bend * 0.2f, 0.07f + 0.04f * random.NextSingle(), color, lod >= 2 ? 5 : 8);
                 }
                 break;
@@ -382,8 +390,8 @@ public static class TreeModels
             var o1 = new Vector3(MathF.Cos(a1), 0, MathF.Sin(a1));
             var p0 = mouth + o0 * radius; var p1 = mouth + o1 * radius;
             var n = Vector3.Normalize(o0 + o1 + new Vector3(0, 0.5f, 0));
-            Vertex(mesh, top, n, color, 1f, 1f); Vertex(mesh, p1, n, color, 0.8f, 1f); Vertex(mesh, p0, n, color, 0.8f, 1f);
-            Vertex(mesh, top, -n, color, 1f, 1f); Vertex(mesh, p0, -n, color, 0.8f, 1f); Vertex(mesh, p1, -n, color, 0.8f, 1f);
+            Vertex(mesh, top, n, color, 0.55f, 1f); Vertex(mesh, p1, n, color, 0.4f, 1f); Vertex(mesh, p0, n, color, 0.4f, 1f);
+            Vertex(mesh, top, -n, color, 0.55f, 1f); Vertex(mesh, p0, -n, color, 0.4f, 1f); Vertex(mesh, p1, -n, color, 0.4f, 1f);
         }
     }
 

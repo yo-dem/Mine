@@ -41,17 +41,32 @@ public sealed unsafe class PostProcess : IDisposable
 
         vec3 tap(vec2 offset) { return texture(uSource, vUv + offset * uTexel).rgb; }
 
+        // Karis average: on the first pass each group of taps is weighted by 1 / (1 + luma), so a
+        // lone super-bright pixel (a glint through a crack, a far spark) cannot bloom into a big blob.
+        float karis(vec3 c) { return 1.0 / (1.0 + dot(c, vec3(0.3, 0.59, 0.11))); }
+
         void main()
         {
             vec3 a = tap(vec2(-2, 2)), b = tap(vec2(0, 2)), c = tap(vec2(2, 2));
             vec3 d = tap(vec2(-2, 0)), e = tap(vec2(0, 0)), f = tap(vec2(2, 0));
             vec3 g = tap(vec2(-2, -2)), h = tap(vec2(0, -2)), i = tap(vec2(2, -2));
             vec3 j = tap(vec2(-1, 1)), k = tap(vec2(1, 1)), l = tap(vec2(-1, -1)), m = tap(vec2(1, -1));
-            vec3 color = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
+            vec3 color;
+            if (uPrefilter == 1)
+            {
+                vec3 g0 = (j + k + l + m) * 0.25, g1 = (a + b + d + e) * 0.25, g2 = (b + c + e + f) * 0.25;
+                vec3 g3 = (d + e + g + h) * 0.25, g4 = (e + f + h + i) * 0.25;
+                float w0 = karis(g0) * 0.5, w1 = karis(g1) * 0.125, w2 = karis(g2) * 0.125, w3 = karis(g3) * 0.125, w4 = karis(g4) * 0.125;
+                color = (g0 * w0 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4) / (w0 + w1 + w2 + w3 + w4);
+            }
+            else
+            {
+                color = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
+            }
 
             if (uPrefilter == 1)
             {
-                color = min(color, vec3(40.0)); // tame single super-bright pixels
+                color = min(color, vec3(20.0));
                 float brightness = max(color.r, max(color.g, color.b));
                 const float knee = 0.5;
                 float soft = clamp(brightness - uThreshold + knee, 0.0, 2.0 * knee);
@@ -94,6 +109,8 @@ public sealed unsafe class PostProcess : IDisposable
 
         vec3 skyNearLight(vec2 uv)
         {
+            // Off-screen samples would repeat the edge row (clamp-to-edge) into long streaks.
+            if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec3(0.0);
             if (texture(uDepth, uv).r < 0.99999) return vec3(0.0); // something is in the way
             vec2 d = (uv - uLightUv) * vec2(uAspect, 1.0);
             float nearLight = exp(-dot(d, d) * 18.0);
@@ -102,8 +119,13 @@ public sealed unsafe class PostProcess : IDisposable
 
         void main()
         {
-            vec2 step = (uLightUv - vUv) / float(uSamples) * 0.9;
-            vec2 uv = vUv;
+            // March a limited stretch toward the light (long steps would stamp copies of the sun or
+            // moon along the ray), starting at a per-pixel offset that blends the samples into streaks.
+            vec2 delta = uLightUv - vUv;
+            float len = max(length(delta), 1e-4);
+            vec2 step = delta / len * min(len, 0.4) / float(uSamples);
+            float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+            vec2 uv = vUv + step * jitter;
             float weight = 1.0;
             float decay = pow(0.965, 48.0 / float(uSamples)); // same falloff whatever the sample count
             vec3 sum = vec3(0.0);

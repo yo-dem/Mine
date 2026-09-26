@@ -545,7 +545,7 @@ public static class TerrainShaders
             }
             color += glow * mix(0.45, 1.0, uNight);
 
-            FragColor = finishColor(color, vWorldPos, 1.0);
+            FragColor = finishColor(min(color, vec3(8.0)), vWorldPos, 1.0);
         }
         """;
 
