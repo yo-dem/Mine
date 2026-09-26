@@ -47,7 +47,7 @@ public sealed class MoteRenderer : IDisposable
             float fade = smoothstep(1.0, 0.75, max(edge.x, max(edge.y, edge.z))) * smoothstep(35.0, 12.0, uHeightAboveGround);
 
             // Day sparkles, dusk spores, night fireflies: pick by time of day, and thin out by day.
-            float blink = pow(0.5 + 0.5 * sin(uTime * (1.5 + 2.0 * seed.y) + id * 3.1), 6.0);
+            float blink = pow(max(0.5 + 0.5 * sin(uTime * (1.5 + 2.0 * seed.y) + id * 3.1), 0.0), 6.0);
             vec3 sparkle = vec3(1.0, 0.85, 0.5) * (0.6 + 0.4 * sin(uTime * 7.0 + id)) * step(0.72, kind) * 0.7;
             vec3 spore = mix(vec3(0.85, 0.55, 1.0), vec3(1.0, 0.6, 0.75), seed.z) * 1.2;
             vec3 firefly = mix(vec3(0.8, 1.0, 0.35), vec3(1.0, 0.8, 0.3), seed.x) * blink * 3.5;

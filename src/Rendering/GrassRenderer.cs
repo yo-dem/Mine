@@ -17,6 +17,10 @@ public sealed unsafe class GrassRenderer : IDisposable
     public const float Radius = 70f;
     private const float TileSize = 32f;
     private const float BladesPerSquareMetre = 14f;
+    // Every blade is at least this tall; the tallest reach MaxHeight on ordinary ground, and much
+    // more in the tall grass meadows (see GroundMaterials.TallGrass).
+    private const float MinHeight = 0.3f;
+    private const float MaxHeight = 0.7f, ThighHeight = 1.05f, GiantHeight = 2.4f;
     private const int FloatsPerBlade = 11;
     private const int UploadsPerFrame = 4;
 
@@ -104,11 +108,14 @@ public sealed unsafe class GrassRenderer : IDisposable
         float S(int i, int j) => smooth[(j + 1) * n + (i + 1)];
 
         var random = new Random(tx * 73856093 ^ tz * 19349663);
-        int count = (int)(TileSize * TileSize * BladesPerSquareMetre);
+        // Tall meadows are denser: more attempts everywhere, most of them dropped on ordinary ground.
+        int count = (int)(TileSize * TileSize * BladesPerSquareMetre * 1.6f);
         var blades = new List<float>(count * FloatsPerBlade);
         for (int b = 0; b < count; b++)
         {
             float lx = random.NextSingle() * TileSize, lz = random.NextSingle() * TileSize;
+            float tall = GroundMaterials.TallGrass(x0 + lx, z0 + lz);
+            if (random.NextSingle() > 0.6f + 0.4f * tall) continue;
             int i = (int)(lx / t), j = (int)(lz / t);
             float y = TerrainField.Layer(S(i, j));
             float gx = (S(i + 1, j) - S(i - 1, j)) / (2 * t), gz = (S(i, j + 1) - S(i, j - 1)) / (2 * t);
@@ -118,14 +125,18 @@ public sealed unsafe class GrassRenderer : IDisposable
             float grass = GroundMaterials.GrassWeight(root, normalY);
             if (grass < 0.35f) continue;
             var color = GroundMaterials.GrassColor(root.X, root.Z);
+            color = Vector3.Lerp(color, new Vector3(0.55f, 0.38f, 0.62f), tall * 0.4f); // meadows turn lilac-gold
 
             blades.Add(root.X);
             blades.Add(root.Y);
             blades.Add(root.Z);
             blades.Add(random.NextSingle());                        // bend
             blades.Add(random.NextSingle() * MathF.Tau);            // facing
-            float height = 0.25f + 0.45f * random.NextSingle() * random.NextSingle() + 0.15f * random.NextSingle();
-            blades.Add(height * (0.4f + 0.6f * Math.Clamp((grass - 0.35f) / 0.45f, 0f, 1f)));
+            float maxHeight = tall <= 0.5f
+                ? float.Lerp(MaxHeight, ThighHeight, tall * 2f)
+                : float.Lerp(ThighHeight, GiantHeight, (tall - 0.5f) * 2f);
+            float r = random.NextSingle();
+            blades.Add(MinHeight + (maxHeight - MinHeight) * (0.35f * r + 0.65f * r * r));
             blades.Add(random.NextSingle());                        // thinning key
             blades.Add(random.NextSingle() * random.NextSingle());  // colour variation
             blades.Add(color.X);

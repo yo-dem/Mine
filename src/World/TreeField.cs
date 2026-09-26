@@ -17,6 +17,8 @@ public readonly record struct TreeInstance(Vector3 Position, float Yaw, float Sc
 public sealed class TreeField
 {
     public const float CellSize = 32f;
+    private const float GroveSize = 80f;        // groves are Voronoi regions around points jittered on this grid
+    private const float OtherSpeciesChance = 0.1f;
     public const float Radius = 950f;
     private const int CellsPerTask = 48;
 
@@ -108,6 +110,27 @@ public sealed class TreeField
         }
     }
 
+    /// <summary>
+    /// The species of the grove a point belongs to: the nearest of a set of points jittered on a
+    /// <see cref="GroveSize"/> grid (so groves have irregular, organic borders) picks it from the family.
+    /// </summary>
+    private int GroveSpecies(float x, float z, int[] family)
+    {
+        int gx = (int)MathF.Floor(x / GroveSize), gz = (int)MathF.Floor(z / GroveSize);
+        float best = float.MaxValue;
+        uint bestHash = 0;
+        for (int dz = -1; dz <= 1; dz++)
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            uint h = Hash(gx + dx + 7919, gz + dz - 104729);
+            float px = (gx + dx + (h & 0xFF) / 255f) * GroveSize;
+            float pz = (gz + dz + ((h >> 8) & 0xFF) / 255f) * GroveSize;
+            float d = (px - x) * (px - x) + (pz - z) * (pz - z);
+            if (d < best) { best = d; bestHash = h; }
+        }
+        return family[(int)((bestHash >> 16) % (uint)family.Length)];
+    }
+
     /// <summary>Pushes a point (the player's feet) out of any tree trunk it overlaps.</summary>
     public void ResolveCollision(ref Vector3 position, float radius)
     {
@@ -169,7 +192,10 @@ public sealed class TreeField
             float y = _terrain.Height(x, z);
             // Gentle ground only, and not on the sand or the rock (see the terrain materials).
             if (y < TerrainField.WaterLevel + 5f || _terrain.Normal(x, z, 1f).Y < 0.86f) continue;
-            int variant = family[random.Next(family.Length)];
+            // Tall grass meadows are open land.
+            if (GroundMaterials.TallGrass(x, z) > 0.2f) continue;
+            // One species rules each grove; now and then another one grows among it.
+            int variant = random.NextSingle() < OtherSpeciesChance ? family[random.Next(family.Length)] : GroveSpecies(x, z, family);
             trees.Add(new TreeInstance(new Vector3(x, y - 0.05f, z), random.NextSingle() * MathF.Tau, 0.75f + 0.55f * random.NextSingle(), variant));
         }
 

@@ -122,19 +122,19 @@ public sealed class SkyRenderer : IDisposable
             // Noise twisted along the arms breaks them into clumps and streaks, like brush strokes.
             // (Sampled through cos/sin of the swirl, so there is no seam where the polar angle wraps.)
             float streaks = texture(uCloudNoise, vec3(cos(swirl) * r * 0.9, sin(swirl) * r * 0.9, 0.37 + r * 0.4)).r;
-            float arms = pow(0.5 + 0.5 * cos(swirl * 2.0), 2.5) * (0.35 + 1.3 * streaks);
+            float arms = pow(max(0.5 + 0.5 * cos(swirl * 2.0), 0.0), 2.5) * (0.35 + 1.3 * streaks);
             float inside = smoothstep(1.02, 0.9, r);
 
             vec3 armColor = mix(vec3(0.25, 0.15, 0.85), vec3(0.95, 0.5, 1.0), arms * exp(-r * 1.2));
             vec3 c = armColor * (0.25 + arms * 1.6) * exp(-r * 1.6) * inside;
             c += vec3(1.0, 0.8, 1.0) * (exp(-r * 22.0) * 2.2 + exp(-r * 6.0) * 0.35); // core
-            c += vec3(0.55, 0.4, 1.0) * exp(-pow((r - 1.0) * 12.0, 2.0)) * 1.2;       // rim
+            c += vec3(0.55, 0.4, 1.0) * exp(-((r - 1.0) * 12.0) * ((r - 1.0) * 12.0)) * 1.2;       // rim
             vec2 dust = floor(q * 420.0);
             float sparkle = step(0.965, hash13(vec3(dust, 3.0))) * (0.5 + 0.5 * sin(uTime * 3.0 + hash13(vec3(dust, 9.0)) * 40.0));
             c += vec3(1.0, 0.9, 1.0) * sparkle * (0.3 + arms) * inside * 1.5;
             // Outer wisps continue the arms beyond the rim, fading out.
             float outer = smoothstep(1.0, 1.2, r) * exp(-(r - 1.0) * 1.8);
-            c += vec3(0.4, 0.3, 1.0) * pow(0.5 + 0.5 * cos(swirl * 2.0 + 0.6), 6.0) * outer * 0.8;
+            c += vec3(0.4, 0.3, 1.0) * pow(max(0.5 + 0.5 * cos(swirl * 2.0 + 0.6), 0.0), 6.0) * outer * 0.8;
             return c * uGalaxyGlow;
         }
 
@@ -175,7 +175,7 @@ public sealed class SkyRenderer : IDisposable
             // The horizon is warmer toward the sun and cooler on the opposite side.
             vec2 flatDir = normalize(d.xz + vec2(1e-5, 0.0));
             vec2 flatSun = normalize(uSunDir.xz + vec2(1e-5, 0.0));
-            float sunSide = pow(0.5 + 0.5 * dot(flatDir, flatSun), 2.5);
+            float sunSide = pow(clamp(0.5 + 0.5 * dot(flatDir, flatSun), 0.0, 1.0), 2.5);
             vec3 horizon = mix(uHorizon, uSunHorizon, sunSide);
             vec3 c = mix(horizon, uZenith, pow(up, 0.45));
 
@@ -262,7 +262,7 @@ public sealed class SkyRenderer : IDisposable
         float henyeyGreenstein(float cosAngle, float g)
         {
             float g2 = g * g;
-            return (1.0 - g2) / (4.0 * 3.14159 * pow(1.0 + g2 - 2.0 * g * cosAngle, 1.5));
+            return (1.0 - g2) / (4.0 * 3.14159 * pow(max(1.0 + g2 - 2.0 * g * cosAngle, 1e-4), 1.5));
         }
 
         // Ray-marches the cloud layer. Returns the light scattered toward the camera (rgb) and the

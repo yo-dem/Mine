@@ -126,7 +126,7 @@ public sealed class Game : IDisposable
         _post = new PostProcess(_gl);
         _waterShader = new Shader(_gl, TerrainShaders.WaterVertex, TerrainShaders.WaterFragment);
         _water = new WaterRenderer(_gl);
-        // Integrated GPUs get the lighter clouds and light shafts; Q switches at any time.
+        // Integrated GPUs get the lighter clouds and a lower render scale; Q switches at any time.
         string renderer = _gl.GetStringS(StringName.Renderer) ?? "";
         SetLowQuality(renderer.Contains("Intel", StringComparison.OrdinalIgnoreCase)
                       || renderer.Contains("llvmpipe", StringComparison.OrdinalIgnoreCase));
@@ -277,31 +277,9 @@ public sealed class Game : IDisposable
         float pointScale = _post.SceneHeight / (2f * MathF.Tan(FieldOfView / 2));
         _motes.Draw(view * projection, eye, atmosphere, time, heightAboveGround, pointScale);
 
-        var (lightUv, shaftColor) = LightShafts(atmosphere, look, skyViewProjection);
-        _post.Finish(lightUv, shaftColor, atmosphere.Night);
+        _post.Finish(atmosphere.Night);
 
         _crosshair.Draw();
-    }
-
-    /// <summary>
-    /// Where the sun (by night, the moon) is on screen and how strong its light shafts are:
-    /// strongest looking toward it, fading as it leaves the screen or sinks below the horizon.
-    /// </summary>
-    private static (Vector2 Uv, Vector3 Color) LightShafts(in Atmosphere atmosphere, Vector3 look, Matrix4x4 skyViewProjection)
-    {
-        // Only the sun: the moon is so large that the radial blur stamps copies of it across the screen.
-        if (atmosphere.Night > 0.5f) return (Vector2.Zero, Vector3.Zero);
-        var direction = atmosphere.SunDirection;
-        var clip = Vector4.Transform(new Vector4(direction * 1000f, 1f), skyViewProjection);
-        if (clip.W <= 0) return (Vector2.Zero, Vector3.Zero);
-        var ndc = new Vector2(clip.X, clip.Y) / clip.W;
-        // Fade out as the light nears the edge: off-screen, the radial blur would smear long streaks.
-        float onScreen = Math.Clamp((0.95f - MathF.Max(MathF.Abs(ndc.X), MathF.Abs(ndc.Y))) / 0.25f, 0f, 1f);
-        float facing = Math.Clamp((Vector3.Dot(look, direction) - 0.3f) / 0.7f, 0f, 1f);
-        float aboveHorizon = Math.Clamp(direction.Y / 0.05f + 0.5f, 0f, 1f);
-        float strength = onScreen * facing * aboveHorizon;
-        var color = (atmosphere.SunGlow * 0.5f + new Vector3(0.15f)) * (1f - atmosphere.Night) * (0.6f + 0.4f * atmosphere.Haze);
-        return (ndc * 0.5f + new Vector2(0.5f), color * strength);
     }
 
     /// <summary>Binds a world shader and sets everything it needs for this frame.</summary>

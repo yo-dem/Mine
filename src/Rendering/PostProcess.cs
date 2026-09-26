@@ -8,8 +8,6 @@ namespace Mine.Rendering;
 /// <list type="bullet">
 /// <item><b>Bloom</b>: bright parts are extracted with a soft threshold, blurred down a chain of
 /// half-size textures and added back up (a wide, soft glow around lights and the sun).</item>
-/// <item><b>Light shafts</b>: a radial blur toward the sun (or the moon) of the sky pixels near it,
-/// so light streams past clouds, trees and rocks.</item>
 /// <item><b>Grading</b>: exposure, tone mapping, saturation, split toning (cool shadows, warm
 /// highlights), vignette and a little dither against banding.</item>
 /// </list>
@@ -45,6 +43,14 @@ public sealed unsafe class PostProcess : IDisposable
         // lone super-bright pixel (a glint through a crack, a far spark) cannot bloom into a big blob.
         float karis(vec3 c) { return 1.0 / (1.0 + dot(c, vec3(0.3, 0.59, 0.11))); }
 
+        // NaN or infinite pixels (a GPU may produce them where another does not) become black;
+        // everything else is capped, so no single pixel can dominate the bloom.
+        vec3 safe(vec3 c)
+        {
+            if (any(isnan(c)) || any(isinf(c))) return vec3(0.0);
+            return clamp(c, 0.0, 20.0);
+        }
+
         void main()
         {
             vec3 a = tap(vec2(-2, 2)), b = tap(vec2(0, 2)), c = tap(vec2(2, 2));
@@ -54,6 +60,8 @@ public sealed unsafe class PostProcess : IDisposable
             vec3 color;
             if (uPrefilter == 1)
             {
+                a = safe(a); b = safe(b); c = safe(c); d = safe(d); e = safe(e); f = safe(f);
+                g = safe(g); h = safe(h); i = safe(i); j = safe(j); k = safe(k); l = safe(l); m = safe(m);
                 vec3 g0 = (j + k + l + m) * 0.25, g1 = (a + b + d + e) * 0.25, g2 = (b + c + e + f) * 0.25;
                 vec3 g3 = (d + e + g + h) * 0.25, g4 = (e + f + h + i) * 0.25;
                 float w0 = karis(g0) * 0.5, w1 = karis(g1) * 0.125, w2 = karis(g2) * 0.125, w3 = karis(g3) * 0.125, w4 = karis(g4) * 0.125;
@@ -96,58 +104,12 @@ public sealed unsafe class PostProcess : IDisposable
         }
         """;
 
-    // Light shafts: march from each pixel toward the light on screen, collecting the sky near it.
-    private const string ShaftsSource = """
-        #version 330 core
-        in vec2 vUv;
-        uniform sampler2D uScene;
-        uniform sampler2D uDepth;
-        uniform vec2 uLightUv;     // light position on screen
-        uniform float uAspect;
-        uniform int uSamples;      // quality
-        out vec4 FragColor;
-
-        vec3 skyNearLight(vec2 uv)
-        {
-            // Off-screen samples would repeat the edge row (clamp-to-edge) into long streaks.
-            if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec3(0.0);
-            if (texture(uDepth, uv).r < 0.99999) return vec3(0.0); // something is in the way
-            vec2 d = (uv - uLightUv) * vec2(uAspect, 1.0);
-            float nearLight = exp(-dot(d, d) * 18.0);
-            return min(texture(uScene, uv).rgb, vec3(6.0)) * nearLight;
-        }
-
-        void main()
-        {
-            // March a limited stretch toward the light (long steps would stamp copies of the sun or
-            // moon along the ray), starting at a per-pixel offset that blends the samples into streaks.
-            vec2 delta = uLightUv - vUv;
-            float len = max(length(delta), 1e-4);
-            vec2 step = delta / len * min(len, 0.4) / float(uSamples);
-            float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-            vec2 uv = vUv + step * jitter;
-            float weight = 1.0;
-            float decay = pow(0.965, 48.0 / float(uSamples)); // same falloff whatever the sample count
-            vec3 sum = vec3(0.0);
-            for (int i = 0; i < 64; i++)
-            {
-                if (i >= uSamples) break;
-                sum += skyNearLight(uv) * weight;
-                weight *= decay;
-                uv += step;
-            }
-            FragColor = vec4(sum / float(uSamples), 1.0);
-        }
-        """;
-
     private const string CompositeSource = """
         #version 330 core
         in vec2 vUv;
         uniform sampler2D uScene;
         uniform sampler2D uBloom;
-        uniform sampler2D uShafts;
         uniform float uBloomStrength;
-        uniform vec3 uShaftColor;  // light colour times strength (0 when the light is off-screen)
         uniform float uExposure;
         uniform float uNight;
         out vec4 FragColor;
@@ -162,8 +124,10 @@ public sealed unsafe class PostProcess : IDisposable
         void main()
         {
             vec3 color = texture(uScene, vUv).rgb;
-            color += texture(uBloom, vUv).rgb * uBloomStrength;
-            color += texture(uShafts, vUv).rgb * uShaftColor;
+            if (any(isnan(color)) || any(isinf(color))) color = vec3(0.0);
+            vec3 bloom = texture(uBloom, vUv).rgb;
+            if (any(isnan(bloom)) || any(isinf(bloom))) bloom = vec3(0.0);
+            color += bloom * uBloomStrength;
             color = toneMap(color * uExposure);
 
             // Dreamy grade: richer colour, shadows drifting to teal-violet, highlights to gold.
@@ -183,14 +147,13 @@ public sealed unsafe class PostProcess : IDisposable
         """;
 
     private readonly GL _gl;
-    private readonly Shader _down, _up, _shafts, _composite;
+    private readonly Shader _down, _up, _composite;
     private readonly uint _vao;
     private uint _sceneFbo, _sceneColor, _sceneDepth;
     private uint _copyFbo, _copyColor, _copyDepth; // snapshot of the scene under the water
     private readonly uint[] _bloomFbo = new uint[BloomLevels];
     private readonly uint[] _bloomTex = new uint[BloomLevels];
     private readonly (int W, int H)[] _bloomSize = new (int, int)[BloomLevels];
-    private uint _shaftFbo, _shaftTex;
     private int _width, _height;             // scene buffer size
     private int _screenWidth, _screenHeight; // window size
 
@@ -198,7 +161,7 @@ public sealed unsafe class PostProcess : IDisposable
     public float BloomStrength = 0.7f;
     public float Exposure = 1.0f;
 
-    /// <summary>Low quality (integrated GPUs): the scene is rendered at 70% resolution, with fewer light-shaft samples.</summary>
+    /// <summary>Low quality (integrated GPUs): the scene is rendered at 70% resolution.</summary>
     public bool LowQuality
     {
         get => _lowQuality;
@@ -219,7 +182,6 @@ public sealed unsafe class PostProcess : IDisposable
         _gl = gl;
         _down = new Shader(gl, VertexSource, DownsampleSource);
         _up = new Shader(gl, VertexSource, UpsampleSource);
-        _shafts = new Shader(gl, VertexSource, ShaftsSource);
         _composite = new Shader(gl, VertexSource, CompositeSource);
         _vao = gl.GenVertexArray();
     }
@@ -254,8 +216,6 @@ public sealed unsafe class PostProcess : IDisposable
             _bloomFbo[i] = CreateFramebuffer(_bloomTex[i], 0);
         }
 
-        _shaftTex = CreateTexture(width / 2, height / 2, InternalFormat.Rgba16f, PixelFormat.Rgba, PixelType.HalfFloat);
-        _shaftFbo = CreateFramebuffer(_shaftTex, 0);
     }
 
     /// <summary>Binds the HDR scene framebuffer; everything drawn until <see cref="Finish"/> goes there.</summary>
@@ -287,11 +247,9 @@ public sealed unsafe class PostProcess : IDisposable
     }
 
     /// <summary>
-    /// Runs bloom, light shafts and grading into the default framebuffer.
-    /// <paramref name="lightUv"/> is the sun (or moon) position on screen, <paramref name="shaftColor"/>
-    /// its colour times strength (zero to skip the shafts).
+    /// Runs bloom and grading into the default framebuffer.
     /// </summary>
-    public void Finish(Vector2 lightUv, Vector3 shaftColor, float night)
+    public void Finish(float night)
     {
         _gl.Disable(EnableCap.DepthTest);
         _gl.DepthMask(false);
@@ -332,47 +290,19 @@ public sealed unsafe class PostProcess : IDisposable
         }
         _gl.Disable(EnableCap.Blend);
 
-        // Light shafts at half resolution.
-        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _shaftFbo);
-        _gl.Viewport(0, 0, (uint)(_width / 2), (uint)(_height / 2));
-        bool shafts = shaftColor.LengthSquared() > 1e-6f;
-        if (shafts)
-        {
-            _shafts.Use();
-            _shafts.Set("uScene", 0);
-            _shafts.Set("uDepth", 1);
-            _shafts.Set("uLightUv", lightUv);
-            _shafts.Set("uAspect", _width / (float)_height);
-            _shafts.Set("uSamples", LowQuality ? 24 : 48);
-            _gl.ActiveTexture(TextureUnit.Texture0);
-            _gl.BindTexture(TextureTarget.Texture2D, _sceneColor);
-            _gl.ActiveTexture(TextureUnit.Texture1);
-            _gl.BindTexture(TextureTarget.Texture2D, _sceneDepth);
-            _gl.DrawArrays(PrimitiveType.Triangles, 0, 3);
-        }
-        else
-        {
-            _gl.ClearColor(0, 0, 0, 1);
-            _gl.Clear(ClearBufferMask.ColorBufferBit);
-        }
-
         // Composite to the screen (scaling the scene up if it was rendered smaller).
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
         _gl.Viewport(0, 0, (uint)_screenWidth, (uint)_screenHeight);
         _composite.Use();
         _composite.Set("uScene", 0);
         _composite.Set("uBloom", 1);
-        _composite.Set("uShafts", 2);
         _composite.Set("uBloomStrength", BloomStrength);
-        _composite.Set("uShaftColor", shaftColor);
         _composite.Set("uExposure", Exposure);
         _composite.Set("uNight", night);
         _gl.ActiveTexture(TextureUnit.Texture0);
         _gl.BindTexture(TextureTarget.Texture2D, _sceneColor);
         _gl.ActiveTexture(TextureUnit.Texture1);
         _gl.BindTexture(TextureTarget.Texture2D, _bloomTex[0]);
-        _gl.ActiveTexture(TextureUnit.Texture2);
-        _gl.BindTexture(TextureTarget.Texture2D, _shaftTex);
         _gl.DrawArrays(PrimitiveType.Triangles, 0, 3);
         _gl.ActiveTexture(TextureUnit.Texture0);
 
@@ -420,8 +350,6 @@ public sealed unsafe class PostProcess : IDisposable
             _gl.DeleteFramebuffer(_bloomFbo[i]);
             _gl.DeleteTexture(_bloomTex[i]);
         }
-        _gl.DeleteFramebuffer(_shaftFbo);
-        _gl.DeleteTexture(_shaftTex);
     }
 
     public void Dispose()
@@ -430,7 +358,6 @@ public sealed unsafe class PostProcess : IDisposable
         _gl.DeleteVertexArray(_vao);
         _down.Dispose();
         _up.Dispose();
-        _shafts.Dispose();
         _composite.Dispose();
     }
 }

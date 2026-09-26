@@ -304,7 +304,7 @@ public static class TerrainShaders
             float sandy = rockSand(p, slope).y;
             if (h < 0.994 - sandy * 0.006) return vec3(0.0);
             float r = length(fract(p * 5.0) - 0.5);
-            float twinkle = pow(0.5 + 0.5 * sin(uTime * (2.0 + h * 4.0) + h * 80.0), 4.0);
+            float twinkle = pow(max(0.5 + 0.5 * sin(uTime * (2.0 + h * 4.0) + h * 80.0), 0.0), 4.0);
             vec3 tint = mix(vec3(0.5, 0.9, 1.0), vec3(0.9, 0.6, 1.0), hash13(cell + 5.0));
             return tint * smoothstep(0.4, 0.0, r) * twinkle * mix(1.5, 4.0, uNight) * smoothstep(70.0, 30.0, dist);
         }
@@ -358,11 +358,13 @@ public static class TerrainShaders
                 return;
             }
 
-            float height = aShape.y * smoothstep(uGrassRadius, uGrassRadius * 0.75, dist);
+            // Full height up to the last stretch before the edge of the grass, then fading out.
+            float height = aShape.y * smoothstep(uGrassRadius, uGrassRadius * 0.92, dist);
             float t = aBlade.y;
             vec3 facing = vec3(cos(aShape.x), 0.0, sin(aShape.x));
             vec3 across = vec3(-facing.z, 0.0, facing.x);
-            float width = 0.03 * (1.0 - t * 0.85) * min(inversesqrt(keep), 2.8);
+            // Taller blades are also broader, so tall grass reads as thick stalks, not threads.
+            float width = 0.03 * (1.0 - t * 0.85) * min(inversesqrt(keep), 2.8) * clamp(aShape.y / 0.5, 1.0, 2.6);
             vec3 lean = facing * (0.15 + aBase.w * 0.45) * height + windOffset(root, uTime) * 0.25 * height;
             vec3 pos = root + across * aBlade.x * width + vec3(0.0, height * t, 0.0) + lean * t * t;
 
@@ -564,7 +566,7 @@ public static class TerrainShaders
             // Bioluminescence: thin veins of light in the shallows, pulsing in waves toward the shore.
             float shallow = exp(-depth * 0.5);
             float v = texture(uCloudNoise, vec3(vWorldPos.xz * 0.04 + vec2(uTime * 0.008, 0.0), 0.9)).r;
-            float vein = pow(1.0 - abs(v - 0.5) * 2.0, 18.0);
+            float vein = pow(max(1.0 - abs(v - 0.5) * 2.0, 0.0), 18.0);
             float pulse = 0.5 + 0.5 * sin(uTime * 1.4 - depth * 3.0 + v * 14.0);
             vec3 glow = vec3(0.3, 0.85, 1.0) * vein * (0.35 + 0.65 * pulse) * shallow * 3.0;
             // A soft line of light where the water laps the sand.
@@ -577,7 +579,7 @@ public static class TerrainShaders
             {
                 float sparkle = smoothstep(0.35, 0.0, length(fract(vWorldPos.xz * 3.0) - 0.5));
                 glow += mix(vec3(0.6, 0.9, 1.0), vec3(1.0, 0.7, 1.0), hash13(vec3(cell, 3.0)))
-                      * sparkle * pow(0.5 + 0.5 * sin(uTime * 3.0 + h * 70.0), 4.0) * 3.0 * smoothstep(90.0, 40.0, dist);
+                      * sparkle * pow(max(0.5 + 0.5 * sin(uTime * 3.0 + h * 70.0), 0.0), 4.0) * 3.0 * smoothstep(90.0, 40.0, dist);
             }
             color += glow * mix(0.45, 1.0, uNight);
 

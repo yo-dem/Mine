@@ -17,6 +17,16 @@ public static class GroundMaterials
         return Vector3.Lerp(grass, new Vector3(0.52f, 0.26f, 0.48f), SmoothStep(0.65f, 0.9f, tint) * 0.45f);
     }
 
+    /// <summary>
+    /// Tall grass meadows: 0 on ordinary ground, 0.5 where the grass grows thigh-high, 1 in the
+    /// hearts of the meadows where it towers over the player. (C#-only: the shader does not need it.)
+    /// </summary>
+    public static float TallGrass(float x, float z)
+    {
+        float v = Noise2(x * 0.018f, z * 0.018f, 7f) * 0.7f + Noise2(x * 0.05f, z * 0.05f, 8f) * 0.3f;
+        return SmoothStep(0.6f, 0.68f, v) * 0.5f + SmoothStep(0.74f, 0.8f, v) * 0.5f;
+    }
+
     /// <summary>How much of the ground is grass (1 on gentle, not-too-low ground; 0 on rock or sand).</summary>
     public static float GrassWeight(Vector3 p, float normalY)
     {
