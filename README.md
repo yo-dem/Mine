@@ -8,7 +8,7 @@ Il mondo è fatto di **strati**: piastrelle piatte di 2×2 m ad altezze multiple
 tra un livello e l'altro (un gradino si sale camminando, fino a un metro saltando). La forma è generata
 proceduralmente: colline dolci e dune a strati di mezzo blocco (i salti più alti sono rarissimi)
 e guglie di roccia surreali, visibili fino a oltre un chilometro, in una palette cosmica viola, indaco
-e turchese. Il ciclo giorno/notte (20 minuti) respira tra un giorno dorato, con il sole sempre basso sull'orizzonte,
+e turchese. Il ciclo giorno/notte (20 minuti) respira tra lunghi crepuscoli dorati, con il sole basso sull'orizzonte, un mezzogiorno breve e luminoso in cui il sole sale alto nel cielo,
 e una notte cosmica dominata da un'enorme galassia a spirale, una grande luna pixellosa, nebulose, stelle fittissime e stelle cadenti. La sabbia e i prati scintillano di granelli luminosi.
 
 Nelle zone basse ci sono mari e laghi che riflettono il cielo, galassia compresa, con spiagge di sabbia viola:
