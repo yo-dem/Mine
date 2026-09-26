@@ -109,7 +109,7 @@ public sealed unsafe class GrassRenderer : IDisposable
             float fx = lx - i, fz = lz - j;
             float y = float.Lerp(float.Lerp(H(i, j), H(i + 1, j), fx), float.Lerp(H(i, j + 1), H(i + 1, j + 1), fx), fz);
             float normalY = 2f / MathF.Sqrt(MathF.Pow(H(i + 1, j) - H(i - 1, j), 2) + MathF.Pow(H(i, j + 1) - H(i, j - 1), 2) + 4f);
-            if (normalY < 0.6f || y < 5f) continue; // certainly rock or sand: skip early
+            if (normalY < 0.6f || y < TerrainField.WaterLevel + 1f) continue; // certainly rock, sand or water: skip early
             var root = new Vector3(x0 + lx, y - 0.05f, z0 + lz);
             float grass = GroundMaterials.GrassWeight(root, normalY);
             if (grass < 0.35f) continue;

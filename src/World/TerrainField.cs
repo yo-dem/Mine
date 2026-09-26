@@ -10,6 +10,9 @@ namespace Mine.World;
 /// </summary>
 public sealed class TerrainField
 {
+    /// <summary>Height of the sea and lakes: everything below is under water.</summary>
+    public const float WaterLevel = 15f;
+
     private const float SpireCell = 180f;      // at most one spire per cell of this size
     private const float SpireChance = 0.22f;
 

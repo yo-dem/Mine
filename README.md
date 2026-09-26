@@ -10,6 +10,10 @@ e turchese. Il ciclo giorno/notte (20 minuti) respira tra un crepuscolo perenne,
 all'orizzonte, e una notte cosmica dominata da un'enorme galassia a spirale, nebulose, stelle fittissime
 e stelle cadenti. La sabbia e i prati scintillano di granelli luminosi.
 
+Nelle zone basse ci sono mari e laghi che riflettono il cielo, galassia compresa, con spiagge di sabbia viola:
+nell'acqua bassa pulsano venature di luce ciano bioluminescente, la riva è segnata da una linea luminosa
+e sulla superficie brillano scintille come stelle cadute. Nell'acqua si cammina a mezza gamba.
+
 Nel mondo si trovano cristalli e lanterne da raccogliere, e puoi piazzare lanterne, torce e cristalli
 dove vuoi: ognuno emette una luce colorata che illumina il paesaggio attorno, con un alone nell'aria.
 
@@ -80,6 +84,7 @@ src/
     CloudNoise.cs         texture di rumore 3D per le nuvole
     PostProcess.cs        buffer HDR, bloom, raggi di luce, color grading
     MoteRenderer.cs       particelle magiche: granelli, spore, lucciole
+    WaterRenderer.cs      mari e laghi (lo shader è in TerrainShaders)
     IslandRenderer.cs     modelli delle isole fluttuanti
     MeshBuilder.cs        costruzione di modelli (oggetti, isole)
     ShadowMap.cs          mappa delle ombre vista dal sole

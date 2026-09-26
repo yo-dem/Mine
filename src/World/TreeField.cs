@@ -142,7 +142,7 @@ public sealed class TreeField
             float x = (cx + random.NextSingle()) * CellSize, z = (cz + random.NextSingle()) * CellSize;
             float y = _terrain.Height(x, z);
             // Gentle ground only, and not on the sand or the rock (see the terrain materials).
-            if (y < 16f || _terrain.Normal(x, z, 1f).Y < 0.86f) continue;
+            if (y < TerrainField.WaterLevel + 5f || _terrain.Normal(x, z, 1f).Y < 0.86f) continue;
             int variant = family[random.Next(family.Length)];
             trees.Add(new TreeInstance(new Vector3(x, y - 0.2f, z), random.NextSingle() * MathF.Tau, 0.75f + 0.55f * random.NextSingle(), variant));
         }

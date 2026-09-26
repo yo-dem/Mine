@@ -164,6 +164,7 @@ public sealed unsafe class PostProcess : IDisposable
     private readonly Shader _down, _up, _shafts, _composite;
     private readonly uint _vao;
     private uint _sceneFbo, _sceneColor, _sceneDepth;
+    private uint _copyFbo, _copyColor, _copyDepth; // snapshot of the scene under the water
     private readonly uint[] _bloomFbo = new uint[BloomLevels];
     private readonly uint[] _bloomTex = new uint[BloomLevels];
     private readonly (int W, int H)[] _bloomSize = new (int, int)[BloomLevels];
@@ -217,6 +218,9 @@ public sealed unsafe class PostProcess : IDisposable
         _sceneColor = CreateTexture(width, height, InternalFormat.Rgba16f, PixelFormat.Rgba, PixelType.HalfFloat);
         _sceneDepth = CreateTexture(width, height, InternalFormat.DepthComponent24, PixelFormat.DepthComponent, PixelType.UnsignedInt);
         _sceneFbo = CreateFramebuffer(_sceneColor, _sceneDepth);
+        _copyColor = CreateTexture(width, height, InternalFormat.Rgba16f, PixelFormat.Rgba, PixelType.HalfFloat);
+        _copyDepth = CreateTexture(width, height, InternalFormat.DepthComponent24, PixelFormat.DepthComponent, PixelType.UnsignedInt);
+        _copyFbo = CreateFramebuffer(_copyColor, _copyDepth);
 
         int w = width, h = height;
         for (int i = 0; i < BloomLevels; i++)
@@ -237,6 +241,27 @@ public sealed unsafe class PostProcess : IDisposable
     {
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _sceneFbo);
         _gl.Viewport(0, 0, (uint)_width, (uint)_height);
+    }
+
+    /// <summary>Size of the scene buffer in pixels.</summary>
+    public Vector2 SceneSize => new(_width, _height);
+
+    /// <summary>
+    /// Copies the scene drawn so far (colour and depth) and binds the copies to the given texture
+    /// units, so the water can show and measure what lies beneath it. The scene stays bound.
+    /// </summary>
+    public void SnapshotForWater(int colorUnit, int depthUnit)
+    {
+        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _sceneFbo);
+        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _copyFbo);
+        _gl.BlitFramebuffer(0, 0, _width, _height, 0, 0, _width, _height,
+            ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit, BlitFramebufferFilter.Nearest);
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _sceneFbo);
+        _gl.ActiveTexture(TextureUnit.Texture0 + colorUnit);
+        _gl.BindTexture(TextureTarget.Texture2D, _copyColor);
+        _gl.ActiveTexture(TextureUnit.Texture0 + depthUnit);
+        _gl.BindTexture(TextureTarget.Texture2D, _copyDepth);
+        _gl.ActiveTexture(TextureUnit.Texture0);
     }
 
     /// <summary>
@@ -365,6 +390,9 @@ public sealed unsafe class PostProcess : IDisposable
         _gl.DeleteFramebuffer(_sceneFbo);
         _gl.DeleteTexture(_sceneColor);
         _gl.DeleteTexture(_sceneDepth);
+        _gl.DeleteFramebuffer(_copyFbo);
+        _gl.DeleteTexture(_copyColor);
+        _gl.DeleteTexture(_copyDepth);
         for (int i = 0; i < BloomLevels; i++)
         {
             _gl.DeleteFramebuffer(_bloomFbo[i]);

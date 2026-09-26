@@ -17,6 +17,7 @@ public sealed class Game : IDisposable
     private const double DoubleTapWindow = 0.3; // seconds between two W presses to start sprinting
     private const float FastTimeScale = 60f;     // holding T speeds up the day
     private const float FieldOfView = 70f * MathF.PI / 180f;
+    private const float NearPlane = 0.1f, FarPlane = 4000f;
 
     private readonly IWindow _window;
     private GL _gl = null!;
@@ -42,6 +43,8 @@ public sealed class Game : IDisposable
     private CloudNoise _cloudNoise = null!;
     private MoteRenderer _motes = null!;
     private PostProcess _post = null!;
+    private Shader _waterShader = null!;
+    private WaterRenderer _water = null!;
     private readonly Player _player = new();
     private readonly DayCycle _dayCycle = new();
     private readonly PointLight[] _lights = new PointLight[TerrainShaders.MaxPointLights];
@@ -116,6 +119,8 @@ public sealed class Game : IDisposable
         _cloudNoise = new CloudNoise(_gl);
         _motes = new MoteRenderer(_gl);
         _post = new PostProcess(_gl);
+        _waterShader = new Shader(_gl, TerrainShaders.WaterVertex, TerrainShaders.WaterFragment);
+        _water = new WaterRenderer(_gl);
         // Integrated GPUs get the lighter clouds and light shafts; Q switches at any time.
         string renderer = _gl.GetStringS(StringName.Renderer) ?? "";
         SetLowQuality(renderer.Contains("Intel", StringComparison.OrdinalIgnoreCase)
@@ -182,7 +187,7 @@ public sealed class Game : IDisposable
         var eye = _player.Eye;
         var look = _player.LookDirection;
         var view = Matrix4x4.CreateLookAt(eye, eye + look, Vector3.UnitY);
-        var projection = Matrix4x4.CreatePerspectiveFieldOfView(FieldOfView, (float)size.X / size.Y, 0.1f, 4000f);
+        var projection = Matrix4x4.CreatePerspectiveFieldOfView(FieldOfView, (float)size.X / size.Y, NearPlane, FarPlane);
 
         var atmosphere = _dayCycle.Sample();
         float time = (float)_time;
@@ -243,6 +248,18 @@ public sealed class Game : IDisposable
         // The sky last, only where nothing covers it (see SkyRenderer).
         Matrix4x4.Invert(skyViewProjection, out var inverseSkyViewProj);
         _sky.Draw(inverseSkyViewProj, eye, (float)_dayCycle.Elapsed, atmosphere, time);
+
+        // The water, over a snapshot of everything beneath it.
+        _post.SnapshotForWater(colorUnit: 3, depthUnit: 4);
+        SetWorldUniforms(_waterShader, view * projection, eye, atmosphere, time);
+        _waterShader.Set("uUnderColor", 3);
+        _waterShader.Set("uUnderDepth", 4);
+        _waterShader.Set("uScreenSize", _post.SceneSize);
+        _waterShader.Set("uNear", NearPlane);
+        _waterShader.Set("uFar", FarPlane);
+        _waterShader.Set("uWaterLevel", TerrainField.WaterLevel);
+        _waterShader.Set("uWaterExtent", WaterRenderer.Extent);
+        _water.Draw();
 
         float heightAboveGround = eye.Y - _ground.Height(eye.X, eye.Z, eye.Y);
         float pointScale = _post.SceneHeight / (2f * MathF.Tan(FieldOfView / 2));
@@ -422,6 +439,8 @@ public sealed class Game : IDisposable
         _cloudNoise?.Dispose();
         _motes?.Dispose();
         _post?.Dispose();
+        _waterShader?.Dispose();
+        _water?.Dispose();
         _crosshair?.Dispose();
         _sky?.Dispose();
         _shadowMap?.Dispose();

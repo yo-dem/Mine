@@ -78,7 +78,8 @@ public static class TerrainShaders
         {
             float mid = noise2(p.xz * 0.045, 2.0);
             float rockW = smoothstep(0.30, 0.46, 1.0 - normalY + (mid - 0.5) * 0.12);
-            float sandW = smoothstep(14.0, 6.0, p.y + (mid - 0.5) * 6.0) * (1.0 - rockW);
+            // Sand on the shores: from a few metres above the water (TerrainField.WaterLevel = 15) down.
+            float sandW = smoothstep(19.5, 14.0, p.y + (mid - 0.5) * 4.0) * (1.0 - rockW);
             return vec2(rockW, sandW);
         }
         """;
@@ -155,7 +156,7 @@ public static class TerrainShaders
                 float t = clamp(dot(toLight, rd), 0.0, dist);
                 float miss = length(toLight - rd * t);
                 float fade = 1.0 / (1.0 + length(toLight) * 0.04);
-                sum += uPointColor[i] * (0.05 / (1.0 + miss * miss * 1.2) + 0.12 / (1.0 + miss * miss * 30.0)) * fade;
+                sum += uPointColor[i] * (0.05 / (1.0 + miss * miss * 1.2) + 0.06 / (1.0 + miss * miss * 30.0)) * fade;
             }
             return sum * mix(0.25, 1.0, uNight);
         }
@@ -425,8 +426,126 @@ public static class TerrainShaders
             color += vColor * uLightColor * pow(max(dot(rd, uLightDir), 0.0), 4.0) * 0.5 * vFoliage;
             color += skyColor(n, false) * pow(1.0 - max(dot(n, -rd), 0.0), 3.0) * 0.18 * vFoliage;
             // Glowing orbs shine with their own colour, brighter at night.
-            color = mix(color, vColor * mix(2.5, 4.5, uNight), vEmissive);
+            color = mix(color, vColor * mix(1.5, 2.4, uNight), vEmissive);
             FragColor = finishColor(color, vWorldPos, 1.0 - 0.8 * vEmissive);
+        }
+        """;
+
+    // ---- Water ---------------------------------------------------------------------------
+
+    /// <summary>A flat sheet at the water level following the camera; <c>aCorner</c> is -1..1.</summary>
+    public const string WaterVertex = """
+        #version 330 core
+        layout(location = 0) in vec2 aCorner;
+
+        uniform mat4 uViewProj;
+        uniform vec3 uCameraPos;
+        uniform float uWaterLevel;
+        uniform float uWaterExtent;
+
+        out vec3 vWorldPos;
+
+        void main()
+        {
+            vec3 p = vec3(uCameraPos.x + aCorner.x * uWaterExtent, uWaterLevel, uCameraPos.z + aCorner.y * uWaterExtent);
+            vWorldPos = p;
+            gl_Position = uViewProj * vec4(p, 1.0);
+        }
+        """;
+
+    /// <summary>
+    /// Water: rippled normals from the cloud noise, the sky (galaxy and stars included) reflected
+    /// with Fresnel, the scene beneath seen through it (from a snapshot) and absorbed with depth,
+    /// a glittering path toward the sun or moon, and bioluminescence: glowing veins in the shallows,
+    /// a pulsing line along the shore and sparkles like stars on the surface.
+    /// </summary>
+    public const string WaterFragment = FragmentHeader + """
+
+        in vec3 vWorldPos;
+
+        uniform sampler2D uUnderColor; // the scene before the water was drawn
+        uniform sampler2D uUnderDepth;
+        uniform vec2 uScreenSize;
+        uniform float uNear;
+        uniform float uFar;
+
+        out vec4 FragColor;
+
+        // Window depth to view-space distance (System.Numerics projection: NDC depth in [0, 1]).
+        float viewDepth(float windowDepth)
+        {
+            float z = windowDepth * 2.0 - 1.0;
+            return uFar * uNear / (uFar - z * (uFar - uNear));
+        }
+
+        float waves(vec2 p)
+        {
+            float a = texture(uCloudNoise, vec3(p * 0.035 + vec2(uTime * 0.02, uTime * 0.013), 0.3)).r;
+            float b = texture(uCloudNoise, vec3(p * 0.11 - vec2(uTime * 0.03, -uTime * 0.021), 0.7)).r;
+            return a * 0.6 + b * 0.4;
+        }
+
+        vec3 waterNormal(vec2 p, float dist)
+        {
+            float e = 0.4 + dist * 0.01;
+            float amplitude = 0.35 / (1.0 + dist * 0.015); // calmer far away, where ripples would only shimmer
+            float sx = (waves(p + vec2(e, 0.0)) - waves(p - vec2(e, 0.0))) * amplitude / (2.0 * e);
+            float sz = (waves(p + vec2(0.0, e)) - waves(p - vec2(0.0, e))) * amplitude / (2.0 * e);
+            return normalize(vec3(-sx * 6.0, 1.0, -sz * 6.0));
+        }
+
+        void main()
+        {
+            vec2 uv = gl_FragCoord.xy / uScreenSize;
+            vec3 toFragment = vWorldPos - uCameraPos;
+            float dist = length(toFragment);
+            vec3 rd = toFragment / dist;
+            vec3 n = waterNormal(vWorldPos.xz, dist);
+
+            // How much water the view ray crosses before hitting the bottom, and how deep it is there.
+            float surface = viewDepth(gl_FragCoord.z);
+            float thickness = max(viewDepth(texture(uUnderDepth, uv).r) - surface, 0.0);
+            float depth = thickness * max(-rd.y, 0.05);
+
+            // Refraction: the scene beneath, bent by the ripples (unless that would pick up something
+            // in front of the water) and fading into deep indigo.
+            vec2 bentUv = uv + n.xz * 0.035 * clamp(thickness * 0.3, 0.0, 1.0);
+            if (viewDepth(texture(uUnderDepth, bentUv).r) < surface) bentUv = uv;
+            vec3 under = texture(uUnderColor, bentUv).rgb;
+            vec3 deep = vec3(0.03, 0.015, 0.1) + uAmbient * 0.12;
+            vec3 refracted = mix(under, deep, 1.0 - exp(-thickness * 0.22));
+
+            // Reflection of the whole sky, galaxy and stars included.
+            vec3 r = reflect(rd, n);
+            r.y = abs(r.y);
+            float fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(n, -rd), 0.0), 5.0);
+            vec3 color = mix(refracted, skyColor(r, true), fresnel);
+
+            // A glittering path toward the sun or the moon.
+            float toLight = max(dot(r, uLightDir), 0.0);
+            color += uLightColor * (pow(toLight, 400.0) * 8.0 + pow(toLight, 40.0) * 0.35);
+
+            // Bioluminescence: thin veins of light in the shallows, pulsing in waves toward the shore.
+            float shallow = exp(-depth * 0.5);
+            float v = texture(uCloudNoise, vec3(vWorldPos.xz * 0.04 + vec2(uTime * 0.008, 0.0), 0.9)).r;
+            float vein = pow(1.0 - abs(v - 0.5) * 2.0, 18.0);
+            float pulse = 0.5 + 0.5 * sin(uTime * 1.4 - depth * 3.0 + v * 14.0);
+            vec3 glow = vec3(0.3, 0.85, 1.0) * vein * (0.35 + 0.65 * pulse) * shallow * 3.0;
+            // A soft line of light where the water laps the sand.
+            float shore = exp(-depth * 10.0) * (0.6 + 0.4 * sin(uTime * 2.0 + vWorldPos.x * 0.3 + vWorldPos.z * 0.2));
+            glow += vec3(0.55, 0.75, 1.0) * shore * 0.9;
+            // Sparkles on the surface, like stars fallen in the water.
+            vec2 cell = floor(vWorldPos.xz * 3.0);
+            float h = hash13(vec3(cell, 11.0));
+            if (h > 0.992 && dist < 90.0)
+            {
+                float sparkle = smoothstep(0.35, 0.0, length(fract(vWorldPos.xz * 3.0) - 0.5));
+                glow += mix(vec3(0.6, 0.9, 1.0), vec3(1.0, 0.7, 1.0), hash13(vec3(cell, 3.0)))
+                      * sparkle * pow(0.5 + 0.5 * sin(uTime * 3.0 + h * 70.0), 4.0) * 3.0 * smoothstep(90.0, 40.0, dist);
+            }
+            color += glow * mix(0.45, 1.0, uNight);
+
+            FragColor = finishColor(color, vWorldPos, 1.0);
         }
         """;
 
@@ -475,7 +594,7 @@ public static class TerrainShaders
             vec3 n = normalize(vNormal);
             vec3 color = litColor(vColor, vWorldPos, n, 0.0);
             // Glowing parts shine with their own colour, brighter at night.
-            color = mix(color, vColor * uGlow * mix(2.5, 4.0, uNight), vEmissive);
+            color = mix(color, vColor * uGlow * mix(1.4, 2.2, uNight), vEmissive);
             color += vColor * 0.35 * uHighlight;
             FragColor = finishColor(color, vWorldPos, 1.0 - 0.8 * vEmissive);
         }

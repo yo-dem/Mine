@@ -22,7 +22,7 @@ public static class GroundMaterials
     {
         float mid = Noise2(p.X * 0.045f, p.Z * 0.045f, 2f);
         float rock = SmoothStep(0.30f, 0.46f, 1f - normalY + (mid - 0.5f) * 0.12f);
-        float sand = SmoothStep(14f, 6f, p.Y + (mid - 0.5f) * 6f) * (1f - rock);
+        float sand = SmoothStep(19.5f, 14f, p.Y + (mid - 0.5f) * 4f) * (1f - rock);
         return (1f - rock) * (1f - sand);
     }
 
