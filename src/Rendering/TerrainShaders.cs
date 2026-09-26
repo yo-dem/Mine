@@ -519,11 +519,13 @@ public static class TerrainShaders
             vec3 r = reflect(rd, n);
             r.y = abs(r.y);
             float fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(n, -rd), 0.0), 5.0);
-            vec3 color = mix(refracted, skyColor(r, true), fresnel);
+            // Capped, so the galaxy core or the moon reflected in every ripple do not wash out into white.
+            vec3 color = mix(refracted, min(skyColor(r, true), vec3(1.6)), fresnel);
 
             // A glittering path toward the sun or the moon.
             float toLight = max(dot(r, uLightDir), 0.0);
-            color += uLightColor * (pow(toLight, 400.0) * 8.0 + pow(toLight, 40.0) * 0.35);
+            // (Softer under the moon, whose glints would otherwise flood the rippled water.)
+            color += uLightColor * (pow(toLight, 400.0) * mix(8.0, 2.0, uNight) + pow(toLight, 40.0) * mix(0.35, 0.12, uNight));
 
             // Bioluminescence: thin veins of light in the shallows, pulsing in waves toward the shore.
             float shallow = exp(-depth * 0.5);
@@ -532,8 +534,8 @@ public static class TerrainShaders
             float pulse = 0.5 + 0.5 * sin(uTime * 1.4 - depth * 3.0 + v * 14.0);
             vec3 glow = vec3(0.3, 0.85, 1.0) * vein * (0.35 + 0.65 * pulse) * shallow * 3.0;
             // A soft line of light where the water laps the sand.
-            float shore = exp(-depth * 10.0) * (0.6 + 0.4 * sin(uTime * 2.0 + vWorldPos.x * 0.3 + vWorldPos.z * 0.2));
-            glow += vec3(0.55, 0.75, 1.0) * shore * 0.9;
+            float shore = exp(-depth * 14.0) * (0.6 + 0.4 * sin(uTime * 2.0 + vWorldPos.x * 0.3 + vWorldPos.z * 0.2));
+            glow += vec3(0.25, 0.65, 1.0) * shore * 0.4;
             // Sparkles on the surface, like stars fallen in the water.
             vec2 cell = floor(vWorldPos.xz * 3.0);
             float h = hash13(vec3(cell, 11.0));

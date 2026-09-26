@@ -40,6 +40,7 @@ public sealed class Game : IDisposable
     private IslandField _islands = null!;
     private IslandRenderer _islandRenderer = null!;
     private Ground _ground = null!;
+    private PathField _paths = null!;
     private CloudNoise _cloudNoise = null!;
     private MoteRenderer _motes = null!;
     private PostProcess _post = null!;
@@ -115,7 +116,8 @@ public sealed class Game : IDisposable
         _treeField = new TreeField(_terrainField, seed: 1337);
         _islands = new IslandField(_terrainField, seed: 1337);
         _islandRenderer = new IslandRenderer(_gl);
-        _ground = new Ground(_terrainField, _islands);
+        _paths = new PathField(_terrainField, seed: 1337);
+        _ground = new Ground(_terrainField, _islands, _paths);
         _cloudNoise = new CloudNoise(_gl);
         _motes = new MoteRenderer(_gl);
         _post = new PostProcess(_gl);
@@ -166,7 +168,10 @@ public sealed class Game : IDisposable
 
         int islandVersion = _islands.Version;
         _islands.Update(_player.Position);
-        if (_islands.Version != islandVersion) _treeField.SetFixedTrees(_islands.Trees);
+        if (_islands.Version != islandVersion) _treeField.SetFixedTrees("islands", _islands.Trees);
+        int pathVersion = _paths.Version;
+        _paths.Update(_player.Position);
+        if (_paths.Version != pathVersion) _treeField.SetFixedTrees("paths", _paths.Models);
         _islandRenderer.Update(_islands);
         _treeField.Update(_player.Position);
         _treeField.ResolveCollision(ref _player.Position, 0.35f);
@@ -283,7 +288,7 @@ public sealed class Game : IDisposable
         if (clip.W <= 0) return (Vector2.Zero, Vector3.Zero);
         var ndc = new Vector2(clip.X, clip.Y) / clip.W;
         // Fade out as the light nears the edge: off-screen, the radial blur would smear long streaks.
-        float onScreen = Math.Clamp((1.1f - MathF.Max(MathF.Abs(ndc.X), MathF.Abs(ndc.Y))) / 0.3f, 0f, 1f);
+        float onScreen = Math.Clamp((0.95f - MathF.Max(MathF.Abs(ndc.X), MathF.Abs(ndc.Y))) / 0.25f, 0f, 1f);
         float facing = Math.Clamp((Vector3.Dot(look, direction) - 0.3f) / 0.7f, 0f, 1f);
         float aboveHorizon = Math.Clamp(direction.Y / 0.05f + 0.5f, 0f, 1f);
         float strength = onScreen * facing * aboveHorizon;

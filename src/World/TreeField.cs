@@ -34,7 +34,8 @@ public sealed class TreeField
     private readonly ConcurrentQueue<((int X, int Z) Key, TreeInstance[] Trees)> _done = new();
     private readonly List<(int X, int Z)> _batch = new();
     private readonly List<(int X, int Z)> _toDrop = new();
-    private TreeInstance[] _fixed = []; // trees placed by others, like those on the floating islands
+    // Instances placed by others (the floating islands' trees, the paths' stones and arches), by source.
+    private readonly Dictionary<string, TreeInstance[]> _fixed = new();
 
     public int Version { get; private set; }
 
@@ -46,12 +47,12 @@ public sealed class TreeField
         _biome = new PerlinNoise(seed + 21);
     }
 
-    public IEnumerable<TreeInstance> All => _cells.Values.SelectMany(c => c).Concat(_fixed);
+    public IEnumerable<TreeInstance> All => _cells.Values.SelectMany(c => c).Concat(_fixed.Values.SelectMany(f => f));
 
-    /// <summary>Replaces the trees that do not come from the cells (the floating islands' trees).</summary>
-    public void SetFixedTrees(IEnumerable<TreeInstance> trees)
+    /// <summary>Replaces the instances from one outside source (they do not come from the cells).</summary>
+    public void SetFixedTrees(string source, IEnumerable<TreeInstance> trees)
     {
-        _fixed = trees.ToArray();
+        _fixed[source] = trees.ToArray();
         Version++;
     }
 
@@ -100,7 +101,7 @@ public sealed class TreeField
             {
                 if (TreeModels.GlowColor(tree.Variant) is not { } color) continue;
                 if (Vector3.DistanceSquared(tree.Position, center) > radius * radius) continue;
-                yield return new PointLight(tree.Position + new Vector3(0, 1.4f * tree.Scale, 0), color * 2.2f * tree.Scale, 7f * tree.Scale + 3f);
+                yield return new PointLight(tree.Position + new Vector3(0, TreeModels.GlowHeight(tree.Variant) * tree.Scale, 0), color * 1.1f * tree.Scale, 7f * tree.Scale + 3f);
             }
         }
     }
@@ -108,7 +109,8 @@ public sealed class TreeField
     /// <summary>Pushes a point (the player's feet) out of any tree trunk it overlaps.</summary>
     public void ResolveCollision(ref Vector3 position, float radius)
     {
-        foreach (var tree in _fixed) PushOut(ref position, radius, tree);
+        foreach (var group in _fixed.Values)
+            foreach (var tree in group) PushOut(ref position, radius, tree);
         int cx = (int)MathF.Floor(position.X / CellSize), cz = (int)MathF.Floor(position.Z / CellSize);
         for (int dz = -1; dz <= 1; dz++)
         for (int dx = -1; dx <= 1; dx++)
