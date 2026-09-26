@@ -168,32 +168,33 @@ public sealed class SkyRenderer : IDisposable
             return vec3(1.0, 0.9, 1.0) * tail * exp(-across * across * 4e5) * (1.0 - progress) * 4.0;
         }
 
-        // The ringed moon: a banded pastel world with rings seen at a slant. The half of the ring
+        // The ringed moon, a sister of the big moon: the same blocky grey-blue surface (its own
+        // seas and craters) and rings of the same pixels, seen at a slant. The half of the ring
         // behind it is drawn first, the body over it, then the half in front. Faint by day.
         vec3 ringedMoon(vec3 c, vec3 d, float aboveHorizon)
         {
-            if (dot(d, uRingedMoonDir) < 0.9) return c;
-            vec2 q = bodyCoords(d, uRingedMoonDir, 0.06, 0.45);
-            float r = length(q);
-            float visibility = mix(0.45, 0.95, uNight) * smoothstep(-0.02, 0.2, d.y);
+            if (dot(d, uRingedMoonDir) < 0.85) return c;
+            vec2 q = bodyCoords(d, uRingedMoonDir, 0.15, 0.45);
+            float visibility = mix(0.4, 0.95, uNight) * smoothstep(-0.02, 0.3, d.y);
 
-            vec2 rq = vec2(q.x, q.y / 0.3); // the ring plane, tilted toward us
-            float rr = length(rq);
-            float ring = smoothstep(1.35, 1.45, rr) * (1.0 - smoothstep(2.2, 2.35, rr))
-                       * (0.55 + 0.45 * sin(rr * 38.0)) * (0.65 + 0.35 * sin(rr * 9.0));
-            vec3 ringColor = mix(vec3(0.95, 0.75, 1.0), vec3(0.6, 0.95, 1.0), smoothstep(1.4, 2.3, rr));
-            float ringAlpha = ring * 0.75 * visibility;
+            // Rings: snapped to the body's 16-per-diameter pixel grid, in stepped bands.
+            vec2 qp = (floor(q * 8.0) + 0.5) / 8.0;
+            float rr = length(vec2(qp.x, qp.y / 0.38)); // the ring plane, tilted toward us
+            float band = floor(rr * 7.0);
+            float ring = step(1.35, rr) * step(rr, 2.35) * step(0.25, hash13(vec3(band, 5.0, 1.0)));
+            float ringShade = 0.6 + 0.25 * hash13(vec3(band, 6.0, 2.0)) + 0.04 * hash13(vec3(qp * 8.0, 9.0));
+            vec3 ringColor = vec3(0.55, 0.6, 0.72) * ringShade;
+            float ringAlpha = ring * 0.7 * visibility * step(0.5, dot(d, uRingedMoonDir));
 
-            float w = min(fwidth(r), 0.1);
-            float body = (1.0 - smoothstep(1.0 - w, 1.0 + w, r)) * visibility;
-            float z = sqrt(max(1.0 - r * r, 0.0));
-            float bands = 0.5 + 0.5 * sin(q.y * 11.0 + sin(q.x * 3.0) * 0.8);
-            vec3 bodyColor = mix(vec3(0.45, 0.75, 0.85), vec3(0.95, 0.6, 0.85), bands) * (0.4 + 0.6 * z);
+            // Body: the big moon's surface, mirrored and turned so it is not the same face.
+            vec2 bq = vec2(-q.y, q.x);
+            float body = diskMask(q, d, uRingedMoonDir, 0.04) * visibility;
+            vec3 bodyColor = moonSurface(bq) * (0.9 + 0.1 * hash13(vec3(floor((bq * 0.5 + 0.5) * 16.0), 21.0)));
 
-            bool front = q.y < 0.0;
-            if (!front) c = mix(c, c * 0.4 + ringColor, ringAlpha);
-            c = mix(c, bodyColor, body);
-            if (front) c = mix(c, c * 0.4 + ringColor, ringAlpha);
+            bool front = qp.y < 0.0;
+            if (!front) c = mix(c, c * 0.5 + ringColor, ringAlpha);
+            c = mix(c, c * 0.5 + bodyColor, body);
+            if (front) c = mix(c, c * 0.5 + ringColor, ringAlpha);
             return c;
         }
 

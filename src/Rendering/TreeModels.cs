@@ -53,7 +53,7 @@ public static class TreeModels
         CyanCrystals,
         Lotus,
         GlowBells,
-        ShoreRock,
+        Reeds,
         Palm,
     }
 
@@ -69,6 +69,7 @@ public static class TreeModels
     {
         Decoration.Lotus => 160f,
         Decoration.GlowBells => 140f,
+        Decoration.Reeds => 400f,
         Decoration.Palm => float.MaxValue,
         _ => 700f,
     };
@@ -88,7 +89,7 @@ public static class TreeModels
     public static float TrunkRadius(int variant) => variant < Styles.Length ? Styles[variant].TrunkRadius : (Decoration)(variant - Styles.Length) switch
     {
         Decoration.VioletCrystals or Decoration.CyanCrystals => 0.7f,
-        Decoration.ShoreRock => 1.1f,
+        Decoration.Reeds => 0f,
         Decoration.Palm => 0.24f,
         _ => 0f, // flowers do not block the way
     };
@@ -373,15 +374,34 @@ public static class TreeModels
                 }
                 break;
             }
-            case Decoration.ShoreRock:
+            case Decoration.Reeds:
             {
-                Rock(mesh, Vector3.Zero, new Vector3(1.4f, 0.9f, 1.1f), new Vector3(0.12f, 0.09f, 0.18f), lod, 5.3f);
-                for (int i = 0; i < 3; i++)
+                // A clump of tall, round reed stems of pale straw-mauve, most topped by the dark
+                // velvet spike of a bulrush; they lean a little outward and sway from the top.
+                int stems = lod >= 2 ? 7 : 14;
+                int sides = lod >= 2 ? 3 : 5;
+                for (int i = 0; i < stems; i++)
                 {
                     float a = random.NextSingle() * MathF.Tau;
-                    var foot = new Vector3(MathF.Cos(a) * 0.9f, 0.5f, MathF.Sin(a) * 0.6f);
-                    var dir = Vector3.Normalize(new Vector3(MathF.Cos(a), 0.9f, MathF.Sin(a)));
-                    Prism(mesh, foot, dir, 0.5f + 0.4f * random.NextSingle(), 0.1f, new Vector3(0.28f, 0.22f, 0.55f), 5);
+                    float r = MathF.Sqrt(random.NextSingle()) * 0.9f;
+                    var foot = new Vector3(MathF.Cos(a) * r, -0.3f, MathF.Sin(a) * r);
+                    float height = 3.0f + 1.5f * random.NextSingle();
+                    var lean = new Vector3(MathF.Cos(a), 0, MathF.Sin(a)) * (0.15f + 0.3f * random.NextSingle());
+                    var top = foot + new Vector3(0, height, 0) + lean;
+                    var mid = foot + new Vector3(0, height * 0.55f, 0) + lean * 0.3f;
+                    var stem = Vector3.Lerp(new Vector3(0.40f, 0.33f, 0.38f), new Vector3(0.56f, 0.48f, 0.50f), random.NextSingle());
+                    float radius = 0.035f + 0.02f * random.NextSingle();
+                    Cylinder(mesh, new Segment(foot, mid, radius, radius * 0.85f, 0f, 0.35f), sides, stem * 0.8f);
+                    Cylinder(mesh, new Segment(mid, top, radius * 0.85f, radius * 0.6f, 0.35f, 0.9f), sides, stem);
+                    if (random.NextSingle() < 0.65f)
+                    {
+                        // The bulrush head: a thick dark cylinder a little below the tip.
+                        var dir = Vector3.Normalize(top - mid);
+                        var headTop = top - dir * 0.25f;
+                        var headBottom = headTop - dir * (0.35f + 0.2f * random.NextSingle());
+                        Cylinder(mesh, new Segment(headBottom, headTop, radius * 2.6f, radius * 2.4f, 0.85f, 0.88f), sides,
+                            new Vector3(0.20f, 0.10f, 0.18f));
+                    }
                 }
                 break;
             }

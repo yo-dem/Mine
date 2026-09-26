@@ -9,14 +9,13 @@ tra un livello e l'altro (un gradino si sale camminando, fino a un metro saltand
 proceduralmente: colline, dune, altipiani a gradoni morbidi
 e guglie di roccia surreali, visibili fino a oltre un chilometro, in una palette cosmica viola, indaco
 e turchese. Il ciclo giorno/notte (20 minuti) respira tra un giorno dorato, con il sole sempre basso sull'orizzonte,
-e una notte cosmica dominata da un'enorme galassia a spirale, una grande luna, una seconda luna con gli
-anelli, nebulose, stelle fittissime e stelle cadenti. La sabbia e i prati scintillano di granelli luminosi.
+e una notte cosmica dominata da un'enorme galassia a spirale, una grande luna, una seconda luna
+enorme, pixellosa come la prima, con gli anelli, nebulose, stelle fittissime e stelle cadenti. La sabbia e i prati scintillano di granelli luminosi.
 
 Nelle zone basse ci sono mari e laghi che riflettono il cielo, galassia compresa, con spiagge di sabbia viola:
 nell'acqua bassa pulsano venature di luce ciano bioluminescente, la riva è segnata da una linea luminosa
 e sulla superficie brillano scintille come stelle cadute. Vicino alla riva si cammina nell'acqua; al largo è profonda e si **nuota**: ci si muove come in volo ma lentamente, Spazio per salire, Shift per immergersi, e da fermi si torna a galla.
-Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno, tra scogli
-scuri; nell'acqua bassa galleggiano fiori di loto luminosi e sui prati spuntano campanule che brillano.
+Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno; nell'acqua bassa galleggiano fiori di loto luminosi e sui prati spuntano campanule che brillano.
 Sulle spiagge svettano palme scure in controluce, farfalle
 luminose svolazzano sui prati, pesci che brillano nuotano nell'acqua bassa e stormi di uccelli
 volteggiano in cielo, sagome scure al crepuscolo e luminosi di notte.
@@ -24,7 +23,7 @@ volteggiano in cielo, sagome scure al crepuscolo e luminosi di notte.
 Nel mondo si trovano piccoli cristalli luminosi da raccogliere, e puoi piazzarli dove vuoi: ognuno emette
 una luce viola che illumina il paesaggio attorno, con un alone nell'aria.
 
-I prati sono coperti di erba a chiazze di colore (verde acqua, viola, magenta, oro-lilla, azzurro) che ondeggia al vento e brilla in controluce; le rive sono bordate di canneti; in certe zone cresce alta fino alle cosce e, al centro, più alta del personaggio, e il paesaggio è punteggiato
+I prati sono coperti di erba a chiazze di colore (verde acqua, viola, magenta, oro-lilla, azzurro) che ondeggia al vento e brilla in controluce; le rive e l'acqua bassa sono bordate di canneti alti tre-quattro metri, con le spighe scure delle tife; in certe zone cresce alta fino alle cosce e, al centro, più alta del personaggio, e il paesaggio è punteggiato
 di boschetti, ognuno di una sola specie, e alberi isolati in stile fiabesco: querce, cipressi, alberi dorati, turchesi, fioriti di lilla,
 ad ombrello, e alcuni con sfere luminose appese che si accendono di notte.
 

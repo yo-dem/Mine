@@ -110,6 +110,23 @@ public sealed class TreeField
         }
     }
 
+    /// <summary>Reed clumps, one per tile, in the reed beds along the shores and in the shallows.</summary>
+    private void AddReeds(List<TreeInstance> list, int cx, int cz, Random random)
+    {
+        const float water = TerrainField.WaterLevel;
+        const float t = TerrainField.TileSize;
+        for (float tz = cz * CellSize; tz < (cz + 1) * CellSize; tz += t)
+        for (float tx = cx * CellSize; tx < (cx + 1) * CellSize; tx += t)
+        {
+            var center = _terrain.TileCenter(tx, tz);
+            if (center.Y < water - 1.2f || center.Y > water + 1.0f) continue;
+            float bed = GroundMaterials.Reeds(center.X, center.Z);
+            if (random.NextSingle() > bed * 0.9f) continue;
+            list.Add(new TreeInstance(center, random.NextSingle() * MathF.Tau, 0.8f + 0.4f * random.NextSingle(),
+                TreeModels.VariantOf(TreeModels.Decoration.Reeds)));
+        }
+    }
+
     /// <summary>
     /// The species of the grove a point belongs to: the nearest of a set of points jittered on a
     /// <see cref="GroveSize"/> grid (so groves have irregular, organic borders) picks it from the family.
@@ -206,6 +223,7 @@ public sealed class TreeField
     /// <summary>Samples a few points of the cell and decorates each according to the ground there.</summary>
     private void AddDecorations(List<TreeInstance> list, int cx, int cz, Random random, float biome)
     {
+        AddReeds(list, cx, cz, random);
         const float water = TerrainField.WaterLevel;
         var crystals = TreeModels.VariantOf(biome < 0f ? TreeModels.Decoration.CyanCrystals : TreeModels.Decoration.VioletCrystals);
         for (int i = 0; i < 20; i++)
@@ -225,15 +243,12 @@ public sealed class TreeField
             }
             else if (y >= water - 1f && y < water + 4f)
             {
-                // The shore: palms, crystal clusters and dark rocks.
+                // The shore: palms and crystal clusters.
                 if (roll < 0.03f && y > water + 0.8f)
                     list.Add(new TreeInstance(new Vector3(x, y - 0.2f, z), yaw, 0.8f + 0.5f * random.NextSingle(),
                         TreeModels.VariantOf(TreeModels.Decoration.Palm)));
                 else if (roll < 0.065f)
                     list.Add(new TreeInstance(new Vector3(x, y - 0.3f, z), yaw, 0.7f + 1.5f * random.NextSingle(), crystals));
-                else if (roll < 0.11f)
-                    list.Add(new TreeInstance(new Vector3(x, y - 0.4f, z), yaw, 0.8f + 1.7f * random.NextSingle(),
-                        TreeModels.VariantOf(TreeModels.Decoration.ShoreRock)));
             }
             else if (y >= water + 2f)
             {
