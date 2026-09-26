@@ -18,7 +18,11 @@ There are no tests and no linter. The SDK lives at `C:\Program Files\dotnet\dotn
 
 ## Architecture
 
-`Game` (src/Game.cs) owns the window, input callbacks, the main shader (GLSL inline as raw strings), and drives the loop: `Player.Update` → `VoxelWorld.Update` → render every chunk mesh → crosshair. The window title is the HUD.
+`Game` (src/Game.cs) owns the window, input callbacks, the main shader (GLSL inline as raw strings), and drives the loop: `Player.Update` → `DayCycle.Update` → `VoxelWorld.Update`, then render shadow map → sky → every chunk mesh → crosshair. The window title is the HUD.
+
+**Lighting and sky.** `DayCycle` (src/World/DayCycle.cs) holds the time of day (0 = midnight, 0.25 = sunrise, 0.75 = sunset) and interpolates colour keyframes into an `Atmosphere`. `SkyRenderer` draws the sky as a full-screen triangle; its `Glsl` constant (sky uniforms + `skyColor()`) is pasted into both the sky and the terrain fragment shader, so fog takes the exact sky colour in the view direction. Directional lighting is computed in the terrain shader from a normal rebuilt with `dFdx/dFdy` (faces are flat), so the vertex light is ambient occlusion only. Faces also take "sky light" by sampling `skyColor` around their normal, the per-keyframe `Haze` pulls the fog closer at dawn/dusk, and both shaders end with the shared `toneMap` (soft shoulder, so bright sunsets saturate instead of clipping). Clouds live only in the sky shader (a noise layer at a fixed height, moved by `DayCycle.Elapsed`, i.e. game time).
+
+**Shadows (`ShadowMap`).** Each frame the chunks within `Radius` (+ margin) are drawn into a 2048² depth texture from the light direction, with an orthographic box centred on the player and snapped to texels. The shadow pass stores the faces turned toward the light (back faces culled as usual) with polygon offset; together with a small normal offset and a tiny bias in the shader this avoids acne while keeping shadows attached to their casters. Direct light is plain Lambert, so faces turned away from the light never depend on the (unreliable) self-shadow test. The terrain shader samples it as `sampler2DShadow` (texture unit 1, 3×3 PCF) and applies it to direct light only; ambient occlusion (the vertex light) darkens only the sky/ambient term.
 
 **World streaming (`VoxelWorld`)** runs on the main thread with per-frame budgets:
 1. Generate block data for missing chunks within `RenderDistance + 1` (closest first).
@@ -32,11 +36,11 @@ There are no tests and no linter. The SDK lives at `C:\Program Files\dotnet\dotn
 **Meshing (`ChunkMesher`)** takes a 3×3 chunk neighbourhood array (index `(dz+1)*3 + (dx+1)`, centre = 4) to avoid dictionary lookups per block. It emits only faces adjacent to non-solid blocks, as non-indexed triangles, with per-vertex AO and diagonal flipping. The output span is reused between calls: `ChunkMesh.Upload` must consume it before the next `Build`.
 
 Contracts that span multiple files and must stay in sync:
-- **Face order `+X, -X, +Y, -Y, +Z, -Z`**: `ChunkMesher.Normals/Corners/FaceShade` and `Blocks.GetTile` (which assumes top = 2, bottom = 3).
+- **Face order `+X, -X, +Y, -Y, +Z, -Z`**: `ChunkMesher.Normals/Corners` and `Blocks.GetTile` (which assumes top = 2, bottom = 3).
 - **Vertex layout: position(3), uv(2), light(1) floats**: `ChunkMesher.FloatsPerVertex`, the attribute pointers in `ChunkMesh`, and the `layout(location = …)` inputs in `Game.VertexSource`.
 - Corners are wound CCW seen from outside, because back-face culling is enabled.
 
-**Textures (`TextureAtlas`)** are generated procedurally at startup; there are no asset files. The atlas is a 4×4 grid of 16px tiles whose index equals the `Tile` enum value. Adding a block means: add a `Tile` value and a `case` in `TileColor`, add a `BlockType`, map it in `Blocks.GetTile`, and optionally add it to `Blocks.Hotbar` (keys 1–9). With 16px tiles the atlas holds at most 16 tiles. `TextureMaxLevel = 4` is deliberate: deeper mip levels would blend neighbouring tiles.
+**Textures (`TextureAtlas`)** are generated procedurally at startup; there are no asset files. The atlas is a 4×4 grid of 16px tiles whose index equals the `Tile` enum value. Its alpha channel is not transparency but a glow mask (`TileGlow`): glowing texels ignore scene lighting, pulse, and resist fog. Adding a block means: add a `Tile` value and a `case` in `TileColor` (and `TileGlow` if it glows), add a `BlockType`, map it in `Blocks.GetTile`, and optionally add it to `Blocks.Hotbar` (keys 1–9 and 0 select the first ten; the mouse wheel cycles through all). With 16px tiles the atlas holds at most 16 tiles. `TextureMaxLevel = 4` is deliberate: deeper mip levels would blend neighbouring tiles.
 
 **Terrain (`TerrainGenerator`)** is a deterministic function of the seed and world coordinates: 2D Perlin fBm heightmap, with sand where height ≤ sea level + 1. Trees are placed only 2+ blocks from the chunk edge, because generation writes into a single chunk and cannot touch its neighbours.
 

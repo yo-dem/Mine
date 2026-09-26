@@ -5,7 +5,8 @@ namespace Mine.Rendering;
 
 /// <summary>
 /// A 4x4 grid of 16px block textures, generated procedurally at startup
-/// so the game needs no image files.
+/// so the game needs no image files. The alpha channel is not transparency
+/// but a glow mask: 1 marks texels that emit light (see the terrain shader).
 /// </summary>
 public sealed unsafe class TextureAtlas : IDisposable
 {
@@ -68,7 +69,7 @@ public sealed unsafe class TextureAtlas : IDisposable
             pixels[i] = ToByte(r);
             pixels[i + 1] = ToByte(g);
             pixels[i + 2] = ToByte(b);
-            pixels[i + 3] = 255;
+            pixels[i + 3] = ToByte(TileGlow(tile, px, py) * 255);
         }
     }
 
@@ -110,9 +111,50 @@ public sealed unsafe class TextureAtlas : IDisposable
                 float stone = Noise((px + row * 2) / 5, row, 42);
                 return Tint(128, 128, 128, mortar ? 0.55f : 0.75f + 0.35f * stone);
             }
+            case Tile.Crystal:
+                // Glowing amethyst facets separated by dark edges.
+                return CrystalFacet(px, py) is float facet
+                    ? Tint(190, 140, 255, facet * (0.95f + 0.1f * n))
+                    : Tint(62, 46, 98, 0.8f + 0.35f * n);
+            case Tile.GlowMushroom:
+                return IsMushroomSpot(px, py)
+                    ? Tint(130, 245, 255, 0.9f + 0.1f * n)
+                    : Tint(38, 66, 112, 0.8f + 0.3f * n);
+            case Tile.Lantern:
+                return IsLanternFrame(px, py)
+                    ? Tint(70, 50, 32, 0.8f + 0.3f * n)
+                    : Tint(255, 196, 110, 0.92f + 0.08f * n);
             default: return (255, 0, 255);
         }
     }
+
+    /// <summary>How much each texel glows, 0..1.</summary>
+    private static float TileGlow(Tile tile, int px, int py) => tile switch
+    {
+        Tile.Crystal => CrystalFacet(px, py) ?? 0f,
+        Tile.GlowMushroom => IsMushroomSpot(px, py) ? 1f : 0f,
+        Tile.Lantern => IsLanternFrame(px, py) ? 0f : 1f,
+        _ => 0f,
+    };
+
+    /// <summary>Brightness of the crystal facet under a texel, or null on the dark edges between facets.</summary>
+    private static float? CrystalFacet(int px, int py)
+    {
+        int a = px + py, b = px - py + 16;
+        if (a % 8 == 0 || b % 10 == 0) return null;
+        return 0.55f + 0.45f * Noise(a / 8, b / 10, 3);
+    }
+
+    private static bool IsMushroomSpot(int px, int py)
+    {
+        int cx = px / 5, cy = py / 5;
+        if (Noise(cx, cy, 7) < 0.35f) return false;
+        float dx = px % 5 - 2, dy = py % 5 - 2;
+        return dx * dx + dy * dy <= 2.5f;
+    }
+
+    private static bool IsLanternFrame(int px, int py) =>
+        px is 0 or 1 or 14 or 15 || py is 0 or 1 or 14 or 15 || px is 7 or 8;
 
     /// <summary>Deterministic pseudo-random value in [0, 1).</summary>
     private static float Noise(int x, int y, int seed)

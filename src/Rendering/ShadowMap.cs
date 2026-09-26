@@ -1,0 +1,128 @@
+using System.Numerics;
+using Mine.World;
+using Silk.NET.OpenGL;
+
+namespace Mine.Rendering;
+
+/// <summary>
+/// Depth map rendered from the sun (or moon), covering a square area around the player.
+/// The terrain shader compares against it to find which fragments are in shadow.
+/// </summary>
+public sealed unsafe class ShadowMap : IDisposable
+{
+    public const int Size = 2048;
+    public const float Radius = 80f;  // half-width of the shadowed area, in blocks
+    private const float DepthRange = 256f; // blocks in front of and behind the player, along the light
+
+    /// <summary>
+    /// Depth bias for the shadow test, in shadow-map depth units: a twentieth of a block.
+    /// Kept tiny so shadows stay attached to the blocks casting them; acne on lit faces
+    /// is handled by polygon offset and the shader's normal offset instead.
+    /// </summary>
+    public const float DepthBias = 0.05f / (4 * DepthRange); // window depth spans 2*DepthRange over [0.5, 1]
+
+    private const string VertexSource = """
+        #version 330 core
+        layout(location = 0) in vec3 aPos;
+        uniform mat4 uLightViewProj;
+
+        void main()
+        {
+            gl_Position = uLightViewProj * vec4(aPos, 1.0);
+        }
+        """;
+
+    private const string FragmentSource = """
+        #version 330 core
+        void main() { }
+        """;
+
+    private readonly GL _gl;
+    private readonly Shader _shader;
+    private readonly uint _framebuffer;
+    private readonly uint _texture;
+
+    public Matrix4x4 LightViewProjection { get; private set; }
+
+    public ShadowMap(GL gl)
+    {
+        _gl = gl;
+        _shader = new Shader(gl, VertexSource, FragmentSource);
+
+        _texture = gl.GenTexture();
+        gl.BindTexture(TextureTarget.Texture2D, _texture);
+        gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.DepthComponent24, Size, Size, 0,
+            PixelFormat.DepthComponent, PixelType.Float, (void*)0);
+        // Linear filtering + compare mode = hardware 2x2 PCF on sampler2DShadow.
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureCompareMode, (int)GLEnum.CompareRefToTexture);
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureCompareFunc, (int)GLEnum.Lequal);
+
+        _framebuffer = gl.GenFramebuffer();
+        gl.BindFramebuffer(FramebufferTarget.Framebuffer, _framebuffer);
+        gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment,
+            TextureTarget.Texture2D, _texture, 0);
+        gl.DrawBuffer(DrawBufferMode.None);
+        gl.ReadBuffer(ReadBufferMode.None);
+        var status = gl.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
+        gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        if (status != GLEnum.FramebufferComplete)
+            throw new InvalidOperationException($"Shadow framebuffer incomplete: {status}");
+    }
+
+    /// <summary>
+    /// Renders the chunks around <paramref name="center"/> as seen from <paramref name="lightDirection"/>
+    /// (pointing toward the light). Leaves the shadow framebuffer unbound; the caller restores the viewport.
+    /// </summary>
+    public void Render(Vector3 center, Vector3 lightDirection, IEnumerable<Chunk> chunks)
+    {
+        var view = Matrix4x4.CreateLookAt(Vector3.Zero, -lightDirection, Vector3.UnitY);
+
+        // Snap the centre to whole shadow texels so the edges don't shimmer as the player moves.
+        var c = Vector3.Transform(center, view);
+        float texel = 2 * Radius / Size;
+        c.X = MathF.Round(c.X / texel) * texel;
+        c.Y = MathF.Round(c.Y / texel) * texel;
+        var projection = Matrix4x4.CreateOrthographicOffCenter(
+            c.X - Radius, c.X + Radius, c.Y - Radius, c.Y + Radius, -c.Z - DepthRange, -c.Z + DepthRange);
+        LightViewProjection = view * projection;
+
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _framebuffer);
+        _gl.Viewport(0, 0, Size, Size);
+        _gl.Clear(ClearBufferMask.DepthBufferBit);
+        // Push the stored depth slightly away from the light, more on sloped surfaces,
+        // so lit faces don't shadow themselves.
+        _gl.Enable(EnableCap.PolygonOffsetFill);
+        _gl.PolygonOffset(2f, 4f);
+
+        _shader.Use();
+        _shader.Set("uLightViewProj", LightViewProjection);
+        float reach = Radius + 3 * Chunk.Size; // casters just outside the area still throw shadows into it
+        foreach (var chunk in chunks)
+        {
+            float dx = chunk.ChunkX * Chunk.Size + Chunk.Size / 2 - center.X;
+            float dz = chunk.ChunkZ * Chunk.Size + Chunk.Size / 2 - center.Z;
+            if (dx * dx + dz * dz < reach * reach)
+                chunk.Mesh?.Draw();
+        }
+
+        _gl.Disable(EnableCap.PolygonOffsetFill);
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+    }
+
+    public void Bind(int unit)
+    {
+        _gl.ActiveTexture(TextureUnit.Texture0 + unit);
+        _gl.BindTexture(TextureTarget.Texture2D, _texture);
+    }
+
+    public void Dispose()
+    {
+        _gl.DeleteFramebuffer(_framebuffer);
+        _gl.DeleteTexture(_texture);
+        _shader.Dispose();
+    }
+}

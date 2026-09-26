@@ -6,7 +6,8 @@ namespace Mine.Rendering;
 /// <summary>
 /// Turns chunk block data into triangles. Only faces touching air are emitted,
 /// and every vertex gets a simple ambient-occlusion term.
-/// Vertex layout: position (3), uv (2), light (1).
+/// Vertex layout: position (3), uv (2), light (1). Light is ambient occlusion only:
+/// directional shading happens in the shader, which follows the sun.
 /// </summary>
 public sealed class ChunkMesher
 {
@@ -32,9 +33,6 @@ public sealed class ChunkMesher
     // Tile-local UVs per corner (v = 0 is the top of the tile).
     private static readonly float[,] SideUvs = { { 1, 1 }, { 1, 0 }, { 0, 0 }, { 0, 1 } };
     private static readonly float[,] FlatUvs = { { 0, 0 }, { 0, 1 }, { 1, 1 }, { 1, 0 } };
-
-    // Directional shading so the cube faces are distinguishable.
-    private static readonly float[] FaceShade = [0.6f, 0.6f, 1.0f, 0.5f, 0.8f, 0.8f];
 
     // Brightness for 0..3 unoccluded neighbours.
     private static readonly float[] AoCurve = [0.45f, 0.65f, 0.82f, 1.0f];
@@ -96,7 +94,7 @@ public sealed class ChunkMesher
                     _vertices.Add(baseZ + z + Corners[face, c, 2]);
                     _vertices.Add(u0 + (u1 - u0) * uvs[c, 0]);
                     _vertices.Add(v0 + (v1 - v0) * uvs[c, 1]);
-                    _vertices.Add(FaceShade[face] * AoCurve[_ao[c]]);
+                    _vertices.Add(AoCurve[_ao[c]]);
                 }
             }
         }
