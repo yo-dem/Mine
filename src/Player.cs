@@ -36,8 +36,12 @@ public sealed class Player
     private const float StepHeight = 0.55f;
     private const float Radius = 0.3f;        // how far ahead of the feet walls are felt
     private const float StepSmoothRate = 14f; // how fast the camera catches up after a step
-    // While walking, stay glued to ground that drops away by less than this in one frame.
-    private const float GroundSnap = 0.6f;
+    // While walking, stay glued to ground that drops away by less than this in one frame
+    // (two layers), so walking down steps never turns into a short fall.
+    private const float GroundSnap = 1.05f;
+    // For this long after leaving the ground, still climb steps like when walking: stepping off one
+    // layer onto the next must not count as being airborne.
+    private const float GroundGrace = 0.15f;
 
     // Swimming: slow, with heavy drag; idle swimmers float up to rest with the head above water.
     private const float SwimSpeed = 2.2f;
@@ -59,7 +63,8 @@ public sealed class Player
 
     private float _eyeHeight = EyeHeight;
 
-    private float _stepOffset; // negative right after stepping up, eased back to 0
+    private float _stepOffset; // camera offset right after a step (up: negative, down: positive), eased to 0
+    private float _sinceGround = float.MaxValue;
 
     public Vector3 Eye => Position + new Vector3(0, _eyeHeight + _stepOffset, 0);
 
@@ -121,11 +126,12 @@ public sealed class Player
         }
 
         Move(ground, Velocity * dt);
+        TrackGround(dt);
     }
 
     private void Move(Ground surface, Vector3 delta)
     {
-        bool wasOnGround = OnGround;
+        bool wasOnGround = OnGround || _sinceGround < GroundGrace;
         // How high a wall ahead can be and still let the player through: a step when walking, a
         // ledge when swimming, nothing while airborne (unless the feet are already above it).
         float climb = Flying ? float.MaxValue : Swimming ? SwimClimb : wasOnGround ? StepHeight : 0.05f;
@@ -157,12 +163,16 @@ public sealed class Player
         }
         else if (!Flying && !Swimming && wasOnGround && Velocity.Y <= 0 && Position.Y - ground < GroundSnap)
         {
-            // Walking down a step: follow the ground instead of hopping off it.
+            // Walking down a step: follow the ground instead of hopping off it, the camera easing down.
+            _stepOffset += Position.Y - ground;
             Position.Y = ground;
             Velocity.Y = 0;
             OnGround = true;
         }
     }
+
+    /// <summary>Call once per frame after moving: tracks how long ago the player last touched the ground.</summary>
+    private void TrackGround(float dt) => _sinceGround = OnGround ? 0f : _sinceGround + dt;
 
     /// <summary>Exponential approach, independent of frame rate.</summary>
     private static Vector3 Approach(Vector3 current, Vector3 target, float rate, float dt) =>

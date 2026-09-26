@@ -14,6 +14,7 @@ public readonly record struct Atmosphere(
     Vector3 MoonDirection,
     Vector3 SunGlow,
     Vector3 GalaxyDirection,
+    Vector3 RingedMoonDirection,
     float GalaxyGlow,
     float Haze,
     float Night,
@@ -86,6 +87,8 @@ public sealed class DayCycle
         // high, filling the sky.
         float skyAngle = (float)(Elapsed / DayLength % 8.0 * MathF.Tau);
         var galaxy = Direction(skyAngle * 0.5f + 2.2f, 0.62f + 0.08f * MathF.Sin(skyAngle * 0.5f));
+        // A second, ringed moon on its own slow orbit, never far from the upper sky.
+        var ringedMoon = Direction(skyAngle * 0.8f + 4.0f, 0.42f + 0.14f * MathF.Sin(skyAngle * 0.8f + 1.3f));
 
         int i = 1;
         while (Keyframes[i].Time < TimeOfDay) i++;
@@ -110,6 +113,7 @@ public sealed class DayCycle
             MoonDirection: moon,
             SunGlow: sunColor * SmoothStep(-0.3f, 0.05f, sun.Y),
             GalaxyDirection: galaxy,
+            RingedMoonDirection: ringedMoon,
             GalaxyGlow: 0.3f + 0.7f * night,
             Haze: float.Lerp(a.Haze, b.Haze, t),
             Night: night,

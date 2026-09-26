@@ -11,11 +11,18 @@ public static class GroundMaterials
 {
     public static Vector3 GrassColor(float x, float z)
     {
-        float broad = Noise2(x * 0.0035f, z * 0.0035f, 0f);
-        float tint = Noise2(x * 0.0012f + 7f, z * 0.0012f + 7f, 1f);
-        var grass = Vector3.Lerp(new Vector3(0.16f, 0.30f, 0.36f), new Vector3(0.34f, 0.24f, 0.48f), broad);
-        return Vector3.Lerp(grass, new Vector3(0.52f, 0.26f, 0.48f), SmoothStep(0.65f, 0.9f, tint) * 0.45f);
+        float patch = Noise2(x * 0.012f, z * 0.012f, 11f) * 0.75f + Noise2(x * 0.04f, z * 0.04f, 12f) * 0.25f;
+        float shade = Noise2(x * 0.09f, z * 0.09f, 13f);
+        var c = new Vector3(0.14f, 0.34f, 0.38f);                                              // teal
+        c = Vector3.Lerp(c, new Vector3(0.34f, 0.22f, 0.54f), SmoothStep(0.30f, 0.36f, patch)); // violet
+        c = Vector3.Lerp(c, new Vector3(0.56f, 0.20f, 0.46f), SmoothStep(0.44f, 0.50f, patch)); // magenta
+        c = Vector3.Lerp(c, new Vector3(0.58f, 0.46f, 0.42f), SmoothStep(0.56f, 0.62f, patch)); // lilac gold
+        c = Vector3.Lerp(c, new Vector3(0.16f, 0.32f, 0.58f), SmoothStep(0.68f, 0.74f, patch)); // sky blue
+        return c * (0.85f + 0.3f * shade);
     }
+
+    /// <summary>Reed beds: 0 where none grow, up to 1 in the thickest ones (only near the water).</summary>
+    public static float Reeds(float x, float z) => SmoothStep(0.3f, 0.45f, Noise2(x * 0.05f, z * 0.05f, 14f));
 
     /// <summary>
     /// Tall grass meadows: 0 on ordinary ground, 0.5 where the grass grows thigh-high, 1 in the

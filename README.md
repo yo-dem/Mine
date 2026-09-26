@@ -24,7 +24,7 @@ volteggiano in cielo, sagome scure al crepuscolo e luminosi di notte.
 Nel mondo si trovano piccoli cristalli luminosi da raccogliere, e puoi piazzarli dove vuoi: ognuno emette
 una luce viola che illumina il paesaggio attorno, con un alone nell'aria.
 
-I prati sono coperti di erba che ondeggia al vento e brilla in controluce; in certe zone cresce alta fino alle cosce e, al centro, più alta del personaggio, e il paesaggio è punteggiato
+I prati sono coperti di erba a chiazze di colore (verde acqua, viola, magenta, oro-lilla, azzurro) che ondeggia al vento e brilla in controluce; le rive sono bordate di canneti; in certe zone cresce alta fino alle cosce e, al centro, più alta del personaggio, e il paesaggio è punteggiato
 di boschetti, ognuno di una sola specie, e alberi isolati in stile fiabesco: querce, cipressi, alberi dorati, turchesi, fioriti di lilla,
 ad ombrello, e alcuni con sfere luminose appese che si accendono di notte.
 

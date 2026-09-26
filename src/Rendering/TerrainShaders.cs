@@ -64,13 +64,19 @@ public static class TerrainShaders
 
         float noise2(vec2 p, float layer) { return valueNoise3(vec3(p, layer)); }
 
-        // Cosmic grass drifting between teal-blue and violet, with patches of magenta.
+        // Cosmic grass in patches of one hue each: teal, violet, magenta, lilac gold, sky blue.
+        // A slow noise picks the hue (with soft borders between patches), a faster one varies it.
+        // Mirrored in C# by GroundMaterials.GrassColor: keep the two in sync.
         vec3 grassColor(vec2 xz)
         {
-            float broad = noise2(xz * 0.0035, 0.0);
-            float tint = noise2(xz * 0.0012 + 7.0, 1.0);
-            vec3 grass = mix(vec3(0.16, 0.30, 0.36), vec3(0.34, 0.24, 0.48), broad);
-            return mix(grass, vec3(0.52, 0.26, 0.48), smoothstep(0.65, 0.9, tint) * 0.45);
+            float patch = noise2(xz * 0.012, 11.0) * 0.75 + noise2(xz * 0.04, 12.0) * 0.25;
+            float shade = noise2(xz * 0.09, 13.0);
+            vec3 c = vec3(0.14, 0.34, 0.38);                                   // teal
+            c = mix(c, vec3(0.34, 0.22, 0.54), smoothstep(0.30, 0.36, patch)); // violet
+            c = mix(c, vec3(0.56, 0.20, 0.46), smoothstep(0.44, 0.50, patch)); // magenta
+            c = mix(c, vec3(0.58, 0.46, 0.42), smoothstep(0.56, 0.62, patch)); // lilac gold
+            c = mix(c, vec3(0.16, 0.32, 0.58), smoothstep(0.68, 0.74, patch)); // sky blue
+            return c * (0.85 + 0.3 * shade);
         }
 
         // How much of the ground is rock (x, steep slopes) and sand (y, lowlands); the rest is grass.

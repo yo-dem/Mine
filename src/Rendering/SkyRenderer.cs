@@ -6,7 +6,7 @@ namespace Mine.Rendering;
 
 /// <summary>
 /// Draws the cosmic sky (gradient, a giant spiral galaxy, nebulae, dense stars, shooting stars,
-/// square sun and moon, volumetric clouds) as a full-screen triangle.
+/// the sun, a big moon, a ringed moon, volumetric clouds) as a full-screen triangle.
 /// Output is HDR (bright things above 1, for the bloom); tone mapping happens in the post-process pass.
 /// It is drawn after the opaque geometry, at the far plane with a less-or-equal depth test, so the
 /// expensive cloud ray march only runs on the pixels where the sky is actually visible.
@@ -62,6 +62,7 @@ public sealed class SkyRenderer : IDisposable
         uniform float uNight;
         uniform float uSkyAngle;
         uniform vec3 uGalaxyDir;
+        uniform vec3 uRingedMoonDir;
         uniform float uGalaxyGlow;
         uniform float uTime;
 
@@ -76,9 +77,9 @@ public sealed class SkyRenderer : IDisposable
         }
 
         // soft = extra edge blur in q units (0 = crisp).
-        float squareMask(vec2 q, vec3 d, vec3 center, float soft)
+        float diskMask(vec2 q, vec3 d, vec3 center, float soft)
         {
-            float e = max(abs(q.x), abs(q.y));
+            float e = length(q);
             // Capped: away from the body q changes wildly between pixels, and an
             // unbounded edge width would draw a line across the whole sky.
             float w = max(min(fwidth(e), 0.1), soft);
@@ -167,6 +168,35 @@ public sealed class SkyRenderer : IDisposable
             return vec3(1.0, 0.9, 1.0) * tail * exp(-across * across * 4e5) * (1.0 - progress) * 4.0;
         }
 
+        // The ringed moon: a banded pastel world with rings seen at a slant. The half of the ring
+        // behind it is drawn first, the body over it, then the half in front. Faint by day.
+        vec3 ringedMoon(vec3 c, vec3 d, float aboveHorizon)
+        {
+            if (dot(d, uRingedMoonDir) < 0.9) return c;
+            vec2 q = bodyCoords(d, uRingedMoonDir, 0.06, 0.45);
+            float r = length(q);
+            float visibility = mix(0.45, 0.95, uNight) * smoothstep(-0.02, 0.2, d.y);
+
+            vec2 rq = vec2(q.x, q.y / 0.3); // the ring plane, tilted toward us
+            float rr = length(rq);
+            float ring = smoothstep(1.35, 1.45, rr) * (1.0 - smoothstep(2.2, 2.35, rr))
+                       * (0.55 + 0.45 * sin(rr * 38.0)) * (0.65 + 0.35 * sin(rr * 9.0));
+            vec3 ringColor = mix(vec3(0.95, 0.75, 1.0), vec3(0.6, 0.95, 1.0), smoothstep(1.4, 2.3, rr));
+            float ringAlpha = ring * 0.75 * visibility;
+
+            float w = min(fwidth(r), 0.1);
+            float body = (1.0 - smoothstep(1.0 - w, 1.0 + w, r)) * visibility;
+            float z = sqrt(max(1.0 - r * r, 0.0));
+            float bands = 0.5 + 0.5 * sin(q.y * 11.0 + sin(q.x * 3.0) * 0.8);
+            vec3 bodyColor = mix(vec3(0.45, 0.75, 0.85), vec3(0.95, 0.6, 0.85), bands) * (0.4 + 0.6 * z);
+
+            bool front = q.y < 0.0;
+            if (!front) c = mix(c, c * 0.4 + ringColor, ringAlpha);
+            c = mix(c, bodyColor, body);
+            if (front) c = mix(c, c * 0.4 + ringColor, ringAlpha);
+            return c;
+        }
+
         // bodies = false leaves out sun, moon and stars (used for fog and sky light).
         vec3 skyColor(vec3 d, bool bodies)
         {
@@ -228,10 +258,11 @@ public sealed class SkyRenderer : IDisposable
 
             // Slightly tilted squares: a small sun and a big, faint and hazy moon.
             vec2 sq = bodyCoords(d, uSunDir, 0.045, 0.3);
-            c += vec3(5.0, 4.4, 3.6) * squareMask(sq, d, uSunDir, 0.0) * aboveHorizon * (1.0 - uNight);
+            c += vec3(5.0, 4.4, 3.6) * diskMask(sq, d, uSunDir, 0.0) * aboveHorizon * (1.0 - uNight);
             vec2 mq = bodyCoords(d, uMoonDir, 0.14, -0.35);
             float moonAlpha = 0.95 * smoothstep(-0.02, 0.3, d.y) * uNight;
-            c = mix(c, c * 0.5 + moonSurface(mq), squareMask(mq, d, uMoonDir, 0.1) * moonAlpha);
+            c = mix(c, c * 0.5 + moonSurface(mq), diskMask(mq, d, uMoonDir, 0.1) * moonAlpha);
+            c = ringedMoon(c, d, aboveHorizon);
             return c;
         }
         """;
@@ -368,6 +399,7 @@ public sealed class SkyRenderer : IDisposable
         shader.Set("uNight", atmosphere.Night);
         shader.Set("uSkyAngle", atmosphere.SkyAngle);
         shader.Set("uGalaxyDir", atmosphere.GalaxyDirection);
+        shader.Set("uRingedMoonDir", atmosphere.RingedMoonDirection);
         shader.Set("uGalaxyGlow", atmosphere.GalaxyGlow);
         shader.Set("uTime", time);
     }

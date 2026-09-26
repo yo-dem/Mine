@@ -19,8 +19,11 @@ public sealed unsafe class GrassRenderer : IDisposable
     private const float BladesPerSquareMetre = 14f;
     // Every blade is at least this tall; the tallest reach MaxHeight on ordinary ground, and much
     // more in the tall grass meadows (see GroundMaterials.TallGrass).
-    private const float MinHeight = 0.3f;
-    private const float MaxHeight = 0.7f, ThighHeight = 1.05f, GiantHeight = 2.4f;
+    private const float MinHeight = 0.45f;
+    private const float MaxHeight = 1.0f, ThighHeight = 1.25f, GiantHeight = 2.4f;
+    // Reeds line the shores and the shallows, from a little under the water to a little above it.
+    private const float ReedMinHeight = 1.3f, ReedMaxHeight = 2.2f;
+    private static readonly Vector3 ReedColor = new(0.14f, 0.24f, 0.30f);
     private const int FloatsPerBlade = 11;
     private const int UploadsPerFrame = 4;
 
@@ -120,8 +123,26 @@ public sealed unsafe class GrassRenderer : IDisposable
             float y = TerrainField.Layer(S(i, j));
             float gx = (S(i + 1, j) - S(i - 1, j)) / (2 * t), gz = (S(i, j + 1) - S(i, j - 1)) / (2 * t);
             float normalY = 1f / MathF.Sqrt(1 + gx * gx + gz * gz);
-            if (normalY < 0.6f || y < TerrainField.WaterLevel + 1f) continue; // certainly rock, sand or water: skip early
             var root = new Vector3(x0 + lx, y - 0.02f, z0 + lz);
+            const float water = TerrainField.WaterLevel;
+            if (y > water - 1.0f && y < water + 1.3f && normalY > 0.6f)
+            {
+                // The shore: reeds, in beds, reaching out of the shallows.
+                float bed = GroundMaterials.Reeds(root.X, root.Z);
+                if (random.NextSingle() < bed * 1.4f)
+                {
+                    float rh = ReedMinHeight + (ReedMaxHeight - ReedMinHeight) * random.NextSingle();
+                    blades.Add(root.X); blades.Add(root.Y); blades.Add(root.Z);
+                    blades.Add(0.1f * random.NextSingle());      // reeds barely bend
+                    blades.Add(random.NextSingle() * MathF.Tau); // facing
+                    blades.Add(rh + MathF.Max(water - y, 0f));   // always well out of the water
+                    blades.Add(random.NextSingle());             // thinning key
+                    blades.Add(0.7f + 0.3f * random.NextSingle()); // pale tips
+                    blades.Add(ReedColor.X); blades.Add(ReedColor.Y); blades.Add(ReedColor.Z);
+                }
+                continue;
+            }
+            if (normalY < 0.6f || y < water + 1f) continue; // certainly rock, sand or water: skip early
             float grass = GroundMaterials.GrassWeight(root, normalY);
             if (grass < 0.35f) continue;
             var color = GroundMaterials.GrassColor(root.X, root.Z);
