@@ -3,15 +3,25 @@ using System.Numerics;
 namespace Mine.World;
 
 /// <summary>
-/// The shape of the land: a deterministic height for every point (x, z), in metres.
-/// Pure and thread-safe, so terrain meshes can be built on background threads.
-/// The recipe, from large to small: slowly rolling ground, domain-warped hills, long dune
-/// ridges, softly terraced plateaus, and rare rock spires rising out of the land.
+/// The shape of the land, in metres. Pure and thread-safe, so terrain meshes can be built on
+/// background threads. The land is made of layers: square tiles <see cref="TileSize"/> wide, each
+/// flat at a height that is a multiple of <see cref="LayerHeight"/>, with vertical walls between.
+/// <see cref="SmoothHeight"/> is the continuous surface they are cut from: slowly rolling ground,
+/// domain-warped hills, long dune ridges, softly terraced plateaus, deep basins under the water,
+/// and rare rock spires.
 /// </summary>
 public sealed class TerrainField
 {
-    /// <summary>Height of the sea and lakes: everything below is under water.</summary>
-    public const float WaterLevel = 15f;
+    /// <summary>Height of the sea and lakes: everything below is under water. Between two layers,
+    /// so no tile top lies exactly at the surface.</summary>
+    public const float WaterLevel = 14.8f;
+
+    public const float TileSize = 2f;
+    public const float LayerHeight = 0.5f;
+
+    // Below the water the land drops this many times faster than above, so beaches stay gentle
+    // but a few metres out the water is deep enough to swim.
+    private const float DepthScale = 3f;
 
     private const float SpireCell = 180f;      // at most one spire per cell of this size
     private const float SpireChance = 0.22f;
@@ -33,7 +43,31 @@ public sealed class TerrainField
         _detail = new PerlinNoise(seed + 4);
     }
 
-    public float Height(float x, float z)
+    /// <summary>Height of the tile under (x, z): the smooth height at its centre, snapped to a layer.</summary>
+    public float Height(float x, float z) =>
+        TileHeight((int)MathF.Floor(x / TileSize), (int)MathF.Floor(z / TileSize));
+
+    /// <summary>Height of tile (i, j), whose centre is at ((i + 0.5) * TileSize, (j + 0.5) * TileSize).</summary>
+    public float TileHeight(int i, int j) => Layer(SmoothHeight((i + 0.5f) * TileSize, (j + 0.5f) * TileSize));
+
+    /// <summary>A coordinate moved inside its tile, at least <paramref name="margin"/> from the tile's edges.</summary>
+    public static float InsideTile(float x, float margin)
+    {
+        float start = MathF.Floor(x / TileSize) * TileSize;
+        return start + Math.Clamp(x - start, margin, TileSize - margin);
+    }
+
+    /// <summary>The centre of the tile containing (x, z), at the tile's height.</summary>
+    public Vector3 TileCenter(float x, float z)
+    {
+        float cx = (MathF.Floor(x / TileSize) + 0.5f) * TileSize, cz = (MathF.Floor(z / TileSize) + 0.5f) * TileSize;
+        return new Vector3(cx, Height(cx, cz), cz);
+    }
+
+    /// <summary>A height snapped to the nearest layer.</summary>
+    public static float Layer(float height) => MathF.Round(height / LayerHeight) * LayerHeight;
+
+    public float SmoothHeight(float x, float z)
     {
         // Large, slow swells of the land.
         float continent = _continent.Fractal(x * 0.0006f, z * 0.0006f, 3);
@@ -58,14 +92,18 @@ public sealed class TerrainField
         h += (terraced - h) * 0.6f * highland;
 
         h += _detail.Fractal(x * 0.05f, z * 0.05f, 2) * 1.0f;
+        if (h < WaterLevel) h = WaterLevel - (WaterLevel - h) * DepthScale;
         return h + Spires(x, z);
     }
 
-    /// <summary>Surface normal from central differences, <paramref name="epsilon"/> metres apart.</summary>
-    public Vector3 Normal(float x, float z, float epsilon = 0.5f)
+    /// <summary>
+    /// Normal of the smooth surface, from central differences <paramref name="epsilon"/> metres apart:
+    /// how steep the land is around a point (tile tops themselves are flat).
+    /// </summary>
+    public Vector3 Normal(float x, float z, float epsilon = 1f)
     {
-        float dx = Height(x + epsilon, z) - Height(x - epsilon, z);
-        float dz = Height(x, z + epsilon) - Height(x, z - epsilon);
+        float dx = SmoothHeight(x + epsilon, z) - SmoothHeight(x - epsilon, z);
+        float dz = SmoothHeight(x, z + epsilon) - SmoothHeight(x, z - epsilon);
         return Vector3.Normalize(new Vector3(-dx, 2 * epsilon, -dz));
     }
 

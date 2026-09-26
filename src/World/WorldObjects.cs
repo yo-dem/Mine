@@ -188,7 +188,7 @@ public sealed class WorldObjects
         long id = ((long)(cx & 0xFFFFF) << 28) | ((long)(cz & 0xFFFFF) << 8) | (uint)index;
         id += 1; // keep generated ids positive and non-zero
         if (_taken.Contains(id) || _terrain.Normal(x, z).Y < 0.8f) return;
-        list.Add(new WorldObject(id, kind, new Vector3(x, _terrain.Height(x, z), z), yaw));
+        list.Add(new WorldObject(id, kind, _terrain.TileCenter(x, z), yaw));
     }
 
     private static float CellDistance(Vector3 p, int cx, int cz)

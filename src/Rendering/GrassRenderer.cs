@@ -7,7 +7,7 @@ namespace Mine.Rendering;
 
 /// <summary>
 /// Grass blades around the camera, drawn with instancing. The ground is cut into 32 m tiles;
-/// each tile's blades are scattered on the thread pool (heights interpolated from a 1 m grid,
+/// each tile's blades are scattered on the thread pool (standing on the flat terrain tiles,
 /// kept only where the ground is painted as grass, coloured like it) and uploaded as one
 /// instance buffer. Every blade is the same 7-vertex strip, shaped and swayed in the vertex
 /// shader, which also thins the blades out with distance.
@@ -91,13 +91,17 @@ public sealed unsafe class GrassRenderer : IDisposable
 
     private float[] BuildBlades(int tx, int tz)
     {
-        const int n = (int)TileSize + 3; // 1 m grid with a one-metre border for slopes
+        // The smooth height at the centre of every terrain tile under this grass tile (plus a ring,
+        // for slopes): blades stand on the tile's layer, and the smooth slope picks the material.
+        const float t = TerrainField.TileSize;
+        const int n = (int)(TileSize / t) + 2;
         float x0 = tx * TileSize, z0 = tz * TileSize;
-        var heights = new float[n * n];
+        int i0 = (int)MathF.Floor(x0 / t), j0 = (int)MathF.Floor(z0 / t);
+        var smooth = new float[n * n];
         for (int j = 0; j < n; j++)
         for (int i = 0; i < n; i++)
-            heights[j * n + i] = _terrain.Height(x0 + i - 1, z0 + j - 1);
-        float H(int i, int j) => heights[(j + 1) * n + (i + 1)];
+            smooth[j * n + i] = _terrain.SmoothHeight((i0 + i - 1 + 0.5f) * t, (j0 + j - 1 + 0.5f) * t);
+        float S(int i, int j) => smooth[(j + 1) * n + (i + 1)];
 
         var random = new Random(tx * 73856093 ^ tz * 19349663);
         int count = (int)(TileSize * TileSize * BladesPerSquareMetre);
@@ -105,12 +109,12 @@ public sealed unsafe class GrassRenderer : IDisposable
         for (int b = 0; b < count; b++)
         {
             float lx = random.NextSingle() * TileSize, lz = random.NextSingle() * TileSize;
-            int i = (int)lx, j = (int)lz;
-            float fx = lx - i, fz = lz - j;
-            float y = float.Lerp(float.Lerp(H(i, j), H(i + 1, j), fx), float.Lerp(H(i, j + 1), H(i + 1, j + 1), fx), fz);
-            float normalY = 2f / MathF.Sqrt(MathF.Pow(H(i + 1, j) - H(i - 1, j), 2) + MathF.Pow(H(i, j + 1) - H(i, j - 1), 2) + 4f);
+            int i = (int)(lx / t), j = (int)(lz / t);
+            float y = TerrainField.Layer(S(i, j));
+            float gx = (S(i + 1, j) - S(i - 1, j)) / (2 * t), gz = (S(i, j + 1) - S(i, j - 1)) / (2 * t);
+            float normalY = 1f / MathF.Sqrt(1 + gx * gx + gz * gz);
             if (normalY < 0.6f || y < TerrainField.WaterLevel + 1f) continue; // certainly rock, sand or water: skip early
-            var root = new Vector3(x0 + lx, y - 0.05f, z0 + lz);
+            var root = new Vector3(x0 + lx, y - 0.02f, z0 + lz);
             float grass = GroundMaterials.GrassWeight(root, normalY);
             if (grass < 0.35f) continue;
             var color = GroundMaterials.GrassColor(root.X, root.Z);

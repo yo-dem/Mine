@@ -26,7 +26,8 @@ public static class TreeModels
         Vector3 Bark,
         Vector3? Orbs = null, // colour of glowing orbs hanging from the crown, if any
         bool Stacked = false, // cypress: blobs stacked up the trunk
-        bool Flat = false);   // umbrella: wide, flat crown on long, low branches
+        bool Flat = false,    // umbrella: wide, flat crown on long, low branches
+        bool Weeping = false); // willow: long blobs hanging below the branch tips
 
     private static readonly Style[] Styles =
     [
@@ -38,6 +39,11 @@ public static class TreeModels
         new("Lucciole", 7.5f, 0.36f, 4, 2.6f, new(1f, 0.85f, 1f), new(0.08f, 0.10f, 0.24f), new(0.28f, 0.28f, 0.62f), new(0.20f, 0.15f, 0.24f), Orbs: new(1.0f, 0.82f, 0.42f)),
         new("Sfere azzurre", 8.5f, 0.32f, 4, 2.5f, new(1f, 0.9f, 1f), new(0.24f, 0.16f, 0.46f), new(0.64f, 0.54f, 0.98f), new(0.22f, 0.18f, 0.28f), Orbs: new(0.45f, 0.92f, 1.0f)),
         new("Ombrello", 8f, 0.30f, 5, 2.8f, new(1.3f, 0.42f, 1.3f), new(0.18f, 0.10f, 0.32f), new(0.56f, 0.36f, 0.80f), new(0.20f, 0.14f, 0.24f), Flat: true),
+        new("Gigante", 15f, 0.62f, 6, 4.0f, new(1f, 0.8f, 1f), new(0.14f, 0.08f, 0.30f), new(0.52f, 0.36f, 0.86f), new(0.18f, 0.12f, 0.22f)),
+        new("Salice", 7.5f, 0.34f, 7, 2.0f, new(0.8f, 1.5f, 0.8f), new(0.04f, 0.20f, 0.26f), new(0.30f, 0.78f, 0.80f), new(0.18f, 0.14f, 0.22f), Weeping: true),
+        new("Pino", 12f, 0.30f, 0, 2.7f, new(1f, 0.55f, 1f), new(0.05f, 0.07f, 0.20f), new(0.18f, 0.30f, 0.60f), new(0.16f, 0.12f, 0.20f), Stacked: true),
+        new("Alberello", 3.6f, 0.16f, 3, 1.3f, new(1f, 0.85f, 1f), new(0.40f, 0.12f, 0.36f), new(1.0f, 0.55f, 0.85f), new(0.22f, 0.15f, 0.22f)),
+        new("Arbusto", 1.4f, 0.10f, 2, 1.0f, new(1.2f, 0.7f, 1.2f), new(0.10f, 0.14f, 0.30f), new(0.32f, 0.42f, 0.72f), new(0.18f, 0.14f, 0.22f)),
     ];
 
     /// <summary>Glowing decorations that share the tree pipeline (instancing, wind, shadows), after the tree styles.</summary>
@@ -147,7 +153,9 @@ public static class TreeModels
                 segments.Add(new(start, middle, r0, r0 * 0.6f, 0.7f, 0.8f));
                 segments.Add(new(middle, end, r0 * 0.6f, r0 * 0.3f, 0.8f, 0.9f));
                 float blobRadius = style.CrownRadius * (0.65f + 0.2f * random.NextSingle());
-                blobs.Add(new(end + new Vector3(0, blobRadius * 0.25f, 0), blobRadius, style.CrownScale, random.NextSingle() * 10, 0.85f + 0.25f * random.NextSingle()));
+                // Willows hang their foliage below the branch tips; others sit on top of them.
+                float lift = style.Weeping ? -blobRadius * style.CrownScale.Y * 0.7f : blobRadius * 0.25f;
+                blobs.Add(new(end + new Vector3(0, lift, 0), blobRadius, style.CrownScale, random.NextSingle() * 10, 0.85f + 0.25f * random.NextSingle()));
             }
             // A couple of extra blobs to round the crown out.
             for (int i = 0; i < 2 && !style.Flat; i++)
@@ -301,10 +309,10 @@ public static class TreeModels
                     var foot = new Vector3(MathF.Cos(a) * r, 0, MathF.Sin(a) * r);
                     var bend = new Vector3(MathF.Cos(a) * 0.25f, 0, MathF.Sin(a) * 0.25f);
                     var top = foot + new Vector3(0, height, 0) + bend;
-                    Cylinder(mesh, new Segment(foot, top, 0.018f, 0.012f, 0, 0.8f), 3, new Vector3(0.10f, 0.20f, 0.26f));
+                    Cylinder(mesh, new Segment(foot, top, 0.018f, 0.012f, 0, BellSway), 3, new Vector3(0.10f, 0.20f, 0.26f));
                     // A drooping bell: a small cone hanging from the tip.
                     var color = i % 2 == 0 ? new Vector3(0.2f, 0.75f, 1.0f) : new Vector3(0.7f, 0.35f, 1.0f);
-                    Bell(mesh, top + bend * 0.2f, 0.07f + 0.04f * random.NextSingle(), color, lod >= 2 ? 5 : 8);
+                    Bell(mesh, top, 0.07f + 0.04f * random.NextSingle(), color, lod >= 2 ? 5 : 8);
                 }
                 break;
             }
@@ -442,6 +450,9 @@ public static class TreeModels
         }
     }
 
+    // Below 0.99, so neither the stem tips nor the bells get the leaves' extra shiver.
+    private const float BellSway = 0.8f;
+
     /// <summary>A small glowing bell hanging down from <paramref name="top"/>.</summary>
     private static void Bell(List<float> mesh, Vector3 top, float radius, Vector3 color, int sides)
     {
@@ -453,8 +464,9 @@ public static class TreeModels
             var o1 = new Vector3(MathF.Cos(a1), 0, MathF.Sin(a1));
             var p0 = mouth + o0 * radius; var p1 = mouth + o1 * radius;
             var n = Vector3.Normalize(o0 + o1 + new Vector3(0, 0.5f, 0));
-            Vertex(mesh, top, n, color, 0.55f, 1f); Vertex(mesh, p1, n, color, 0.4f, 1f); Vertex(mesh, p0, n, color, 0.4f, 1f);
-            Vertex(mesh, top, -n, color, 0.55f, 1f); Vertex(mesh, p0, -n, color, 0.4f, 1f); Vertex(mesh, p1, -n, color, 0.4f, 1f);
+            // Same sway as the tip of the stem, so the bell stays on it in the wind.
+            Vertex(mesh, top, n, color, 0.55f, BellSway); Vertex(mesh, p1, n, color, 0.4f, BellSway); Vertex(mesh, p0, n, color, 0.4f, BellSway);
+            Vertex(mesh, top, -n, color, 0.55f, BellSway); Vertex(mesh, p0, -n, color, 0.4f, BellSway); Vertex(mesh, p1, -n, color, 0.4f, BellSway);
         }
     }
 

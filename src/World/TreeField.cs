@@ -21,9 +21,11 @@ public sealed class TreeField
     private const int CellsPerTask = 48;
 
     // Families of models (see TreeModels) grouped by the biome noise.
-    private static readonly int[] Dreamy = [3, 6, 4];
-    private static readonly int[] Green = [0, 5, 1, 7, 0];
-    private static readonly int[] Golden = [2, 7, 2, 0];
+    // Indices: 0 indigo, 1 cypress, 2 pink, 3 teal, 4 lilac blossom, 5 fireflies, 6 blue orbs,
+    // 7 umbrella, 8 giant, 9 willow, 10 pine, 11 sapling, 12 shrub.
+    private static readonly int[] Dreamy = [3, 6, 4, 9, 9, 11, 12, 12];
+    private static readonly int[] Green = [0, 5, 1, 7, 8, 10, 10, 12, 12, 11];
+    private static readonly int[] Golden = [2, 7, 2, 0, 8, 11, 11, 12];
 
     private readonly TerrainField _terrain;
     private readonly PerlinNoise _forest;
@@ -153,7 +155,7 @@ public sealed class TreeField
         var random = new Random((int)Hash(cx, cz));
 
         // Dense woods where the forest noise is high, the odd lone tree elsewhere.
-        int count = forest > 0.15f ? 3 + (int)((forest - 0.15f) * 22) : random.NextSingle() < 0.1f ? 1 : 0;
+        int count = forest > 0.05f ? 4 + (int)((forest - 0.05f) * 34) : random.NextSingle() < 0.3f ? 1 + random.Next(2) : 0;
 
         float biome = _biome.Fractal(centerX * 0.0012f, centerZ * 0.0012f, 2);
         int[] family = biome < -0.2f ? Dreamy : biome > 0.15f ? Golden : Green;
@@ -161,12 +163,14 @@ public sealed class TreeField
         var trees = new List<TreeInstance>(count);
         for (int i = 0; i < count; i++)
         {
-            float x = (cx + random.NextSingle()) * CellSize, z = (cz + random.NextSingle()) * CellSize;
+            // Well inside a terrain tile, so the trunk stands on its flat top.
+            float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.6f);
+            float z = TerrainField.InsideTile((cz + random.NextSingle()) * CellSize, 0.6f);
             float y = _terrain.Height(x, z);
             // Gentle ground only, and not on the sand or the rock (see the terrain materials).
             if (y < TerrainField.WaterLevel + 5f || _terrain.Normal(x, z, 1f).Y < 0.86f) continue;
             int variant = family[random.Next(family.Length)];
-            trees.Add(new TreeInstance(new Vector3(x, y - 0.2f, z), random.NextSingle() * MathF.Tau, 0.75f + 0.55f * random.NextSingle(), variant));
+            trees.Add(new TreeInstance(new Vector3(x, y - 0.05f, z), random.NextSingle() * MathF.Tau, 0.75f + 0.55f * random.NextSingle(), variant));
         }
 
         AddDecorations(trees, cx, cz, random, biome);
@@ -180,7 +184,8 @@ public sealed class TreeField
         var crystals = TreeModels.VariantOf(biome < 0f ? TreeModels.Decoration.CyanCrystals : TreeModels.Decoration.VioletCrystals);
         for (int i = 0; i < 20; i++)
         {
-            float x = (cx + random.NextSingle()) * CellSize, z = (cz + random.NextSingle()) * CellSize;
+            float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.4f);
+            float z = TerrainField.InsideTile((cz + random.NextSingle()) * CellSize, 0.4f);
             float y = _terrain.Height(x, z);
             float roll = random.NextSingle();
             float yaw = random.NextSingle() * MathF.Tau;

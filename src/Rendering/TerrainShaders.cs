@@ -100,6 +100,7 @@ public static class TerrainShaders
         uniform float uFogStart;
         uniform float uFogEnd;
         uniform float uMistDensity; // soft aerial haze, per metre of distance
+        uniform float uUnderwater;  // 1 while the camera is below the water surface
 
         #define MAX_POINT_LIGHTS 16
         uniform int uPointCount;
@@ -213,7 +214,16 @@ public static class TerrainShaders
 
             // Edge fog: only the last stretch before the end of the view fades into the sky.
             float edge = smoothstep(uFogStart, uFogEnd, dist) * cutThrough;
-            return vec4(mix(color, sky, edge), 1.0);
+            color = mix(color, sky, edge);
+
+            // Under water: a deep indigo murk that thickens quickly with distance, lit faintly
+            // from above; glowing things still shine through it.
+            if (uUnderwater > 0.5)
+            {
+                vec3 murk = vec3(0.03, 0.06, 0.2) + uAmbient * 0.15 + vec3(0.02, 0.08, 0.12) * (1.0 - uNight);
+                color = mix(color * vec3(0.7, 0.9, 1.1), murk, (1.0 - exp(-dist * 0.07)) * (1.0 - 0.5 * (1.0 - cutThrough)));
+            }
+            return vec4(color, 1.0);
         }
         """;
 
@@ -225,16 +235,22 @@ public static class TerrainShaders
         #version 330 core
         layout(location = 0) in vec3 aPos;
         layout(location = 1) in vec3 aNormal;
+        layout(location = 2) in float aSlope; // normal.y of the smooth land: picks the material
+        layout(location = 3) in float aAo;    // darker at the foot of the walls
 
         uniform mat4 uViewProj;
 
         out vec3 vWorldPos;
         out vec3 vNormal;
+        out float vSlope;
+        out float vAo;
 
         void main()
         {
             vWorldPos = aPos;
             vNormal = aNormal;
+            vSlope = aSlope;
+            vAo = aAo;
             gl_Position = uViewProj * vec4(aPos, 1.0);
         }
         """;
@@ -247,10 +263,21 @@ public static class TerrainShaders
 
         in vec3 vWorldPos;
         in vec3 vNormal;
+        in float vSlope;
+        in float vAo;
 
         out vec4 FragColor;
 
-        vec3 terrainAlbedo(vec3 p, vec3 n, float dist)
+        // The land is made of tiles: a faint groove along their edges, fading with distance.
+        float tileEdges(vec3 p, vec3 n, float dist)
+        {
+            if (n.y < 0.5 || dist > 60.0) return 1.0;
+            vec2 f = fract(p.xz / 2.0); // TerrainField.TileSize
+            float edge = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)) * 2.0;
+            return mix(1.0, 0.86 + 0.14 * smoothstep(0.0, 0.03, edge), smoothstep(60.0, 20.0, dist));
+        }
+
+        vec3 terrainAlbedo(vec3 p, float slope, float dist)
         {
             vec2 xz = p.xz;
             float broad = noise2(xz * 0.0035, 0.0);
@@ -263,18 +290,18 @@ public static class TerrainShaders
             vec3 rock = mix(vec3(0.30, 0.23, 0.36), vec3(0.46, 0.35, 0.50), 0.5 + (strata - 0.5) * 0.45);
             vec3 sand = vec3(0.62, 0.48, 0.68);
 
-            vec2 w = rockSand(p, n.y);
+            vec2 w = rockSand(p, slope);
             vec3 albedo = mix(mix(grassColor(xz), sand, w.y), rock, w.x);
             return albedo * (0.75 + 0.5 * fine);
         }
 
         // Glitter: tiny grains that catch the light and twinkle, thickest on sand, brightest at night.
-        vec3 glitter(vec3 p, vec3 n, float dist)
+        vec3 glitter(vec3 p, vec3 n, float slope, float dist)
         {
-            if (dist > 70.0) return vec3(0.0);
+            if (dist > 70.0 || n.y < 0.5) return vec3(0.0);
             vec3 cell = floor(p * 5.0);
             float h = hash13(cell);
-            float sandy = rockSand(p, n.y).y;
+            float sandy = rockSand(p, slope).y;
             if (h < 0.994 - sandy * 0.006) return vec3(0.0);
             float r = length(fract(p * 5.0) - 0.5);
             float twinkle = pow(0.5 + 0.5 * sin(uTime * (2.0 + h * 4.0) + h * 80.0), 4.0);
@@ -286,8 +313,8 @@ public static class TerrainShaders
         {
             vec3 n = normalize(vNormal);
             float dist = length(vWorldPos - uCameraPos);
-            vec3 albedo = terrainAlbedo(vWorldPos, n, dist);
-            vec3 color = litColor(albedo, vWorldPos, n, 0.0) + glitter(vWorldPos, n, dist);
+            vec3 albedo = terrainAlbedo(vWorldPos, vSlope, dist) * vAo * tileEdges(vWorldPos, n, dist);
+            vec3 color = litColor(albedo, vWorldPos, n, 0.0) + glitter(vWorldPos, n, vSlope, dist);
             FragColor = finishColor(color, vWorldPos, 1.0);
         }
         """;
@@ -521,6 +548,13 @@ public static class TerrainShaders
             float fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(n, -rd), 0.0), 5.0);
             // Capped, so the galaxy core or the moon reflected in every ripple do not wash out into white.
             vec3 color = mix(refracted, min(skyColor(r, true), vec3(1.6)), fresnel);
+            if (uUnderwater > 0.5)
+            {
+                // Seen from below: the bright, rippled sky through the surface, fading at grazing
+                // angles into the silvery mirror of total internal reflection.
+                vec3 up = skyColor(normalize(vec3(rd.x, abs(rd.y) * 1.5, rd.z)), true);
+                color = mix(vec3(0.08, 0.12, 0.3), min(up, vec3(1.5)) * 0.8, smoothstep(0.05, 0.4, abs(rd.y)));
+            }
 
             // A glittering path toward the sun or the moon.
             float toLight = max(dot(r, uLightDir), 0.0);

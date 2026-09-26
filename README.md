@@ -4,7 +4,9 @@ Un gioco di esplorazione in paesaggi morbidi e sognanti, in C# / .NET 10 con
 [Silk.NET](https://github.com/dotnet/Silk.NET) (OpenGL 3.3 core). Gira su Windows, Linux e macOS.
 Tutto è generato dal codice: niente file di risorse.
 
-Il mondo è una superficie continua generata proceduralmente: colline, dune, altipiani a gradoni morbidi
+Il mondo è fatto di **strati**: piastrelle piatte di 2×2 m ad altezze multiple di mezzo metro, con pareti
+tra un livello e l'altro (un gradino si sale camminando, fino a un metro saltando). La forma è generata
+proceduralmente: colline, dune, altipiani a gradoni morbidi
 e guglie di roccia surreali, visibili fino a oltre un chilometro, in una palette cosmica viola, indaco
 e turchese. Il ciclo giorno/notte (20 minuti) respira tra un crepuscolo perenne, con il sole sempre basso
 all'orizzonte, e una notte cosmica dominata da un'enorme galassia a spirale, nebulose, stelle fittissime
@@ -12,7 +14,7 @@ e stelle cadenti. La sabbia e i prati scintillano di granelli luminosi.
 
 Nelle zone basse ci sono mari e laghi che riflettono il cielo, galassia compresa, con spiagge di sabbia viola:
 nell'acqua bassa pulsano venature di luce ciano bioluminescente, la riva è segnata da una linea luminosa
-e sulla superficie brillano scintille come stelle cadute. Nell'acqua si cammina a mezza gamba.
+e sulla superficie brillano scintille come stelle cadute. Vicino alla riva si cammina nell'acqua; al largo è profonda e si **nuota**: ci si muove come in volo ma lentamente, Spazio per salire, Shift per immergersi, e da fermi si torna a galla.
 Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno, tra scogli
 scuri; nell'acqua bassa galleggiano fiori di loto luminosi e sui prati spuntano campanule che brillano.
 Sulle spiagge svettano palme scure in controluce, farfalle
@@ -41,8 +43,8 @@ spore lilla al tramonto, lucciole di notte.
 dotnet run -c Release
 ```
 
-Sui portatili con due schede video Windows può avviare il gioco su quella integrata, molto più lenta.
-In quel caso: Impostazioni → Sistema → Schermo → Grafica → aggiungi `Mine.exe` → "Prestazioni elevate".
+Su Windows il gioco imposta da solo la preferenza "Prestazioni elevate" per la scheda video, così sui
+portatili con due schede usa quella dedicata; la prima volta si riavvia da solo per applicarla.
 
 ## Comandi
 

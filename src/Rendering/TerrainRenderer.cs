@@ -6,20 +6,23 @@ using Silk.NET.OpenGL;
 namespace Mine.Rendering;
 
 /// <summary>
-/// Draws the <see cref="TerrainField"/> as square tiles whose vertex spacing grows with
-/// distance (level of detail). Tile meshes are built on background threads and uploaded
-/// on the main thread; a tile keeps its old mesh until the new one arrives, so nothing
-/// pops out. Vertical "skirts" around every tile hide the cracks between detail levels.
-/// Vertex layout: position (3), normal (3).
+/// Draws the layered <see cref="TerrainField"/> in square chunks. Each chunk is a grid of flat
+/// blocks (the terrain tiles near the camera, merged 2x2, 4x4... farther away: level of detail),
+/// with vertical walls wherever two neighbouring blocks sit at different layers. Chunk meshes are
+/// built on background threads and uploaded on the main thread; a chunk keeps its old mesh until
+/// the new one arrives, so nothing pops out. Walls on the chunk borders reach deeper ("skirts")
+/// to hide the cracks against chunks at another level of detail.
+/// Vertex layout: position (3), normal (3), slope (1: normal.y of the smooth land, which picks
+/// the material), ambient occlusion (1: darker at the foot of the walls).
 /// </summary>
 public sealed unsafe class TerrainRenderer : IDisposable
 {
     public const float TileSize = 64f;
     public const float ViewDistance = 1300f;
-    private const int FloatsPerVertex = 6;
+    private const int FloatsPerVertex = 8;
     private const int UploadsPerFrame = 12;
 
-    // Vertex spacing per detail level, and how far from the camera each level is used.
+    // Block size (in terrain tiles) per detail level, and how far from the camera each level is used.
     private static readonly int[] LodSteps = [1, 2, 4, 8, 16];
     private static readonly float[] LodRanges = [110f, 220f, 420f, 800f, float.MaxValue];
 
@@ -27,13 +30,12 @@ public sealed unsafe class TerrainRenderer : IDisposable
     {
         public uint Vao, Vbo;
         public int Lod = -1;       // detail level of the mesh currently uploaded
+        public int VertexCount;
         public int WantedLod = -1; // detail level last requested
     }
 
     private readonly GL _gl;
     private readonly TerrainField _field;
-    private readonly uint[] _indexBuffers = new uint[LodSteps.Length];
-    private readonly int[] _indexCounts = new int[LodSteps.Length];
     private readonly Dictionary<(int X, int Z), Tile> _tiles = new();
     private readonly HashSet<(int X, int Z)> _wanted = new();
     private readonly List<(int X, int Z)> _toRemove = new();
@@ -47,14 +49,6 @@ public sealed unsafe class TerrainRenderer : IDisposable
     {
         _gl = gl;
         _field = field;
-        // Element buffers are VAO state in the core profile: bind a scratch VAO while creating them.
-        uint scratch = gl.GenVertexArray();
-        gl.BindVertexArray(scratch);
-        for (int lod = 0; lod < LodSteps.Length; lod++)
-            _indexBuffers[lod] = CreateIndexBuffer(GridSize(lod), out _indexCounts[lod]);
-        gl.BindVertexArray(0);
-        gl.DeleteVertexArray(scratch);
-
         _workers = new Thread[Math.Clamp(Environment.ProcessorCount - 1, 1, 4)];
         for (int i = 0; i < _workers.Length; i++)
         {
@@ -134,12 +128,10 @@ public sealed unsafe class TerrainRenderer : IDisposable
 
     private void DrawTile(Tile tile)
     {
-        if (tile.Lod < 0) return;
+        if (tile.Lod < 0 || tile.VertexCount == 0) return;
         _gl.BindVertexArray(tile.Vao);
-        _gl.DrawElements(PrimitiveType.Triangles, (uint)_indexCounts[tile.Lod], DrawElementsType.UnsignedShort, (void*)0);
+        _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)tile.VertexCount);
     }
-
-    private static int GridSize(int lod) => (int)TileSize / LodSteps[lod] + 1;
 
     /// <summary>Horizontal distance from a point to the nearest point of a tile.</summary>
     private static float DistanceToTile(Vector3 p, int tx, int tz)
@@ -160,82 +152,74 @@ public sealed unsafe class TerrainRenderer : IDisposable
     }
 
     /// <summary>
-    /// Grid vertices followed by the skirt vertices (a copy of the border, pushed down).
-    /// Normals come from central differences over the grid, so one extra ring of heights is sampled.
+    /// Flat block tops plus the walls between blocks at different heights. Block heights (and the
+    /// smooth slope used for the material) are sampled with one extra ring, for the border walls.
     /// </summary>
     private float[] BuildVertices(int tx, int tz, int lod)
     {
-        int step = LodSteps[lod], n = GridSize(lod);
+        float size = TerrainField.TileSize * LodSteps[lod];
+        int n = (int)(TileSize / size);
         float x0 = tx * TileSize, z0 = tz * TileSize;
 
-        var heights = new float[(n + 2) * (n + 2)];
+        var smooth = new float[(n + 2) * (n + 2)];
         for (int j = -1; j <= n; j++)
         for (int i = -1; i <= n; i++)
-            heights[(j + 1) * (n + 2) + (i + 1)] = _field.Height(x0 + i * step, z0 + j * step);
-        float H(int i, int j) => heights[(j + 1) * (n + 2) + (i + 1)];
+            smooth[(j + 1) * (n + 2) + (i + 1)] = _field.SmoothHeight(x0 + (i + 0.5f) * size, z0 + (j + 0.5f) * size);
+        float S(int i, int j) => smooth[(j + 1) * (n + 2) + (i + 1)];
+        float H(int i, int j) => TerrainField.Layer(S(i, j));
 
-        var vertices = new float[(n * n + 4 * n) * FloatsPerVertex];
-        int v = 0;
-        void Add(int i, int j, float drop)
+        var v = new List<float>(n * n * 6 * FloatsPerVertex * 2);
+        void Vertex(Vector3 p, Vector3 normal, float slope, float ao)
         {
-            var normal = Vector3.Normalize(new Vector3(H(i - 1, j) - H(i + 1, j), 2 * step, H(i, j - 1) - H(i, j + 1)));
-            vertices[v++] = x0 + i * step;
-            vertices[v++] = H(i, j) - drop;
-            vertices[v++] = z0 + j * step;
-            vertices[v++] = normal.X;
-            vertices[v++] = normal.Y;
-            vertices[v++] = normal.Z;
+            v.Add(p.X); v.Add(p.Y); v.Add(p.Z);
+            v.Add(normal.X); v.Add(normal.Y); v.Add(normal.Z);
+            v.Add(slope); v.Add(ao);
+        }
+        // A quad a-b-c-d (in order around it), wound counter-clockwise seen from the normal's side.
+        void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3 normal, float slope, float aoA, float aoB, float aoC, float aoD)
+        {
+            if (Vector3.Dot(Vector3.Cross(b - a, c - a), normal) < 0)
+            {
+                (b, d) = (d, b);
+                (aoB, aoD) = (aoD, aoB);
+            }
+            Vertex(a, normal, slope, aoA); Vertex(b, normal, slope, aoB); Vertex(c, normal, slope, aoC);
+            Vertex(a, normal, slope, aoA); Vertex(c, normal, slope, aoC); Vertex(d, normal, slope, aoD);
+        }
+        // A vertical wall along one block edge, from `top` down to `bottom`, facing `normal`.
+        void Wall(Vector3 edgeA, Vector3 edgeB, float top, float bottom, Vector3 normal)
+        {
+            const float footShade = 0.55f;
+            Quad(edgeA with { Y = top }, edgeB with { Y = top }, edgeB with { Y = bottom }, edgeA with { Y = bottom },
+                normal, 0f, 1f, 1f, footShade, footShade);
         }
 
+        float skirt = size * 1.5f + 1f; // deep enough to cover a neighbour chunk at another level of detail
         for (int j = 0; j < n; j++)
         for (int i = 0; i < n; i++)
-            Add(i, j, 0);
-
-        // Deep enough to cover the height difference to a coarser neighbour.
-        float skirt = step * 3f + 2f;
-        for (int k = 0; k < n; k++) Add(k, 0, skirt);
-        for (int k = 0; k < n; k++) Add(k, n - 1, skirt);
-        for (int k = 0; k < n; k++) Add(0, k, skirt);
-        for (int k = 0; k < n; k++) Add(n - 1, k, skirt);
-        return vertices;
-    }
-
-    /// <summary>Triangles of an n x n grid plus its double-sided skirts; shared by every tile of a detail level.</summary>
-    private uint CreateIndexBuffer(int n, out int count)
-    {
-        var indices = new List<ushort>();
-        ushort G(int i, int j) => (ushort)(j * n + i);
-
-        // Counter-clockwise seen from above.
-        for (int j = 0; j < n - 1; j++)
-        for (int i = 0; i < n - 1; i++)
         {
-            indices.AddRange([G(i, j), G(i, j + 1), G(i + 1, j)]);
-            indices.AddRange([G(i + 1, j), G(i, j + 1), G(i + 1, j + 1)]);
+            float h = H(i, j);
+            float xa = x0 + i * size, xb = xa + size, za = z0 + j * size, zb = za + size;
+            float gx = (S(i + 1, j) - S(i - 1, j)) / (2 * size), gz = (S(i, j + 1) - S(i, j - 1)) / (2 * size);
+            float slope = 1f / MathF.Sqrt(1 + gx * gx + gz * gz);
+
+            Quad(new(xa, h, za), new(xb, h, za), new(xb, h, zb), new(xa, h, zb), Vector3.UnitY, slope, 1, 1, 1, 1);
+
+            // Walls toward +X and +Z neighbours, on the side of the lower block; on the chunk border
+            // (all four sides) always, reaching down past the neighbour as a skirt.
+            float hx = H(i + 1, j), hz = H(i, j + 1);
+            if (i == n - 1) Wall(new(xb, 0, za), new(xb, 0, zb), h, MathF.Min(h, hx) - skirt, Vector3.UnitX);
+            else if (h > hx) Wall(new(xb, 0, za), new(xb, 0, zb), h, hx, Vector3.UnitX);
+            else if (hx > h) Wall(new(xb, 0, za), new(xb, 0, zb), hx, h, -Vector3.UnitX);
+
+            if (j == n - 1) Wall(new(xa, 0, zb), new(xb, 0, zb), h, MathF.Min(h, hz) - skirt, Vector3.UnitZ);
+            else if (h > hz) Wall(new(xa, 0, zb), new(xb, 0, zb), h, hz, Vector3.UnitZ);
+            else if (hz > h) Wall(new(xa, 0, zb), new(xb, 0, zb), hz, h, -Vector3.UnitZ);
+
+            if (i == 0) Wall(new(xa, 0, za), new(xa, 0, zb), h, MathF.Min(h, H(i - 1, j)) - skirt, -Vector3.UnitX);
+            if (j == 0) Wall(new(xa, 0, za), new(xb, 0, za), h, MathF.Min(h, H(i, j - 1)) - skirt, -Vector3.UnitZ);
         }
-
-        // Skirts: each border edge joined to its lowered copy, with both windings.
-        int skirtStart = n * n;
-        (Func<int, ushort> Edge, int Offset)[] sides =
-        [
-            (k => G(k, 0), 0), (k => G(k, n - 1), n), (k => G(0, k), 2 * n), (k => G(n - 1, k), 3 * n),
-        ];
-        foreach (var (edge, offset) in sides)
-            for (int k = 0; k < n - 1; k++)
-            {
-                ushort a = edge(k), b = edge(k + 1);
-                ushort c = (ushort)(skirtStart + offset + k), d = (ushort)(skirtStart + offset + k + 1);
-                indices.AddRange([a, c, b, b, c, d]);
-                indices.AddRange([a, b, c, b, d, c]);
-            }
-
-        count = indices.Count;
-        uint ebo = _gl.GenBuffer();
-        _gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, ebo);
-        var array = indices.ToArray();
-        fixed (ushort* data = array)
-            _gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(array.Length * sizeof(ushort)), data, BufferUsageARB.StaticDraw);
-        return ebo;
+        return v.ToArray();
     }
 
     private void Upload(Tile tile, int lod, float[] vertices)
@@ -251,16 +235,19 @@ public sealed unsafe class TerrainRenderer : IDisposable
             _gl.EnableVertexAttribArray(0);
             _gl.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, stride, (void*)(3 * sizeof(float)));
             _gl.EnableVertexAttribArray(1);
+            _gl.VertexAttribPointer(2, 1, VertexAttribPointerType.Float, false, stride, (void*)(6 * sizeof(float)));
+            _gl.EnableVertexAttribArray(2);
+            _gl.VertexAttribPointer(3, 1, VertexAttribPointerType.Float, false, stride, (void*)(7 * sizeof(float)));
+            _gl.EnableVertexAttribArray(3);
         }
 
         _gl.BindVertexArray(tile.Vao);
         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, tile.Vbo);
         fixed (float* data = vertices)
             _gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(vertices.Length * sizeof(float)), data, BufferUsageARB.StaticDraw);
-        // The element buffer binding is part of the VAO state: switch it to this level's indices.
-        _gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, _indexBuffers[lod]);
         _gl.BindVertexArray(0);
         tile.Lod = lod;
+        tile.VertexCount = vertices.Length / FloatsPerVertex;
     }
 
     private void DeleteMesh(Tile tile)
@@ -276,6 +263,5 @@ public sealed unsafe class TerrainRenderer : IDisposable
         _requests.CompleteAdding();
         foreach (var tile in _tiles.Values) DeleteMesh(tile);
         _tiles.Clear();
-        foreach (uint ebo in _indexBuffers) _gl.DeleteBuffer(ebo);
     }
 }

@@ -289,8 +289,9 @@ public sealed class Game : IDisposable
     /// </summary>
     private static (Vector2 Uv, Vector3 Color) LightShafts(in Atmosphere atmosphere, Vector3 look, Matrix4x4 skyViewProjection)
     {
-        bool moon = atmosphere.Night > 0.5f;
-        var direction = moon ? atmosphere.MoonDirection : atmosphere.SunDirection;
+        // Only the sun: the moon is so large that the radial blur stamps copies of it across the screen.
+        if (atmosphere.Night > 0.5f) return (Vector2.Zero, Vector3.Zero);
+        var direction = atmosphere.SunDirection;
         var clip = Vector4.Transform(new Vector4(direction * 1000f, 1f), skyViewProjection);
         if (clip.W <= 0) return (Vector2.Zero, Vector3.Zero);
         var ndc = new Vector2(clip.X, clip.Y) / clip.W;
@@ -299,9 +300,7 @@ public sealed class Game : IDisposable
         float facing = Math.Clamp((Vector3.Dot(look, direction) - 0.3f) / 0.7f, 0f, 1f);
         float aboveHorizon = Math.Clamp(direction.Y / 0.05f + 0.5f, 0f, 1f);
         float strength = onScreen * facing * aboveHorizon;
-        var color = moon
-            ? new Vector3(0.45f, 0.45f, 0.8f) * atmosphere.Night * 0.5f
-            : (atmosphere.SunGlow * 0.5f + new Vector3(0.15f)) * (1f - atmosphere.Night) * (0.6f + 0.4f * atmosphere.Haze);
+        var color = (atmosphere.SunGlow * 0.5f + new Vector3(0.15f)) * (1f - atmosphere.Night) * (0.6f + 0.4f * atmosphere.Haze);
         return (ndc * 0.5f + new Vector2(0.5f), color * strength);
     }
 
@@ -314,6 +313,7 @@ public sealed class Game : IDisposable
         shader.Set("uViewProj", viewProjection);
         shader.Set("uCameraPos", eye);
         shader.Set("uAmbient", atmosphere.Ambient);
+        shader.Set("uUnderwater", eye.Y < TerrainField.WaterLevel ? 1f : 0f);
         shader.Set("uLightColor", atmosphere.LightColor);
         shader.Set("uLightDir", atmosphere.LightDirection);
         shader.Set("uFogStart", fogEnd * 0.75f); // only the last stretch, to hide the world's edge
@@ -393,8 +393,10 @@ public sealed class Game : IDisposable
         else if (button == MouseButton.Right && _inventory[(int)_selected] > 0
                  && _terrainField.Raycast(_player.Eye, _player.LookDirection, ReachDistance, out var ground))
         {
-            // Place it on the ground, facing the player.
-            _objects.Place(_selected, ground, -_player.Yaw);
+            // Place it in the middle of the tile aimed at (stepping back a hair from the hit point,
+            // so a hit on a wall picks the tile in front of it), facing the player.
+            var aimed = ground - _player.LookDirection * 0.05f;
+            _objects.Place(_selected, _terrainField.TileCenter(aimed.X, aimed.Z), -_player.Yaw);
             _inventory[(int)_selected]--;
         }
     }
@@ -420,7 +422,7 @@ public sealed class Game : IDisposable
 
         int fps = (int)(_frames / _titleTimer);
         var p = _player.Position;
-        string mode = _player.Flying ? "volo" : "a piedi";
+        string mode = _player.Flying ? "volo" : _player.Swimming ? "nuoto" : "a piedi";
         if (_sprinting) mode += " (corsa)";
         else if (_player.Sneaking) mode += " (furtivo)";
         string hint = _mouseCaptured ? "" : " | clicca per giocare, Esc per uscire";

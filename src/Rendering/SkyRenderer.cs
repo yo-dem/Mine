@@ -253,6 +253,8 @@ public sealed class SkyRenderer : IDisposable
         in vec2 vNdc;
         uniform mat4 uInvViewProj; // rotation-only view, so the camera sits at the origin
         uniform vec3 uCameraPos;
+        uniform float uUnderwater;
+        uniform vec3 uAmbient;
         uniform int uCloudSteps;      // ray-march samples (quality)
         uniform int uCloudLightSteps; // samples toward the light per ray-march sample
         out vec4 FragColor;
@@ -326,6 +328,12 @@ public sealed class SkyRenderer : IDisposable
         {
             vec4 far = uInvViewProj * vec4(vNdc, 1.0, 1.0);
             vec3 d = normalize(far.xyz / far.w);
+            if (uUnderwater > 0.5)
+            {
+                // Nothing reaches this far under water: only the murk (the world shaders' colour).
+                FragColor = vec4(vec3(0.03, 0.06, 0.2) + uAmbient * 0.15 + vec3(0.02, 0.08, 0.12) * (1.0 - uNight), 1.0);
+                return;
+            }
             vec4 clouds = marchClouds(uCameraPos, d);
             FragColor = vec4(skyColor(d, true) * clouds.a + clouds.rgb, 1.0);
         }
@@ -374,6 +382,8 @@ public sealed class SkyRenderer : IDisposable
         _shader.Set("uCloudLightSteps", LowQuality ? 2 : 3);
         _shader.Set("uInvViewProj", inverseViewProjection);
         _shader.Set("uCameraPos", cameraPosition);
+        _shader.Set("uUnderwater", cameraPosition.Y < Mine.World.TerrainField.WaterLevel ? 1f : 0f);
+        _shader.Set("uAmbient", atmosphere.Ambient);
         SetUniforms(_shader, atmosphere, time, cloudTime);
 
         _gl.DepthFunc(DepthFunction.Lequal); // the far plane still passes where the buffer is clear
