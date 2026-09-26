@@ -1,5 +1,4 @@
 using System.Numerics;
-using Mine.World;
 using Silk.NET.OpenGL;
 
 namespace Mine.Rendering;
@@ -11,11 +10,11 @@ namespace Mine.Rendering;
 public sealed unsafe class ShadowMap : IDisposable
 {
     public const int Size = 2048;
-    public const float Radius = 80f;  // half-width of the shadowed area, in blocks
-    private const float DepthRange = 256f; // blocks in front of and behind the player, along the light
+    public const float Radius = 150f; // half-width of the shadowed area, in metres
+    private const float DepthRange = 256f; // metres in front of and behind the player, along the light
 
     /// <summary>
-    /// Depth bias for the shadow test, in shadow-map depth units: a twentieth of a block.
+    /// Depth bias for the shadow test, in shadow-map depth units: five centimetres.
     /// Kept tiny so shadows stay attached to the blocks casting them; acne on lit faces
     /// is handled by polygon offset and the shader's normal offset instead.
     /// </summary>
@@ -74,10 +73,12 @@ public sealed unsafe class ShadowMap : IDisposable
     }
 
     /// <summary>
-    /// Renders the chunks around <paramref name="center"/> as seen from <paramref name="lightDirection"/>
-    /// (pointing toward the light). Leaves the shadow framebuffer unbound; the caller restores the viewport.
+    /// Renders the scene around <paramref name="center"/> as seen from <paramref name="lightDirection"/>
+    /// (pointing toward the light). <paramref name="drawCasters"/> draws the geometry within
+    /// <see cref="Radius"/> plus a margin, with only positions at attribute 0. Leaves the shadow
+    /// framebuffer unbound; the caller restores the viewport.
     /// </summary>
-    public void Render(Vector3 center, Vector3 lightDirection, IEnumerable<Chunk> chunks)
+    public void Render(Vector3 center, Vector3 lightDirection, Action drawCasters)
     {
         var view = Matrix4x4.CreateLookAt(Vector3.Zero, -lightDirection, Vector3.UnitY);
 
@@ -100,14 +101,7 @@ public sealed unsafe class ShadowMap : IDisposable
 
         _shader.Use();
         _shader.Set("uLightViewProj", LightViewProjection);
-        float reach = Radius + 3 * Chunk.Size; // casters just outside the area still throw shadows into it
-        foreach (var chunk in chunks)
-        {
-            float dx = chunk.ChunkX * Chunk.Size + Chunk.Size / 2 - center.X;
-            float dz = chunk.ChunkZ * Chunk.Size + Chunk.Size / 2 - center.Z;
-            if (dx * dx + dz * dz < reach * reach)
-                chunk.Mesh?.Draw();
-        }
+        drawCasters();
 
         _gl.Disable(EnableCap.PolygonOffsetFill);
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
