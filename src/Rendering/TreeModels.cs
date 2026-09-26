@@ -40,10 +40,38 @@ public static class TreeModels
         new("Ombrello", 8f, 0.30f, 5, 2.8f, new(1.3f, 0.42f, 1.3f), new(0.18f, 0.10f, 0.32f), new(0.56f, 0.36f, 0.80f), new(0.20f, 0.14f, 0.24f), Flat: true),
     ];
 
-    public static int VariantCount => Styles.Length;
+    /// <summary>Glowing decorations that share the tree pipeline (instancing, wind, shadows), after the tree styles.</summary>
+    public enum Decoration
+    {
+        VioletCrystals,
+        CyanCrystals,
+        Lotus,
+        GlowBells,
+        ShoreRock,
+    }
+
+    public static int TreeStyleCount => Styles.Length;
+
+    public static int VariantCount => Styles.Length + Enum.GetValues<Decoration>().Length;
+
+    /// <summary>The variant index of a decoration.</summary>
+    public static int VariantOf(Decoration decoration) => Styles.Length + (int)decoration;
+
+    /// <summary>How far away a variant is still drawn: small plants vanish sooner than trees and crystals.</summary>
+    public static float MaxDistance(int variant) => variant < Styles.Length ? float.MaxValue : (Decoration)(variant - Styles.Length) switch
+    {
+        Decoration.Lotus => 160f,
+        Decoration.GlowBells => 140f,
+        _ => 700f,
+    };
 
     /// <summary>Radius of a variant's trunk at the foot, before instance scaling (for collisions).</summary>
-    public static float TrunkRadius(int variant) => Styles[variant].TrunkRadius;
+    public static float TrunkRadius(int variant) => variant < Styles.Length ? Styles[variant].TrunkRadius : (Decoration)(variant - Styles.Length) switch
+    {
+        Decoration.VioletCrystals or Decoration.CyanCrystals => 0.7f,
+        Decoration.ShoreRock => 1.1f,
+        _ => 0f, // flowers do not block the way
+    };
 
     private readonly record struct Segment(Vector3 A, Vector3 B, float RadiusA, float RadiusB, float SwayA, float SwayB);
     private readonly record struct Blob(Vector3 Center, float Radius, Vector3 Scale, float Seed, float Shade);
@@ -51,6 +79,7 @@ public static class TreeModels
 
     public static float[] Build(int variant, int lod)
     {
+        if (variant >= Styles.Length) return BuildDecoration((Decoration)(variant - Styles.Length), lod);
         var style = Styles[variant];
         var random = new Random(variant * 7919 + 11);
         var segments = new List<Segment>();
@@ -198,6 +227,163 @@ public static class TreeModels
             float inside = 0.65f + 0.35f * (Vector3.Dot(d, outward) * 0.5f + 0.5f);
             var color = Vector3.Lerp(style.LeafLow, style.LeafHigh, height * 0.85f + lump * 0.15f) * inside * blob.Shade;
             Vertex(mesh, p, n, color, 0, 1);
+        }
+    }
+
+    private static float[] BuildDecoration(Decoration decoration, int lod)
+    {
+        var mesh = new List<float>();
+        var random = new Random(9000 + (int)decoration);
+        switch (decoration)
+        {
+            case Decoration.VioletCrystals:
+            case Decoration.CyanCrystals:
+            {
+                var tint = decoration == Decoration.VioletCrystals ? new Vector3(0.66f, 0.42f, 1.0f) : new Vector3(0.40f, 0.85f, 1.0f);
+                Rock(mesh, Vector3.Zero, new Vector3(1.0f, 0.35f, 0.9f), new Vector3(0.10f, 0.08f, 0.16f), lod, 3.1f);
+                int count = 7;
+                for (int i = 0; i < count; i++)
+                {
+                    // The tallest in the middle, the others leaning outward around it.
+                    float a = i * MathF.Tau / count + random.NextSingle() * 0.6f;
+                    float r = i == 0 ? 0f : 0.25f + 0.45f * random.NextSingle();
+                    var foot = new Vector3(MathF.Cos(a) * r, 0.1f, MathF.Sin(a) * r);
+                    var dir = Vector3.Normalize(new Vector3(MathF.Cos(a) * r * 1.2f, 1f, MathF.Sin(a) * r * 1.2f));
+                    float length = i == 0 ? 3.2f : 1.0f + 1.8f * random.NextSingle();
+                    float radius = i == 0 ? 0.38f : 0.16f + 0.16f * random.NextSingle();
+                    var shade = tint * (0.85f + 0.3f * random.NextSingle());
+                    Prism(mesh, foot, dir, length, radius, shade, lod >= 2 ? 4 : 6);
+                }
+                break;
+            }
+            case Decoration.Lotus:
+            {
+                // A dark floating pad, two rings of petals glowing at the heart, and a bright core.
+                var pad = new Vector3(0.10f, 0.14f, 0.20f);
+                int padSides = lod >= 2 ? 8 : 16;
+                for (int i = 1; i < padSides; i++) // segment 0 left out: the notch of the leaf
+                {
+                    float a0 = i * MathF.Tau / padSides, a1 = (i + 1) * MathF.Tau / padSides;
+                    var p0 = new Vector3(MathF.Cos(a0) * 0.75f, 0f, MathF.Sin(a0) * 0.75f);
+                    var p1 = new Vector3(MathF.Cos(a1) * 0.75f, 0f, MathF.Sin(a1) * 0.75f);
+                    Vertex(mesh, Vector3.Zero, Vector3.UnitY, pad, 0, 0.15f);
+                    Vertex(mesh, p1, Vector3.UnitY, pad, 0, 0.15f);
+                    Vertex(mesh, p0, Vector3.UnitY, pad, 0, 0.15f);
+                }
+                Petals(mesh, 8, 0.42f, 0.35f, 0.9f, new Vector3(0.95f, 0.55f, 1.0f), 0.0f);
+                Petals(mesh, 6, 0.30f, 0.38f, 0.45f, new Vector3(1.0f, 0.70f, 1.0f), 0.5f);
+                foreach (var d in Icosphere(lod >= 2 ? 0 : 1))
+                    Vertex(mesh, new Vector3(0, 0.14f, 0) + d * 0.09f, d, new Vector3(1.0f, 0.9f, 0.8f), 1f, 0.15f);
+                break;
+            }
+            case Decoration.GlowBells:
+            {
+                int stems = 6;
+                for (int i = 0; i < stems; i++)
+                {
+                    float a = random.NextSingle() * MathF.Tau;
+                    float r = 0.1f + 0.25f * random.NextSingle();
+                    float height = 0.5f + 0.6f * random.NextSingle();
+                    var foot = new Vector3(MathF.Cos(a) * r, 0, MathF.Sin(a) * r);
+                    var bend = new Vector3(MathF.Cos(a) * 0.25f, 0, MathF.Sin(a) * 0.25f);
+                    var top = foot + new Vector3(0, height, 0) + bend;
+                    Cylinder(mesh, new Segment(foot, top, 0.018f, 0.012f, 0, 0.8f), 3, new Vector3(0.10f, 0.20f, 0.26f));
+                    // A drooping bell: a small cone hanging from the tip.
+                    var color = i % 2 == 0 ? new Vector3(0.45f, 0.9f, 1.0f) : new Vector3(0.8f, 0.55f, 1.0f);
+                    Bell(mesh, top + bend * 0.2f, 0.07f + 0.04f * random.NextSingle(), color, lod >= 2 ? 5 : 8);
+                }
+                break;
+            }
+            case Decoration.ShoreRock:
+            {
+                Rock(mesh, Vector3.Zero, new Vector3(1.4f, 0.9f, 1.1f), new Vector3(0.12f, 0.09f, 0.18f), lod, 5.3f);
+                for (int i = 0; i < 3; i++)
+                {
+                    float a = random.NextSingle() * MathF.Tau;
+                    var foot = new Vector3(MathF.Cos(a) * 0.9f, 0.5f, MathF.Sin(a) * 0.6f);
+                    var dir = Vector3.Normalize(new Vector3(MathF.Cos(a), 0.9f, MathF.Sin(a)));
+                    Prism(mesh, foot, dir, 0.5f + 0.4f * random.NextSingle(), 0.1f, new Vector3(0.55f, 0.45f, 1.0f), 5);
+                }
+                break;
+            }
+        }
+        return mesh.ToArray();
+    }
+
+    /// <summary>A lumpy, dark stone half sunk in the ground.</summary>
+    private static void Rock(List<float> mesh, Vector3 center, Vector3 size, Vector3 color, int lod, float seed)
+    {
+        foreach (var d in Icosphere(lod >= 2 ? 1 : 2))
+        {
+            float lump = 1f + 0.25f * MathF.Sin(d.X * 4.1f + seed) * MathF.Sin(d.Z * 3.3f - seed) + 0.1f * MathF.Sin(d.Y * 7f + seed);
+            var p = center + d * lump * size;
+            p.Y = MathF.Max(p.Y, -0.3f);
+            var shade = color * (0.8f + 0.35f * (d.Y * 0.5f + 0.5f));
+            Vertex(mesh, p, Vector3.Normalize(d / size), shade, 0, 0);
+        }
+    }
+
+    /// <summary>
+    /// A crystal: a hexagonal (or square) prism with a pointed tip. It glows from within: dim at the
+    /// foot, brighter toward the tip, the facets alternating in brightness.
+    /// </summary>
+    private static void Prism(List<float> mesh, Vector3 foot, Vector3 axis, float length, float radius, Vector3 color, int sides)
+    {
+        var side = Vector3.Normalize(Vector3.Cross(axis, MathF.Abs(axis.Y) < 0.9f ? Vector3.UnitY : Vector3.UnitX));
+        var other = Vector3.Cross(axis, side);
+        var shoulder = foot + axis * length * 0.78f;
+        var tip = foot + axis * length;
+        for (int i = 0; i < sides; i++)
+        {
+            float a0 = i * MathF.Tau / sides, a1 = (i + 1) * MathF.Tau / sides;
+            var o0 = side * MathF.Cos(a0) + other * MathF.Sin(a0);
+            var o1 = side * MathF.Cos(a1) + other * MathF.Sin(a1);
+            var b0 = foot + o0 * radius; var b1 = foot + o1 * radius;
+            var s0 = shoulder + o0 * radius; var s1 = shoulder + o1 * radius;
+            var facet = color * (i % 2 == 0 ? 1f : 0.8f);
+            var n = Vector3.Normalize(o0 + o1);
+            Vertex(mesh, b0, n, facet * 0.7f, 0.3f, 0); Vertex(mesh, s1, n, facet, 0.75f, 0); Vertex(mesh, s0, n, facet, 0.75f, 0);
+            Vertex(mesh, b0, n, facet * 0.7f, 0.3f, 0); Vertex(mesh, b1, n, facet * 0.7f, 0.3f, 0); Vertex(mesh, s1, n, facet, 0.75f, 0);
+            var tn = Vector3.Normalize(Vector3.Cross(s1 - s0, tip - s0));
+            Vertex(mesh, s0, tn, facet, 0.8f, 0); Vertex(mesh, s1, tn, facet, 0.8f, 0); Vertex(mesh, tip, tn, color * 1.2f, 1f, 0);
+        }
+    }
+
+    /// <summary>A ring of cupped petals, both sides visible, glowing more toward the heart of the flower.</summary>
+    private static void Petals(List<float> mesh, int count, float length, float width, float lift, Vector3 color, float twist)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            float a = i * MathF.Tau / count + twist;
+            var outward = new Vector3(MathF.Cos(a), 0, MathF.Sin(a));
+            var across = new Vector3(-outward.Z, 0, outward.X);
+            var root = new Vector3(0, 0.05f, 0);
+            var mid = root + outward * length * 0.55f + new Vector3(0, lift * length * 0.5f, 0);
+            var tip = root + outward * length + new Vector3(0, lift * length, 0);
+            var l = mid - across * width * 0.5f;
+            var r = mid + across * width * 0.5f;
+            var n = Vector3.Normalize(Vector3.Cross(r - root, tip - root));
+            // Front and back faces, so the petals are seen from both sides with culling on.
+            Vertex(mesh, root, n, color, 0.9f, 0.3f); Vertex(mesh, l, n, color, 0.55f, 0.3f); Vertex(mesh, tip, n, color * 1.1f, 0.35f, 0.3f);
+            Vertex(mesh, root, n, color, 0.9f, 0.3f); Vertex(mesh, tip, n, color * 1.1f, 0.35f, 0.3f); Vertex(mesh, r, n, color, 0.55f, 0.3f);
+            Vertex(mesh, root, -n, color, 0.9f, 0.3f); Vertex(mesh, tip, -n, color * 1.1f, 0.35f, 0.3f); Vertex(mesh, l, -n, color, 0.55f, 0.3f);
+            Vertex(mesh, root, -n, color, 0.9f, 0.3f); Vertex(mesh, r, -n, color, 0.55f, 0.3f); Vertex(mesh, tip, -n, color * 1.1f, 0.35f, 0.3f);
+        }
+    }
+
+    /// <summary>A small glowing bell hanging down from <paramref name="top"/>.</summary>
+    private static void Bell(List<float> mesh, Vector3 top, float radius, Vector3 color, int sides)
+    {
+        var mouth = top - new Vector3(0, radius * 1.6f, 0);
+        for (int i = 0; i < sides; i++)
+        {
+            float a0 = i * MathF.Tau / sides, a1 = (i + 1) * MathF.Tau / sides;
+            var o0 = new Vector3(MathF.Cos(a0), 0, MathF.Sin(a0));
+            var o1 = new Vector3(MathF.Cos(a1), 0, MathF.Sin(a1));
+            var p0 = mouth + o0 * radius; var p1 = mouth + o1 * radius;
+            var n = Vector3.Normalize(o0 + o1 + new Vector3(0, 0.5f, 0));
+            Vertex(mesh, top, n, color, 1f, 1f); Vertex(mesh, p1, n, color, 0.8f, 1f); Vertex(mesh, p0, n, color, 0.8f, 1f);
+            Vertex(mesh, top, -n, color, 1f, 1f); Vertex(mesh, p0, -n, color, 0.8f, 1f); Vertex(mesh, p1, -n, color, 0.8f, 1f);
         }
     }
 
