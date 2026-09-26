@@ -271,7 +271,7 @@ public sealed class Game : IDisposable
         float strength = onScreen * facing * aboveHorizon;
         var color = moon
             ? new Vector3(0.45f, 0.45f, 0.8f) * atmosphere.Night * 0.9f
-            : (atmosphere.SunGlow * 0.8f + new Vector3(0.25f)) * (1f - atmosphere.Night) * (0.8f + 0.8f * atmosphere.Haze);
+            : (atmosphere.SunGlow * 0.5f + new Vector3(0.15f)) * (1f - atmosphere.Night) * (0.6f + 0.4f * atmosphere.Haze);
         return (ndc * 0.5f + new Vector2(0.5f), color * strength);
     }
 

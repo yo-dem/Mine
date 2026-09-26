@@ -13,8 +13,8 @@ public static class GroundMaterials
     {
         float broad = Noise2(x * 0.0035f, z * 0.0035f, 0f);
         float tint = Noise2(x * 0.0012f + 7f, z * 0.0012f + 7f, 1f);
-        var grass = Vector3.Lerp(new Vector3(0.33f, 0.50f, 0.15f), new Vector3(0.64f, 0.60f, 0.22f), broad);
-        return Vector3.Lerp(grass, new Vector3(0.20f, 0.48f, 0.38f), SmoothStep(0.65f, 0.9f, tint) * 0.35f);
+        var grass = Vector3.Lerp(new Vector3(0.16f, 0.30f, 0.36f), new Vector3(0.34f, 0.24f, 0.48f), broad);
+        return Vector3.Lerp(grass, new Vector3(0.52f, 0.26f, 0.48f), SmoothStep(0.65f, 0.9f, tint) * 0.45f);
     }
 
     /// <summary>How much of the ground is grass (1 on gentle, not-too-low ground; 0 on rock or sand).</summary>

@@ -5,9 +5,10 @@ Un gioco di esplorazione in paesaggi morbidi e sognanti, in C# / .NET 10 con
 Tutto è generato dal codice: niente file di risorse.
 
 Il mondo è una superficie continua generata proceduralmente: colline, dune, altipiani a gradoni morbidi
-e guglie di roccia surreali, visibili fino a oltre un chilometro. Ha un ciclo giorno/notte
-(10 minuti di giorno e 10 di notte) con cielo, sole, grande luna, stelle e nuvole disegnati da shader,
-ombre proiettate dal sole e dalla luna e una foschia leggera che tinge la distanza.
+e guglie di roccia surreali, visibili fino a oltre un chilometro, in una palette cosmica viola, indaco
+e turchese. Il ciclo giorno/notte (20 minuti) respira tra un crepuscolo perenne, con il sole sempre basso
+all'orizzonte, e una notte cosmica dominata da un'enorme galassia a spirale, nebulose, stelle fittissime
+e stelle cadenti. La sabbia e i prati scintillano di granelli luminosi.
 
 Nel mondo si trovano cristalli e lanterne da raccogliere, e puoi piazzare lanterne, torce e cristalli
 dove vuoi: ognuno emette una luce colorata che illumina il paesaggio attorno, con un alone nell'aria.

@@ -64,13 +64,13 @@ public static class TerrainShaders
 
         float noise2(vec2 p, float layer) { return valueNoise3(vec3(p, layer)); }
 
-        // Grass drifting between fresh green, golden and a teal accent.
+        // Cosmic grass drifting between teal-blue and violet, with patches of magenta.
         vec3 grassColor(vec2 xz)
         {
             float broad = noise2(xz * 0.0035, 0.0);
             float tint = noise2(xz * 0.0012 + 7.0, 1.0);
-            vec3 grass = mix(vec3(0.33, 0.50, 0.15), vec3(0.64, 0.60, 0.22), broad);
-            return mix(grass, vec3(0.20, 0.48, 0.38), smoothstep(0.65, 0.9, tint) * 0.35);
+            vec3 grass = mix(vec3(0.16, 0.30, 0.36), vec3(0.34, 0.24, 0.48), broad);
+            return mix(grass, vec3(0.52, 0.26, 0.48), smoothstep(0.65, 0.9, tint) * 0.45);
         }
 
         // How much of the ground is rock (x, steep slopes) and sand (y, lowlands); the rest is grass.
@@ -259,19 +259,35 @@ public static class TerrainShaders
             float fine = mix(grain, 0.5, smoothstep(30.0, 140.0, dist));
 
             float strata = 0.5 + 0.5 * sin(p.y * 0.45 + mid * 6.0 + broad * 4.0);
-            vec3 rock = mix(vec3(0.70, 0.55, 0.45), vec3(0.84, 0.71, 0.58), 0.5 + (strata - 0.5) * 0.35);
-            vec3 sand = vec3(0.88, 0.76, 0.58);
+            vec3 rock = mix(vec3(0.30, 0.23, 0.36), vec3(0.46, 0.35, 0.50), 0.5 + (strata - 0.5) * 0.45);
+            vec3 sand = vec3(0.62, 0.48, 0.68);
 
             vec2 w = rockSand(p, n.y);
             vec3 albedo = mix(mix(grassColor(xz), sand, w.y), rock, w.x);
             return albedo * (0.75 + 0.5 * fine);
         }
 
+        // Glitter: tiny grains that catch the light and twinkle, thickest on sand, brightest at night.
+        vec3 glitter(vec3 p, vec3 n, float dist)
+        {
+            if (dist > 70.0) return vec3(0.0);
+            vec3 cell = floor(p * 5.0);
+            float h = hash13(cell);
+            float sandy = rockSand(p, n.y).y;
+            if (h < 0.994 - sandy * 0.006) return vec3(0.0);
+            float r = length(fract(p * 5.0) - 0.5);
+            float twinkle = pow(0.5 + 0.5 * sin(uTime * (2.0 + h * 4.0) + h * 80.0), 4.0);
+            vec3 tint = mix(vec3(0.5, 0.9, 1.0), vec3(0.9, 0.6, 1.0), hash13(cell + 5.0));
+            return tint * smoothstep(0.4, 0.0, r) * twinkle * mix(1.5, 4.0, uNight) * smoothstep(70.0, 30.0, dist);
+        }
+
         void main()
         {
             vec3 n = normalize(vNormal);
-            vec3 albedo = terrainAlbedo(vWorldPos, n, length(vWorldPos - uCameraPos));
-            FragColor = finishColor(litColor(albedo, vWorldPos, n, 0.0), vWorldPos, 1.0);
+            float dist = length(vWorldPos - uCameraPos);
+            vec3 albedo = terrainAlbedo(vWorldPos, n, dist);
+            vec3 color = litColor(albedo, vWorldPos, n, 0.0) + glitter(vWorldPos, n, dist);
+            FragColor = finishColor(color, vWorldPos, 1.0);
         }
         """;
 

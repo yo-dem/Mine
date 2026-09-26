@@ -30,14 +30,14 @@ public static class TreeModels
 
     private static readonly Style[] Styles =
     [
-        new("Quercia", 7f, 0.36f, 4, 2.6f, new(1f, 0.85f, 1f), new(0.14f, 0.30f, 0.09f), new(0.44f, 0.64f, 0.22f), new(0.36f, 0.27f, 0.20f)),
-        new("Cipresso", 10f, 0.28f, 0, 1.5f, new(1f, 1.5f, 1f), new(0.09f, 0.25f, 0.14f), new(0.28f, 0.50f, 0.26f), new(0.32f, 0.24f, 0.18f), Stacked: true),
-        new("Dorato", 8f, 0.38f, 5, 2.8f, new(1f, 0.8f, 1f), new(0.55f, 0.28f, 0.07f), new(1.0f, 0.74f, 0.26f), new(0.34f, 0.25f, 0.19f)),
-        new("Turchese", 9f, 0.32f, 4, 2.5f, new(1f, 0.9f, 1f), new(0.07f, 0.28f, 0.30f), new(0.36f, 0.76f, 0.68f), new(0.30f, 0.26f, 0.24f)),
-        new("Fiori lilla", 6.5f, 0.30f, 5, 2.4f, new(1f, 0.8f, 1f), new(0.45f, 0.27f, 0.50f), new(0.98f, 0.72f, 0.92f), new(0.32f, 0.25f, 0.28f)),
-        new("Lucciole", 7.5f, 0.36f, 4, 2.6f, new(1f, 0.85f, 1f), new(0.12f, 0.28f, 0.12f), new(0.36f, 0.60f, 0.26f), new(0.34f, 0.26f, 0.20f), Orbs: new(1.0f, 0.82f, 0.42f)),
-        new("Sfere azzurre", 8.5f, 0.32f, 4, 2.5f, new(1f, 0.9f, 1f), new(0.28f, 0.20f, 0.46f), new(0.64f, 0.56f, 0.96f), new(0.28f, 0.24f, 0.30f), Orbs: new(0.45f, 0.92f, 1.0f)),
-        new("Ombrello", 8f, 0.30f, 5, 2.8f, new(1.3f, 0.42f, 1.3f), new(0.28f, 0.38f, 0.11f), new(0.76f, 0.78f, 0.30f), new(0.38f, 0.28f, 0.20f), Flat: true),
+        new("Indaco", 7f, 0.36f, 4, 2.6f, new(1f, 0.85f, 1f), new(0.10f, 0.12f, 0.28f), new(0.30f, 0.36f, 0.68f), new(0.22f, 0.16f, 0.24f)),
+        new("Cipresso", 10f, 0.28f, 0, 1.5f, new(1f, 1.5f, 1f), new(0.06f, 0.08f, 0.18f), new(0.20f, 0.24f, 0.46f), new(0.18f, 0.13f, 0.20f), Stacked: true),
+        new("Rosa", 8f, 0.38f, 5, 2.8f, new(1f, 0.8f, 1f), new(0.42f, 0.12f, 0.34f), new(1.0f, 0.56f, 0.80f), new(0.24f, 0.16f, 0.24f)),
+        new("Turchese", 9f, 0.32f, 4, 2.5f, new(1f, 0.9f, 1f), new(0.05f, 0.24f, 0.30f), new(0.40f, 0.86f, 0.86f), new(0.20f, 0.18f, 0.26f)),
+        new("Fiori lilla", 6.5f, 0.30f, 5, 2.4f, new(1f, 0.8f, 1f), new(0.40f, 0.22f, 0.50f), new(0.96f, 0.70f, 0.96f), new(0.24f, 0.18f, 0.26f)),
+        new("Lucciole", 7.5f, 0.36f, 4, 2.6f, new(1f, 0.85f, 1f), new(0.08f, 0.10f, 0.24f), new(0.28f, 0.28f, 0.62f), new(0.20f, 0.15f, 0.24f), Orbs: new(1.0f, 0.82f, 0.42f)),
+        new("Sfere azzurre", 8.5f, 0.32f, 4, 2.5f, new(1f, 0.9f, 1f), new(0.24f, 0.16f, 0.46f), new(0.64f, 0.54f, 0.98f), new(0.22f, 0.18f, 0.28f), Orbs: new(0.45f, 0.92f, 1.0f)),
+        new("Ombrello", 8f, 0.30f, 5, 2.8f, new(1.3f, 0.42f, 1.3f), new(0.18f, 0.10f, 0.32f), new(0.56f, 0.36f, 0.80f), new(0.20f, 0.14f, 0.24f), Flat: true),
     ];
 
     public static int VariantCount => Styles.Length;

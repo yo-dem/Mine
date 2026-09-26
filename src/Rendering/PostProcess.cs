@@ -146,8 +146,8 @@ public sealed unsafe class PostProcess : IDisposable
 
             // Dreamy grade: richer colour, shadows drifting to teal-violet, highlights to gold.
             float luma = dot(color, vec3(0.3, 0.59, 0.11));
-            color = mix(vec3(luma), color, 1.18);
-            vec3 shadowTint = mix(vec3(0.02, 0.05, 0.09), vec3(0.05, 0.03, 0.10), uNight);
+            color = mix(vec3(luma), color, 1.25);
+            vec3 shadowTint = mix(vec3(0.05, 0.02, 0.10), vec3(0.06, 0.02, 0.13), uNight);
             color += shadowTint * (1.0 - smoothstep(0.0, 0.45, luma));
             color *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), smoothstep(0.5, 1.0, luma));
 
@@ -172,7 +172,7 @@ public sealed unsafe class PostProcess : IDisposable
     private int _screenWidth, _screenHeight; // window size
 
     public float BloomThreshold = 1.3f;
-    public float BloomStrength = 0.55f;
+    public float BloomStrength = 0.7f;
     public float Exposure = 1.0f;
 
     /// <summary>Low quality (integrated GPUs): the scene is rendered at 70% resolution, with fewer light-shaft samples.</summary>

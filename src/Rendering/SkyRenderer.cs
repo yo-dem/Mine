@@ -5,7 +5,8 @@ using Silk.NET.OpenGL;
 namespace Mine.Rendering;
 
 /// <summary>
-/// Draws the sky (gradient, square sun and moon, stars, volumetric clouds) as a full-screen triangle.
+/// Draws the cosmic sky (gradient, a giant spiral galaxy, nebulae, dense stars, shooting stars,
+/// square sun and moon, volumetric clouds) as a full-screen triangle.
 /// Output is HDR (bright things above 1, for the bloom); tone mapping happens in the post-process pass.
 /// It is drawn after the opaque geometry, at the far plane with a less-or-equal depth test, so the
 /// expensive cloud ray march only runs on the pixels where the sky is actually visible.
@@ -60,6 +61,8 @@ public sealed class SkyRenderer : IDisposable
         uniform float uHaze;
         uniform float uNight;
         uniform float uSkyAngle;
+        uniform vec3 uGalaxyDir;
+        uniform float uGalaxyGlow;
         uniform float uTime;
 
         // Coordinates of d on a square facing `center`, tilted by `tilt`: |q| < 1 is inside.
@@ -100,6 +103,66 @@ public sealed class SkyRenderer : IDisposable
             return vec3(0.55, 0.6, 0.72) * shade;
         }
 
+        // The galaxy: a huge spiral seen face-on, like a swirling planet. Logarithmic arms wind
+        // slowly around a bright core, sprinkled with star dust, inside a glowing spherical rim,
+        // with fainter spiral wisps trailing outside it.
+        vec3 galaxy(vec3 d)
+        {
+            float facing = dot(d, uGalaxyDir);
+            if (facing < 0.6) return vec3(0.0);
+            vec3 t1 = normalize(cross(uGalaxyDir, vec3(0.0, 1.0, 0.0)));
+            vec3 t2 = cross(t1, uGalaxyDir);
+            vec2 q = vec2(dot(d, t1), dot(d, t2)) / (facing * 0.3); // radius ~17 degrees
+            float r = length(q);
+            float angle = atan(q.y, q.x);
+            float swirl = angle - log(r + 0.03) * 2.8 + uTime * 0.02;
+            // Noise twisted along the arms breaks them into clumps and streaks, like brush strokes.
+            float streaks = texture(uCloudNoise, vec3(r * 1.3, swirl * 0.35, 0.37)).r;
+            float arms = pow(0.5 + 0.5 * cos(swirl * 2.0), 2.5) * (0.35 + 1.3 * streaks);
+            float inside = smoothstep(1.02, 0.9, r);
+
+            vec3 armColor = mix(vec3(0.25, 0.15, 0.85), vec3(0.95, 0.5, 1.0), arms * exp(-r * 1.2));
+            vec3 c = armColor * (0.25 + arms * 1.6) * exp(-r * 1.6) * inside;
+            c += vec3(1.0, 0.8, 1.0) * exp(-r * 10.0) * 3.0;                         // core
+            c += vec3(0.55, 0.4, 1.0) * exp(-pow((r - 1.0) * 12.0, 2.0)) * 1.2;       // rim
+            vec2 dust = floor(q * 140.0);
+            float sparkle = step(0.965, hash13(vec3(dust, 3.0))) * (0.5 + 0.5 * sin(uTime * 3.0 + hash13(vec3(dust, 9.0)) * 40.0));
+            c += vec3(1.0, 0.9, 1.0) * sparkle * (0.3 + arms) * inside * 1.5;
+            // Outer wisps continue the arms beyond the rim, fading out.
+            float outer = smoothstep(1.0, 1.2, r) * exp(-(r - 1.0) * 1.8);
+            c += vec3(0.4, 0.3, 1.0) * pow(0.5 + 0.5 * cos(swirl * 2.0 + 0.6), 6.0) * outer * 0.8;
+            return c * uGalaxyGlow;
+        }
+
+        // Nebulae: broad veils of violet and blue drifting across the dark sky.
+        vec3 nebula(vec3 s)
+        {
+            float a = texture(uCloudNoise, s * 0.9 + vec3(0.2, 0.5, 0.1)).r;
+            float b = texture(uCloudNoise, s * 2.3 + vec3(a * 0.4)).r;
+            float veil = smoothstep(0.45, 0.8, a * 0.7 + b * 0.3);
+            return mix(vec3(0.35, 0.1, 0.6), vec3(0.1, 0.25, 0.7), b) * veil * 0.55;
+        }
+
+        // A shooting star every few seconds: a short bright streak with a fading tail.
+        vec3 shootingStar(vec3 d)
+        {
+            const float period = 5.0;
+            float slot = floor(uTime / period);
+            float h = hash13(vec3(slot, 7.0, 1.0));
+            if (h < 0.35) return vec3(0.0);
+            float progress = fract(uTime / period) * period / 0.9; // lasts 0.9 s
+            if (progress > 1.0) return vec3(0.0);
+            float a = hash13(vec3(slot, 2.0, 5.0)) * 6.283;
+            vec3 start = normalize(vec3(cos(a), 0.45 + 0.4 * hash13(vec3(slot, 4.0, 4.0)), sin(a)));
+            vec3 velocity = normalize(cross(start, vec3(0.3, 1.0, 0.2)));
+            vec3 head = normalize(start + velocity * progress * 0.45);
+            vec3 q = d - head * dot(d, head);
+            float along = dot(q, velocity);
+            float across = length(q - velocity * along);
+            float tail = smoothstep(-0.12, 0.0, along) * step(along, 0.002);
+            return vec3(1.0, 0.9, 1.0) * tail * exp(-across * across * 4e5) * (1.0 - progress) * 4.0;
+        }
+
         // bodies = false leaves out sun, moon and stars (used for fog and sky light).
         vec3 skyColor(vec3 d, bool bodies)
         {
@@ -113,7 +176,7 @@ public sealed class SkyRenderer : IDisposable
             vec3 c = mix(horizon, uZenith, pow(up, 0.45));
 
             // A warm band hugging the horizon on the sun side, thicker when the air is hazy.
-            c += uSunHorizon * exp(-up * 9.0) * sunSide * 0.8 * uHaze;
+            c += uSunHorizon * exp(-up * 9.0) * sunSide * 0.5 * uHaze;
             // Opposite the sun at dawn/dusk: the dark shadow of the earth low on the horizon,
             // with a faint pink belt just above it.
             float belt = smoothstep(0.04, 0.1, up) * smoothstep(0.32, 0.12, up);
@@ -122,7 +185,7 @@ public sealed class SkyRenderer : IDisposable
             c = mix(c, horizon * 0.85, clamp(-d.y * 4.0, 0.0, 1.0));
 
             float sd = max(dot(d, uSunDir), 0.0);
-            c += uSunGlow * (pow(sd, 4.0) * (0.2 + 0.6 * uHaze) + pow(sd, 32.0) * 0.5 + pow(sd, 300.0) * 0.8);
+            c += uSunGlow * (pow(sd, 4.0) * (0.12 + 0.3 * uHaze) + pow(sd, 32.0) * 0.4 + pow(sd, 300.0) * 0.6);
             float md = max(dot(d, uMoonDir), 0.0);
             c += vec3(0.35, 0.45, 0.8) * (pow(md, 12.0) * 0.25 + pow(md, 80.0) * 0.3) * uNight;
 
@@ -132,15 +195,18 @@ public sealed class SkyRenderer : IDisposable
 
             // Stars show wherever the sky is dark enough, so at dusk they come out
             // on the side opposite the sun first.
-            float starVisibility = smoothstep(0.3, 0.08, dot(c, vec3(0.3, 0.5, 0.2)));
+            float starVisibility = smoothstep(0.45, 0.08, dot(c, vec3(0.3, 0.5, 0.2)));
+            // Stars, nebulae and the galaxy turn slowly with the sky.
+            float ca = cos(uSkyAngle * 0.25), sa = sin(uSkyAngle * 0.25);
+            vec3 s = vec3(ca * d.x + sa * d.z, d.y, -sa * d.x + ca * d.z);
+            c += nebula(s) * starVisibility * aboveHorizon;
+            c += galaxy(d) * aboveHorizon;
+            c += shootingStar(d) * starVisibility * aboveHorizon;
             if (starVisibility > 0.0)
             {
-                // Stars turn with the sky, around the axis the sun travels on.
-                float ca = cos(uSkyAngle), sa = sin(uSkyAngle);
-                vec3 s = vec3(ca * d.x + sa * d.y, -sa * d.x + ca * d.y, d.z);
                 vec3 p = s * 220.0;
                 vec3 cell = floor(p);
-                if (hash13(cell) > 0.993)
+                if (hash13(cell) > 0.988)
                 {
                     float r = length(fract(p) - 0.5);
                     // A few bright stars, many faint ones.
@@ -158,7 +224,7 @@ public sealed class SkyRenderer : IDisposable
 
             // Slightly tilted squares: a small sun and a big, faint and hazy moon.
             vec2 sq = bodyCoords(d, uSunDir, 0.045, 0.3);
-            c += vec3(9.0, 8.0, 6.5) * squareMask(sq, d, uSunDir, 0.0) * aboveHorizon * (1.0 - uNight);
+            c += vec3(5.0, 4.4, 3.6) * squareMask(sq, d, uSunDir, 0.0) * aboveHorizon * (1.0 - uNight);
             vec2 mq = bodyCoords(d, uMoonDir, 0.14, -0.35);
             float moonAlpha = 0.95 * smoothstep(-0.02, 0.3, d.y) * uNight;
             c = mix(c, c * 0.5 + moonSurface(mq), squareMask(mq, d, uMoonDir, 0.1) * moonAlpha);
@@ -289,6 +355,8 @@ public sealed class SkyRenderer : IDisposable
         shader.Set("uSunGlow", atmosphere.SunGlow);
         shader.Set("uNight", atmosphere.Night);
         shader.Set("uSkyAngle", atmosphere.SkyAngle);
+        shader.Set("uGalaxyDir", atmosphere.GalaxyDirection);
+        shader.Set("uGalaxyGlow", atmosphere.GalaxyGlow);
         shader.Set("uTime", time);
     }
 
