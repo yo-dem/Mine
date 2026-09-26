@@ -8,9 +8,9 @@ Il mondo è fatto di **strati**: piastrelle piatte di 2×2 m ad altezze multiple
 tra un livello e l'altro (un gradino si sale camminando, fino a un metro saltando). La forma è generata
 proceduralmente: colline, dune, altipiani a gradoni morbidi
 e guglie di roccia surreali, visibili fino a oltre un chilometro, in una palette cosmica viola, indaco
-e turchese. Il ciclo giorno/notte (20 minuti) respira tra un crepuscolo perenne, con il sole sempre basso
-all'orizzonte, e una notte cosmica dominata da un'enorme galassia a spirale, nebulose, stelle fittissime
-e stelle cadenti. La sabbia e i prati scintillano di granelli luminosi.
+e turchese. Il ciclo giorno/notte (20 minuti) respira tra un giorno dorato, con il sole sempre basso sull'orizzonte,
+e una notte cosmica dominata da un'enorme galassia a spirale, una grande luna, una seconda luna con gli
+anelli, nebulose, stelle fittissime e stelle cadenti. La sabbia e i prati scintillano di granelli luminosi.
 
 Nelle zone basse ci sono mari e laghi che riflettono il cielo, galassia compresa, con spiagge di sabbia viola:
 nell'acqua bassa pulsano venature di luce ciano bioluminescente, la riva è segnata da una linea luminosa
@@ -30,8 +30,8 @@ ad ombrello, e alcuni con sfere luminose appese che si accendono di notte.
 
 Nel cielo galleggiano isole fluttuanti con alberi in cima e cristalli luminosi appesi sotto: in volo
 ci puoi atterrare e camminarci sopra. Le nuvole sono volumetriche, si colorano all'alba e al tramonto
-e proiettano ombre in movimento sul paesaggio. Il bloom fa brillare sole, luci e cristalli, i raggi
-di luce filtrano tra nuvole e alberi, e l'aria è piena di particelle: granelli dorati di giorno,
+e proiettano ombre in movimento sul paesaggio. Il bloom fa brillare sole, luci e cristalli,
+e l'aria è piena di particelle: granelli dorati di giorno,
 spore lilla al tramonto, lucciole di notte.
 
 > Nato come clone di Minecraft: la versione a blocchi è sul branch `main`.
@@ -89,7 +89,7 @@ src/
     TreeRenderer.cs       disegno degli alberi (instancing per stile e livello di dettaglio)
     SkyRenderer.cs        cielo, sole, luna, stelle, nuvole volumetriche
     CloudNoise.cs         texture di rumore 3D per le nuvole
-    PostProcess.cs        buffer HDR, bloom, raggi di luce, color grading
+    PostProcess.cs        buffer HDR, bloom, color grading
     MoteRenderer.cs       particelle magiche: granelli, spore, lucciole
     WaterRenderer.cs      mari e laghi (lo shader è in TerrainShaders)
     CreatureRenderer.cs   modelli e animazione delle creature
