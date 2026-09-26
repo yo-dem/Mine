@@ -38,26 +38,6 @@ public sealed unsafe class ObjectRenderer : IDisposable
         var m = new MeshBuilder();
         switch (kind)
         {
-            case ObjectKind.Lantern:
-            {
-                var metal = new Vector3(0.18f, 0.15f, 0.13f);
-                m.Box(new(-0.18f, 0f, -0.18f), new(0.18f, 0.05f, 0.18f), metal);         // base
-                m.Box(new(-0.16f, 0.52f, -0.16f), new(0.16f, 0.58f, 0.16f), metal);       // roof
-                m.Box(new(-0.07f, 0.58f, -0.07f), new(0.07f, 0.64f, 0.07f), metal);       // cap
-                foreach (float x in new[] { -0.16f, 0.13f })
-                foreach (float z in new[] { -0.16f, 0.13f })
-                    m.Box(new(x, 0.05f, z), new(x + 0.03f, 0.52f, z + 0.03f), metal);      // posts
-                m.Box(new(-0.11f, 0.08f, -0.11f), new(0.11f, 0.48f, 0.11f), new(1.0f, 0.78f, 0.45f), 1f); // flame core
-                break;
-            }
-            case ObjectKind.Torch:
-            {
-                m.Box(new(-0.035f, 0f, -0.035f), new(0.035f, 1.1f, 0.035f), new(0.35f, 0.22f, 0.12f));      // stick
-                m.Box(new(-0.07f, 1.02f, -0.07f), new(0.07f, 1.16f, 0.07f), new(0.12f, 0.09f, 0.07f));      // head
-                m.Octahedron(new(0, 1.16f, 0), 0.09f, 0.34f, new(1.0f, 0.62f, 0.2f), 1f);                    // flame
-                m.Octahedron(new(0, 1.18f, 0), 0.05f, 0.2f, new(1.0f, 0.9f, 0.6f), 1f);                      // hot core
-                break;
-            }
             case ObjectKind.Crystal:
             {
                 var violet = new Vector3(0.66f, 0.46f, 1.0f);

@@ -108,24 +108,28 @@ public sealed class SkyRenderer : IDisposable
         // with fainter spiral wisps trailing outside it.
         vec3 galaxy(vec3 d)
         {
-            float facing = dot(d, uGalaxyDir);
-            if (facing < 0.6) return vec3(0.0);
+            // Measured by angle from its centre, so it can span most of the sky: the rim sits
+            // 68 degrees out, wider than the view, so it never fits on screen whole.
+            float facing = clamp(dot(d, uGalaxyDir), -1.0, 1.0);
+            float r = acos(facing) / 1.19;
+            if (r > 1.7) return vec3(0.0);
             vec3 t1 = normalize(cross(uGalaxyDir, vec3(0.0, 1.0, 0.0)));
             vec3 t2 = cross(t1, uGalaxyDir);
-            vec2 q = vec2(dot(d, t1), dot(d, t2)) / (facing * 0.3); // radius ~17 degrees
-            float r = length(q);
+            vec2 flat2 = vec2(dot(d, t1), dot(d, t2));
+            vec2 q = flat2 / max(length(flat2), 1e-5) * r;
             float angle = atan(q.y, q.x);
             float swirl = angle - log(r + 0.03) * 2.8 + uTime * 0.02;
             // Noise twisted along the arms breaks them into clumps and streaks, like brush strokes.
-            float streaks = texture(uCloudNoise, vec3(r * 1.3, swirl * 0.35, 0.37)).r;
+            // (Sampled through cos/sin of the swirl, so there is no seam where the polar angle wraps.)
+            float streaks = texture(uCloudNoise, vec3(cos(swirl) * r * 0.9, sin(swirl) * r * 0.9, 0.37 + r * 0.4)).r;
             float arms = pow(0.5 + 0.5 * cos(swirl * 2.0), 2.5) * (0.35 + 1.3 * streaks);
             float inside = smoothstep(1.02, 0.9, r);
 
             vec3 armColor = mix(vec3(0.25, 0.15, 0.85), vec3(0.95, 0.5, 1.0), arms * exp(-r * 1.2));
             vec3 c = armColor * (0.25 + arms * 1.6) * exp(-r * 1.6) * inside;
-            c += vec3(1.0, 0.8, 1.0) * exp(-r * 10.0) * 3.0;                         // core
+            c += vec3(1.0, 0.8, 1.0) * (exp(-r * 22.0) * 2.2 + exp(-r * 6.0) * 0.35); // core
             c += vec3(0.55, 0.4, 1.0) * exp(-pow((r - 1.0) * 12.0, 2.0)) * 1.2;       // rim
-            vec2 dust = floor(q * 140.0);
+            vec2 dust = floor(q * 420.0);
             float sparkle = step(0.965, hash13(vec3(dust, 3.0))) * (0.5 + 0.5 * sin(uTime * 3.0 + hash13(vec3(dust, 9.0)) * 40.0));
             c += vec3(1.0, 0.9, 1.0) * sparkle * (0.3 + arms) * inside * 1.5;
             // Outer wisps continue the arms beyond the rim, fading out.
@@ -197,7 +201,7 @@ public sealed class SkyRenderer : IDisposable
             // on the side opposite the sun first.
             float starVisibility = smoothstep(0.45, 0.08, dot(c, vec3(0.3, 0.5, 0.2)));
             // Stars, nebulae and the galaxy turn slowly with the sky.
-            float ca = cos(uSkyAngle * 0.25), sa = sin(uSkyAngle * 0.25);
+            float ca = cos(uSkyAngle * 0.25), sa = sin(uSkyAngle * 0.25); // uSkyAngle is continuous
             vec3 s = vec3(ca * d.x + sa * d.z, d.y, -sa * d.x + ca * d.z);
             c += nebula(s) * starVisibility * aboveHorizon;
             c += galaxy(d) * aboveHorizon;

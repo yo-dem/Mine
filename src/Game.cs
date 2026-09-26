@@ -40,7 +40,6 @@ public sealed class Game : IDisposable
     private IslandField _islands = null!;
     private IslandRenderer _islandRenderer = null!;
     private Ground _ground = null!;
-    private PathField _paths = null!;
     private Creatures _creatures = null!;
     private CreatureRenderer _creatureRenderer = null!;
     private Shader _creatureShader = null!;
@@ -55,8 +54,8 @@ public sealed class Game : IDisposable
     private int _lightCount;
 
     // Inventory: how many objects of each kind the player carries, and which one is in hand.
-    private readonly int[] _inventory = [2, 3, 0]; // lanterns, torches, crystals
-    private ObjectKind _selected = ObjectKind.Lantern;
+    private readonly int[] _inventory = [3]; // crystals
+    private ObjectKind _selected = ObjectKind.Crystal;
     private WorldObject? _aimed; // the object under the crosshair, within reach
 
     private Vector2? _lastMouse;
@@ -99,7 +98,6 @@ public sealed class Game : IDisposable
         {
             mouse.MouseMove += OnMouseMove;
             mouse.MouseDown += OnMouseDown;
-            mouse.Scroll += OnScroll;
         }
         SetMouseCaptured(true);
 
@@ -119,8 +117,7 @@ public sealed class Game : IDisposable
         _treeField = new TreeField(_terrainField, seed: 1337);
         _islands = new IslandField(_terrainField, seed: 1337);
         _islandRenderer = new IslandRenderer(_gl);
-        _paths = new PathField(_terrainField, seed: 1337);
-        _ground = new Ground(_terrainField, _islands, _paths);
+        _ground = new Ground(_terrainField, _islands);
         _creatures = new Creatures(_terrainField);
         _creatureRenderer = new CreatureRenderer(_gl);
         _creatureShader = new Shader(_gl, TerrainShaders.CreatureVertex, TerrainShaders.CreatureFragment);
@@ -175,9 +172,6 @@ public sealed class Game : IDisposable
         int islandVersion = _islands.Version;
         _islands.Update(_player.Position);
         if (_islands.Version != islandVersion) _treeField.SetFixedTrees("islands", _islands.Trees);
-        int pathVersion = _paths.Version;
-        _paths.Update(_player.Position);
-        if (_paths.Version != pathVersion) _treeField.SetFixedTrees("paths", _paths.Models);
         _islandRenderer.Update(_islands);
         _treeField.Update(_player.Position);
         _treeField.ResolveCollision(ref _player.Position, 0.35f);
@@ -359,9 +353,6 @@ public sealed class Game : IDisposable
                 if (_time - _lastForwardTap <= DoubleTapWindow) _sprinting = true;
                 _lastForwardTap = _time;
                 break;
-            case >= Key.Number1 and <= Key.Number3:
-                _selected = (ObjectKind)(key - Key.Number1);
-                break;
             case Key.Q:
                 SetLowQuality(!_sky.LowQuality);
                 break;
@@ -406,13 +397,6 @@ public sealed class Game : IDisposable
             _objects.Place(_selected, ground, -_player.Yaw);
             _inventory[(int)_selected]--;
         }
-    }
-
-    private void OnScroll(IMouse mouse, ScrollWheel wheel)
-    {
-        if (!_mouseCaptured || wheel.Y == 0) return;
-        int count = _inventory.Length;
-        _selected = (ObjectKind)((((int)_selected - Math.Sign(wheel.Y)) % count + count) % count);
     }
 
     private void SetLowQuality(bool low)

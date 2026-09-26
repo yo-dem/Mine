@@ -15,13 +15,12 @@ nell'acqua bassa pulsano venature di luce ciano bioluminescente, la riva è segn
 e sulla superficie brillano scintille come stelle cadute. Nell'acqua si cammina a mezza gamba.
 Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno, tra scogli
 scuri; nell'acqua bassa galleggiano fiori di loto luminosi e sui prati spuntano campanule che brillano.
-Sentieri di pietre di cristallo attraversano mari e laghi sotto archi di glicine luminoso: si possono
-percorrere a piedi da una riva all'altra. Sulle spiagge svettano palme scure in controluce, farfalle
+Sulle spiagge svettano palme scure in controluce, farfalle
 luminose svolazzano sui prati, pesci che brillano nuotano nell'acqua bassa e stormi di uccelli
 volteggiano in cielo, sagome scure al crepuscolo e luminosi di notte.
 
-Nel mondo si trovano cristalli e lanterne da raccogliere, e puoi piazzare lanterne, torce e cristalli
-dove vuoi: ognuno emette una luce colorata che illumina il paesaggio attorno, con un alone nell'aria.
+Nel mondo si trovano piccoli cristalli luminosi da raccogliere, e puoi piazzarli dove vuoi: ognuno emette
+una luce viola che illumina il paesaggio attorno, con un alone nell'aria.
 
 I prati sono coperti di erba che ondeggia al vento e brilla in controluce, e il paesaggio è punteggiato
 di boschi e alberi isolati in stile fiabesco: querce, cipressi, alberi dorati, turchesi, fioriti di lilla,
@@ -57,9 +56,8 @@ In quel caso: Impostazioni → Sistema → Schermo → Grafica → aggiungi `Min
 | Ctrl sinistro | Corri |
 | T (tenuto) | Fai scorrere il tempo più veloce |
 | F | Attiva/disattiva il volo |
-| Click sinistro | Raccogli l'oggetto che guardi |
-| Click destro | Piazza l'oggetto selezionato sul terreno |
-| 1 – 3 / rotella | Scegli l'oggetto: lanterna, torcia, cristallo |
+| Click sinistro | Raccogli il cristallo che guardi |
+| Click destro | Piazza un cristallo sul terreno |
 | Q | Qualità alta / bassa (bassa: automatica sulle schede integrate) |
 | Esc | Libera il mouse (di nuovo Esc: esci) |
 
@@ -74,10 +72,9 @@ src/
     Noise.cs              Perlin noise 2D
     TerrainField.cs       forma del terreno: altezza in ogni punto
     DayCycle.cs           orologio e colori di cielo e luce per ogni ora
-    WorldObjects.cs       lanterne, torce e cristalli: generati, raccolti, piazzati; le loro luci
+    WorldObjects.cs       cristalli da raccogliere e piazzare, e le loro luci
     IslandField.cs        isole fluttuanti: dove sono, forma, alberi in cima
-    Ground.cs             dove si può camminare: terreno, cime delle isole, pietre dei sentieri
-    PathField.cs          sentieri di pietre di cristallo e archi di glicine sull'acqua
+    Ground.cs             dove si può camminare: terreno e cime delle isole
     Creatures.cs          farfalle, pesci e stormi di uccelli (simulazione)
     TreeField.cs          dove crescono gli alberi (boschi, alberi isolati), collisione con i tronchi
     GroundMaterials.cs    colore e copertura dell'erba (copia in C# delle funzioni dello shader)

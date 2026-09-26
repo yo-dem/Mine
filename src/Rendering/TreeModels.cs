@@ -48,8 +48,6 @@ public static class TreeModels
         Lotus,
         GlowBells,
         ShoreRock,
-        CrystalStone,
-        WisteriaArch,
         Palm,
     }
 
@@ -65,7 +63,6 @@ public static class TreeModels
     {
         Decoration.Lotus => 160f,
         Decoration.GlowBells => 140f,
-        Decoration.CrystalStone => 450f,
         Decoration.Palm => float.MaxValue,
         _ => 700f,
     };
@@ -75,13 +72,11 @@ public static class TreeModels
     {
         Decoration.VioletCrystals => new Vector3(0.66f, 0.42f, 1.0f),
         Decoration.CyanCrystals => new Vector3(0.40f, 0.85f, 1.0f),
-        Decoration.WisteriaArch => new Vector3(0.80f, 0.55f, 1.0f),
         _ => null,
     };
 
     /// <summary>How high above its base a glowing decoration's light sits, before scaling.</summary>
-    public static float GlowHeight(int variant) =>
-        variant == VariantOf(Decoration.WisteriaArch) ? 3.0f : 1.4f;
+    public static float GlowHeight(int variant) => 1.4f;
 
     /// <summary>Radius of a variant's trunk at the foot, before instance scaling (for collisions).</summary>
     public static float TrunkRadius(int variant) => variant < Styles.Length ? Styles[variant].TrunkRadius : (Decoration)(variant - Styles.Length) switch
@@ -310,87 +305,6 @@ public static class TreeModels
                     // A drooping bell: a small cone hanging from the tip.
                     var color = i % 2 == 0 ? new Vector3(0.2f, 0.75f, 1.0f) : new Vector3(0.7f, 0.35f, 1.0f);
                     Bell(mesh, top + bend * 0.2f, 0.07f + 0.04f * random.NextSingle(), color, lod >= 2 ? 5 : 8);
-                }
-                break;
-            }
-            case Decoration.CrystalStone:
-            {
-                // A flat stepping stone of violet crystal: a wavy slab whose top is split into facets
-                // of different brightness, like cracked glass lit from within, and a glowing rim.
-                int corners = 10;
-                var rim = new Vector3[corners];
-                for (int i = 0; i < corners; i++)
-                {
-                    float a = i * MathF.Tau / corners;
-                    float r = 1.05f * (1f + 0.12f * MathF.Sin(a * 3 + 1.3f) + 0.06f * MathF.Sin(a * 7 + 0.4f));
-                    rim[i] = new Vector3(MathF.Cos(a) * r, 0.2f, MathF.Sin(a) * r);
-                }
-                var center = new Vector3(0.05f, 0.26f, -0.03f);
-                for (int i = 0; i < corners; i++)
-                {
-                    var a = rim[i];
-                    var b = rim[(i + 1) % corners];
-                    float shade = 0.7f + 0.4f * random.NextSingle();
-                    var color = new Vector3(0.58f, 0.38f, 1.0f) * shade;
-                    var n = Vector3.Normalize(Vector3.Cross(b - center, a - center));
-                    Vertex(mesh, center, n, color, 0.3f + 0.3f * random.NextSingle(), 0);
-                    Vertex(mesh, b, n, color * 1.1f, 0.65f, 0);
-                    Vertex(mesh, a, n, color * 1.1f, 0.65f, 0);
-                    // The side, down into the water or the ground.
-                    var a0 = a with { Y = -0.6f };
-                    var b0 = b with { Y = -0.6f };
-                    var sn = Vector3.Normalize(new Vector3(a.X + b.X, 0, a.Z + b.Z));
-                    var side = new Vector3(0.30f, 0.20f, 0.55f);
-                    Vertex(mesh, a, sn, side * 1.3f, 0.5f, 0); Vertex(mesh, b, sn, side * 1.3f, 0.5f, 0); Vertex(mesh, b0, sn, side, 0.1f, 0);
-                    Vertex(mesh, a, sn, side * 1.3f, 0.5f, 0); Vertex(mesh, b0, sn, side, 0.1f, 0); Vertex(mesh, a0, sn, side, 0.1f, 0);
-                }
-                break;
-            }
-            case Decoration.WisteriaArch:
-            {
-                // Two dark crystal pillars across the path (local X runs along the path), joined by an
-                // arch of vines, clumps of leaves and cascades of glowing wisteria swaying in the wind.
-                const float halfSpan = 2.0f, pillarTop = 3.2f, rise = 1.3f;
-                var pillarColor = new Vector3(0.24f, 0.17f, 0.40f);
-                foreach (float z in new[] { -halfSpan, halfSpan })
-                    Prism(mesh, new Vector3(0, -1.5f, z), Vector3.UnitY, pillarTop + 1.5f + 0.4f, 0.22f, pillarColor, lod >= 2 ? 4 : 6);
-
-                int segments = lod >= 2 ? 8 : 16;
-                var arc = new Vector3[segments + 1];
-                for (int i = 0; i <= segments; i++)
-                {
-                    float t = i / (float)segments * MathF.PI;
-                    arc[i] = new Vector3(0, pillarTop + MathF.Sin(t) * rise, -MathF.Cos(t) * halfSpan);
-                }
-                for (int i = 0; i < segments; i++)
-                    Cylinder(mesh, new Segment(arc[i], arc[i + 1], 0.12f, 0.12f, 0.6f, 0.6f), lod >= 2 ? 3 : 5, new Vector3(0.14f, 0.10f, 0.22f));
-
-                var leafSphere = Icosphere(lod >= 2 ? 0 : 1);
-                var bead = Icosphere(0);
-                for (int i = 0; i <= segments; i++)
-                {
-                    // Leaf clumps along the arch.
-                    var clump = arc[i] + new Vector3((random.NextSingle() - 0.5f) * 0.5f, 0.15f, 0);
-                    float size = 0.38f + 0.2f * random.NextSingle();
-                    foreach (var d in leafSphere)
-                        Vertex(mesh, clump + d * size * new Vector3(1.2f, 0.8f, 1.0f), d, new Vector3(0.45f, 0.30f, 0.70f) * (0.8f + 0.3f * (d.Y * 0.5f + 0.5f)), 0.2f, 1f);
-
-                    // Hanging racemes: strings of beads shrinking and brightening toward the tip.
-                    for (int k = 0; k < 2; k++)
-                    {
-                        var start = arc[i] + new Vector3((random.NextSingle() - 0.5f) * 0.9f, -0.1f, (random.NextSingle() - 0.5f) * 0.3f);
-                        float length = 0.8f + 1.6f * random.NextSingle() * (1f - MathF.Abs(arc[i].Z) / (halfSpan * 1.6f));
-                        int beads = lod >= 2 ? 4 : 7;
-                        for (int b = 0; b < beads; b++)
-                        {
-                            float t = b / (float)(beads - 1);
-                            var p = start - new Vector3(0, length * t, 0);
-                            float r = float.Lerp(0.16f, 0.05f, t);
-                            var color = Vector3.Lerp(new Vector3(0.75f, 0.50f, 1.0f), new Vector3(1.0f, 0.85f, 1.0f), t);
-                            foreach (var d in bead)
-                                Vertex(mesh, p + d * r, d, color, 0.45f + 0.5f * t, 1f);
-                        }
-                    }
                 }
                 break;
             }

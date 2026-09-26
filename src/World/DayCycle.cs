@@ -29,8 +29,8 @@ public sealed class DayCycle
 {
     public const float DayLength = 1200f; // seconds for a full cycle
 
-    // Sun elevation (sine of the angle): Mid + Swing * sin(...), so at most ~8 degrees at noon.
-    private const float SunMid = -0.23f, SunSwing = 0.37f;
+    // Sun elevation (sine of the angle): Mid + Swing * sin(...), so at most ~25 degrees at noon.
+    private const float SunMid = -0.12f, SunSwing = 0.55f;
 
     /// <param name="Horizon">Horizon colour away from the sun.</param>
     /// <param name="SunHorizon">Horizon colour below the sun.</param>
@@ -42,17 +42,21 @@ public sealed class DayCycle
     private static readonly Keyframe Night = new(0, Rgb(8, 4, 30), Rgb(42, 18, 84), Rgb(70, 30, 110), Vector3.Zero, Rgb(52, 34, 104), 0.3f);
     private static readonly Keyframe Dawn = new(0, Rgb(30, 14, 72), Rgb(120, 48, 140), Rgb(255, 90, 130), Rgb(235, 95, 125), Rgb(88, 54, 128), 0.6f);
     private static readonly Keyframe Twilight = new(0, Rgb(48, 30, 116), Rgb(196, 92, 172), Rgb(255, 160, 95), Rgb(255, 176, 128), Rgb(126, 88, 156), 0.75f);
+    // The brightest hour: warm light under a still violet sky, never a plain blue noon.
+    private static readonly Keyframe Day = new(0, Rgb(70, 62, 165), Rgb(214, 128, 176), Rgb(255, 190, 125), Rgb(255, 205, 160), Rgb(150, 116, 172), 0.5f);
     private static readonly Keyframe Dusk = new(0, Rgb(34, 14, 78), Rgb(150, 50, 150), Rgb(255, 80, 115), Rgb(245, 90, 130), Rgb(96, 56, 134), 0.65f);
 
     private static readonly Keyframe[] Keyframes =
     [
         Night with { Time = 0f },
-        Night with { Time = 0.28f },
-        Dawn with { Time = 0.35f },
-        Twilight with { Time = 0.43f },
-        Twilight with { Time = 0.57f },
-        Dusk with { Time = 0.65f },
-        Night with { Time = 0.72f },
+        Night with { Time = 0.24f },
+        Dawn with { Time = 0.30f },
+        Twilight with { Time = 0.36f },
+        Day with { Time = 0.43f },
+        Day with { Time = 0.57f },
+        Twilight with { Time = 0.64f },
+        Dusk with { Time = 0.70f },
+        Night with { Time = 0.76f },
         Night with { Time = 1f },
     ];
 
@@ -77,8 +81,11 @@ public sealed class DayCycle
         var sun = Direction(azimuth, SunMid + SunSwing * wave);
         // The moon rides opposite, high in the night sky.
         var moon = Direction(azimuth + MathF.PI, 0.2f - 0.37f * wave);
-        // The galaxy drifts slowly, always well above the horizon.
-        var galaxy = Direction(azimuth * 0.5f + 2.2f, 0.5f + 0.08f * MathF.Sin(azimuth * 0.5f));
+        // Stars, nebulae and the galaxy turn slowly with the elapsed time, which never wraps (an angle
+        // taken from TimeOfDay would jump by a fraction of a turn every midnight). The galaxy stays
+        // high, filling the sky.
+        float skyAngle = (float)(Elapsed / DayLength % 8.0 * MathF.Tau);
+        var galaxy = Direction(skyAngle * 0.5f + 2.2f, 0.62f + 0.08f * MathF.Sin(skyAngle * 0.5f));
 
         int i = 1;
         while (Keyframes[i].Time < TimeOfDay) i++;
@@ -106,7 +113,7 @@ public sealed class DayCycle
             GalaxyGlow: 0.3f + 0.7f * night,
             Haze: float.Lerp(a.Haze, b.Haze, t),
             Night: night,
-            SkyAngle: azimuth);
+            SkyAngle: skyAngle);
     }
 
     /// <summary>Clock time as hours and minutes, for the HUD.</summary>

@@ -4,8 +4,6 @@ namespace Mine.World;
 
 public enum ObjectKind
 {
-    Lantern,
-    Torch,
     Crystal,
 }
 
@@ -30,7 +28,7 @@ public sealed record WorldObject(long Id, ObjectKind Kind, Vector3 Position, flo
 public readonly record struct PointLight(Vector3 Position, Vector3 Color, float Radius);
 
 /// <summary>
-/// The objects lying in the world. Some are scattered by the generator (deterministically, per
+/// The objects lying in the world (for now only small glowing crystals). Some are scattered by the generator (deterministically, per
 /// 64 m cell, generated as the player gets close); the player can pick any of them up and place
 /// objects from the inventory. Picked-up generated objects are remembered, so they never come back.
 /// </summary>
@@ -38,8 +36,6 @@ public sealed class WorldObjects
 {
     public static readonly ObjectDef[] Defs =
     [
-        new("Lanterna", new Vector3(1.0f, 0.72f, 0.42f), 3.0f, 12f, 0.32f, 0.64f, 0.3f),
-        new("Torcia", new Vector3(1.0f, 0.55f, 0.22f), 3.6f, 14f, 1.28f, 1.5f, 0.25f),
         new("Cristallo", new Vector3(0.62f, 0.42f, 1.0f), 2.4f, 10f, 0.65f, 1.3f, 0.35f),
     ];
 
@@ -157,12 +153,7 @@ public sealed class WorldObjects
     {
         var def = obj.Def;
         float phase = (obj.Id & 1023) * 0.618f;
-        float flicker = obj.Kind switch
-        {
-            ObjectKind.Torch => 0.82f + 0.1f * MathF.Sin(time * 9.1f + phase) + 0.08f * MathF.Sin(time * 23.7f + phase * 3),
-            ObjectKind.Crystal => 0.8f + 0.2f * MathF.Sin(time * 1.4f + phase),
-            _ => 0.95f + 0.05f * MathF.Sin(time * 2.3f + phase),
-        };
+        float flicker = 0.8f + 0.2f * MathF.Sin(time * 1.4f + phase); // crystals pulse slowly
         return new PointLight(obj.LightPosition, def.LightColor * def.LightIntensity * flicker, def.LightRadius);
     }
 
@@ -170,15 +161,10 @@ public sealed class WorldObjects
     public static float Glow(WorldObject obj, float time)
     {
         float phase = (obj.Id & 1023) * 0.618f;
-        return obj.Kind switch
-        {
-            ObjectKind.Torch => 0.85f + 0.15f * MathF.Sin(time * 9.1f + phase),
-            ObjectKind.Crystal => 0.8f + 0.2f * MathF.Sin(time * 1.4f + phase),
-            _ => 1f,
-        };
+        return 0.8f + 0.2f * MathF.Sin(time * 1.4f + phase);
     }
 
-    /// <summary>Crystals in small clusters and the odd forgotten lantern, only on gentle ground.</summary>
+    /// <summary>Crystals in small clusters, only on gentle ground.</summary>
     private List<WorldObject> Generate(int cx, int cz)
     {
         var list = new List<WorldObject>();
@@ -193,12 +179,6 @@ public sealed class WorldObjects
             for (int i = 0; i < cluster; i++)
                 TryAdd(list, cx, cz, i, ObjectKind.Crystal,
                     x + (random.NextSingle() - 0.5f) * 3f, z + (random.NextSingle() - 0.5f) * 3f, random.NextSingle() * MathF.Tau);
-        }
-        if (random.NextSingle() < 0.12f)
-        {
-            float x = (cx + 0.1f + 0.8f * random.NextSingle()) * CellSize;
-            float z = (cz + 0.1f + 0.8f * random.NextSingle()) * CellSize;
-            TryAdd(list, cx, cz, 8, ObjectKind.Lantern, x, z, random.NextSingle() * MathF.Tau);
         }
         return list;
     }
