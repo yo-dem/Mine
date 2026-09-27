@@ -427,6 +427,7 @@ public sealed class Game : IDisposable
                 SkyRenderer.LaunchShootingStar((float)_time, _player.LookDirection);
                 break;
             case Key.F11:
+            case Key.Enter when keyboard.IsKeyPressed(Key.AltLeft) || keyboard.IsKeyPressed(Key.AltRight):
                 SetFullscreen(_window.WindowState != WindowState.Fullscreen);
                 break;
             case Key.F:
