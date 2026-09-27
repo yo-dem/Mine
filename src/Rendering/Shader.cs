@@ -53,6 +53,7 @@ public sealed unsafe class Shader : IDisposable
     public void Set(string name, float value) => _gl.Uniform1(Location(name), value);
     public void Set(string name, Vector2 value) => _gl.Uniform2(Location(name), value.X, value.Y);
     public void Set(string name, Vector3 value) => _gl.Uniform3(Location(name), value.X, value.Y, value.Z);
+    public void Set(string name, Vector4 value) => _gl.Uniform4(Location(name), value.X, value.Y, value.Z, value.W);
 
     // System.Numerics matrices are row-major with row vectors; uploading them
     // untransposed gives GLSL the equivalent column-vector matrix.

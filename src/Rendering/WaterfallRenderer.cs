@@ -8,7 +8,10 @@ namespace Mine.Rendering;
 /// The islands' waterfalls, thin rivulets of glowing silvery water: a trickle across the island's
 /// top, a few threads of water arcing over the edge and falling straight to the ground (drawn at
 /// least about a pixel wide however far away, so they never flicker out), a little spray where they
-/// land, and the pond they fill, lit by ripples spreading from the fall. All translucent and self-lit, blended
+/// land, and the pond they fill, lit by ripples spreading from the fall. The water visibly runs:
+/// bright pulses race down the threads over darker water between them. Where the falls near the
+/// player land, splashes of droplets leap and fall back (point sprites with no vertex data, each
+/// deriving its arc from its index and the time, like the motes). All translucent and self-lit, blended
 /// with premultiplied alpha (so they can both darken what is behind, like water, and glow), drawn
 /// after the opaque scene and the sea without writing depth. The mesh is rebuilt on the CPU when
 /// the set of islands changes; it is small (a few falls at a time).
@@ -92,22 +95,30 @@ public sealed unsafe class WaterfallRenderer : IDisposable
             if (vKind == 0)
             {
                 // The stream on the island: u across (0..1), v metres downstream.
-                float flow = vnoise(vec2(vUv.x * 3.0, vUv.y * 0.8 - t * 2.0)) * 0.6 + vnoise(vec2(vUv.x * 7.0, vUv.y * 2.0 - t * 3.0)) * 0.4;
+                // Ripples racing downstream: bright crests over darker water.
+                float wob = vnoise(vec2(vUv.x * 3.0, vUv.y * 0.3));
+                float crest = pow(fract(vUv.y * 0.9 - t * 1.6 + wob * 1.5), 4.0);
+                float fine = smoothstep(0.55, 0.85, vnoise(vec2(vUv.x * 7.0, vUv.y * 2.0 - t * 4.0)));
+                float flow = clamp(crest * 0.9 + fine * 0.6, 0.0, 1.0);
                 float banks = smoothstep(0.0, 0.3, vUv.x) * smoothstep(1.0, 0.7, vUv.x);
-                alpha = 0.5 * banks;
-                glow = mix(Cyan, Silver, 0.6 + 0.4 * flow) * (0.5 + 1.3 * flow * flow) * banks;
+                alpha = (0.55 + 0.3 * flow) * banks;
+                glow = mix(Cyan, Silver, 0.5 + 0.5 * flow) * (0.08 + 1.2 * flow) * banks * mix(2.0, 1.0, vThin);
             }
             else if (vKind == 1)
             {
                 // A falling thread: u around it (0..1), v metres fallen, extra = the whole drop.
                 // Silvery, with brighter beads of light racing down it.
-                float s1 = vnoise(vec2(vUv.x * 6.0, vUv.y * 0.08 - t * 2.0));
-                float s2 = vnoise(vec2(vUv.x * 11.0, vUv.y * 0.35 - t * 4.0));
-                float beads = smoothstep(0.55, 0.9, s2);
+                // Pulses of light racing down (sawtooth bands bent by noise) over darker water, plus
+                // fine fast streaks: the eye reads it as liquid pouring. Far away, where a thread is
+                // only a pixel or two wide, the pattern evens out into a steady line (no flicker).
+                float wob = vnoise(vec2(vUv.x * 4.0, vUv.y * 0.04));
+                float pulse = pow(fract(vUv.y * 0.11 - t * 2.2 + wob * 2.0), 5.0);
+                float fine = smoothstep(0.55, 0.85, vnoise(vec2(vUv.x * 12.0, vUv.y * 0.5 - t * 7.0)));
+                float flow = clamp(pulse + fine * 0.55, 0.0, 1.0);
+                flow = mix(0.45, flow, smoothstep(0.3, 0.8, vThin));
                 float ends = smoothstep(0.0, 1.5, vUv.y) * (0.5 + 0.5 * smoothstep(vExtra, vExtra - 20.0, vUv.y));
-                alpha = 0.35 * ends;
-                // Softer up close, where the thread is wide on screen; far away it keeps shining as a line.
-                glow = (Silver * (0.3 + 0.4 * s1) + vec3(1.0) * beads * 0.6) * ends * mix(2.2, 1.0, vThin);
+                alpha = (0.5 + 0.35 * flow) * ends;
+                glow = Silver * (0.05 + 1.0 * flow) * ends * mix(2.2, 1.0, vThin);
             }
             else if (vKind == 2)
             {
@@ -116,7 +127,7 @@ public sealed unsafe class WaterfallRenderer : IDisposable
                 float rf = r / vExtra;
                 float rings = pow(0.5 + 0.5 * sin(r * 2.4 - t * 3.0), 6.0) * exp(-rf * 2.2);
                 float veins = smoothstep(0.55, 0.8, vnoise(vUv * 0.6 + vec2(t * 0.15, -t * 0.1)));
-                float foam = smoothstep(2.5, 0.0, r) * (0.6 + 0.4 * vnoise(vUv * 3.0 + t * 2.0));
+                float foam = smoothstep(1.4, 0.0, r) * (0.3 + 0.7 * vnoise(vUv * 4.0 + t * 3.0)) * 0.6;
                 float shore = smoothstep(0.7, 1.0, rf) * (0.6 + 0.4 * sin(t * 1.3 + atan(vUv.y, vUv.x) * 5.0));
                 alpha = 0.85;
                 glow = mix(Cyan, Silver, 0.5) * (0.25 + 1.1 * rings + 0.5 * veins * (1.0 - rf * 0.5) + 0.7 * shore) + Silver * foam;
@@ -138,9 +149,73 @@ public sealed unsafe class WaterfallRenderer : IDisposable
         }
         """;
 
+    // Splashes: droplets per fall, for the MaxSplashes falls nearest the player within SplashRange.
+    private const int DropsPerFall = 360, MaxSplashes = 8;
+    private const float SplashRange = 260f;
+
+    private const string SplashVertexSource = "#version 330 core\n" + SkyRenderer.Hash + """
+        uniform mat4 uViewProj;
+        uniform vec3 uCameraPos;
+        uniform float uTime;
+        uniform float uPointScale; // viewport height / (2 tan(fov / 2))
+        uniform vec4 uFeet[8];     // where each fall lands (xyz) and how wide it is (w)
+
+        const int DropsPerFall = 360;
+
+        out float vAlpha;
+        out float vSoft;
+
+        void main()
+        {
+            int fall = gl_VertexID / DropsPerFall, i = gl_VertexID % DropsPerFall;
+            vec4 foot = uFeet[fall];
+            float h1 = hash13(vec3(i, fall, 1.0)), h2 = hash13(vec3(i, fall, 2.0)), h3 = hash13(vec3(i, fall, 3.0));
+            float h4 = hash13(vec3(i, fall, 4.0)), h5 = hash13(vec3(i, fall, 5.0));
+            float strength = 0.6 + foot.w;
+            // One in five is a slow puff of spray; the rest are droplets thrown up and out.
+            bool puff = h5 < 0.2;
+            float life = puff ? 1.2 + 1.0 * h1 : 0.45 + 0.6 * h1;
+            float age = fract(uTime / life + h2) * life;
+            float angle = h3 * 6.2832;
+            vec3 out3 = vec3(cos(angle), 0.0, sin(angle));
+            float speed = (puff ? 0.4 + 0.6 * h4 : 0.8 + 3.2 * h4 * h4) * strength;
+            float rise = (puff ? 0.8 + 0.8 * h1 : 3.0 + 5.0 * h4) * strength;
+            float gravity = puff ? 0.6 : 9.8;
+            vec3 start = foot.xyz + out3 * foot.w * 0.6 * h2 + vec3(0.0, 0.05, 0.0);
+            vec3 p = start + out3 * speed * age + vec3(0.0, rise * age - 0.5 * gravity * age * age, 0.0);
+
+            float fade = 1.0 - age / life;
+            vAlpha = (puff ? 0.05 * fade : 1.6 * fade * fade) * step(foot.y, p.y);
+            vSoft = puff ? 1.0 : 0.0;
+            float dist = length(p - uCameraPos);
+            float size = (puff ? 0.7 + 0.8 * age : 0.12 + 0.12 * h1) * uPointScale / max(dist, 0.1);
+            gl_PointSize = clamp(size, 1.0, puff ? 50.0 : 14.0);
+            vAlpha *= min(size, 1.0) * (1.0 - smoothstep(150.0, 260.0, dist)); // sub-pixel: fainter
+            gl_Position = uViewProj * vec4(p, 1.0);
+        }
+        """;
+
+    private const string SplashFragmentSource = """
+        #version 330 core
+        in float vAlpha;
+        in float vSoft;
+        uniform float uNight;
+        out vec4 FragColor;
+        void main()
+        {
+            float d = length(gl_PointCoord - 0.5) * 2.0;
+            float shape = vSoft > 0.5 ? (1.0 - d) * (1.0 - d) : smoothstep(1.0, 0.4, d);
+            if (shape <= 0.0) discard;
+            vec3 color = vec3(0.85, 0.93, 1.0) * mix(1.2, 1.8, uNight);
+            FragColor = vec4(color * shape * vAlpha, 0.0);
+        }
+        """;
+
     private readonly GL _gl;
     private readonly Shader _shader;
-    private readonly uint _vao, _vbo;
+    private readonly Shader _splashShader;
+    private readonly uint _vao, _vbo, _splashVao;
+    private readonly List<Vector4> _feet = new();
     private readonly List<float> _mesh = new();
     private readonly List<PointLight> _lights = new();
     private readonly List<Waterfall> _falls = new();
@@ -151,6 +226,8 @@ public sealed unsafe class WaterfallRenderer : IDisposable
     {
         _gl = gl;
         _shader = new Shader(gl, VertexSource, FragmentSource);
+        _splashShader = new Shader(gl, SplashVertexSource, SplashFragmentSource);
+        _splashVao = gl.GenVertexArray(); // core profile needs a bound VAO even with no attributes
         _vao = gl.GenVertexArray();
         _vbo = gl.GenBuffer();
         gl.BindVertexArray(_vao);
@@ -206,6 +283,44 @@ public sealed unsafe class WaterfallRenderer : IDisposable
 
     /// <param name="pixelAngle">The angle one pixel of the scene covers, in radians.</param>
     public void Draw(Matrix4x4 viewProjection, Vector3 camera, float night, float time, float pixelAngle)
+    {
+        DrawFalls(viewProjection, camera, night, time, pixelAngle);
+        DrawSplashes(viewProjection, camera, night, time, 1f / pixelAngle);
+    }
+
+    private void DrawSplashes(Matrix4x4 viewProjection, Vector3 camera, float night, float time, float pointScale)
+    {
+        _feet.Clear();
+        foreach (var fall in _falls)
+        {
+            var foot = FootOf(fall);
+            if (Vector3.DistanceSquared(foot, camera) < SplashRange * SplashRange) _feet.Add(new Vector4(foot, fall.Width));
+        }
+        if (_feet.Count == 0) return;
+        _feet.Sort((a, b) => Vector3.DistanceSquared(new(a.X, a.Y, a.Z), camera).CompareTo(Vector3.DistanceSquared(new(b.X, b.Y, b.Z), camera)));
+        int count = Math.Min(_feet.Count, MaxSplashes);
+
+        _splashShader.Use();
+        _splashShader.Set("uViewProj", viewProjection);
+        _splashShader.Set("uCameraPos", camera);
+        _splashShader.Set("uTime", time);
+        _splashShader.Set("uNight", night);
+        _splashShader.Set("uPointScale", pointScale);
+        for (int i = 0; i < count; i++)
+            _splashShader.Set($"uFeet[{i}]", _feet[i]);
+
+        _gl.Enable(EnableCap.ProgramPointSize);
+        _gl.Enable(EnableCap.Blend);
+        _gl.BlendFunc(BlendingFactor.One, BlendingFactor.One);
+        _gl.DepthMask(false);
+        _gl.BindVertexArray(_splashVao);
+        _gl.DrawArrays(PrimitiveType.Points, 0, (uint)(count * DropsPerFall));
+        _gl.DepthMask(true);
+        _gl.Disable(EnableCap.Blend);
+        _gl.Disable(EnableCap.ProgramPointSize);
+    }
+
+    private void DrawFalls(Matrix4x4 viewProjection, Vector3 camera, float night, float time, float pixelAngle)
     {
         if (_vertexCount == 0) return;
         _shader.Use();
@@ -366,6 +481,8 @@ public sealed unsafe class WaterfallRenderer : IDisposable
     {
         _gl.DeleteBuffer(_vbo);
         _gl.DeleteVertexArray(_vao);
+        _gl.DeleteVertexArray(_splashVao);
         _shader.Dispose();
+        _splashShader.Dispose();
     }
 }
