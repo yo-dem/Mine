@@ -314,7 +314,6 @@ public sealed class SkyRenderer : IDisposable
             float behind = aboveHorizon * (1.0 - moon);
             c += nebula(s) * starVisibility * behind;
             c += galaxy(d) * behind;
-            c += shootingStar(d, starVisibility) * behind;
             if (starVisibility > 0.0)
             {
                 vec3 p = s * 220.0;
@@ -346,6 +345,9 @@ public sealed class SkyRenderer : IDisposable
                 vec3 veiled = mix(surface, c * 0.8 + vec3(0.16, 0.15, 0.28), 0.3);
                 c = mix(c, c * 0.25 + veiled, moon);
             }
+            // Shooting stars burn up in the air, far nearer than anything in the sky: they cross
+            // in front of the moon, the galaxy and the nebulae (the clouds still hide them).
+            c += shootingStar(d, starVisibility) * aboveHorizon;
             return c;
         }
         """;

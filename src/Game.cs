@@ -142,6 +142,8 @@ public sealed class Game : IDisposable
             _dayCycle.TimeOfDay = timeOfDay;
         if (float.TryParse(Environment.GetEnvironmentVariable("MINE_PITCH"), System.Globalization.CultureInfo.InvariantCulture, out float pitch))
             _player.Pitch = pitch;
+        if (float.TryParse(Environment.GetEnvironmentVariable("MINE_YAW"), System.Globalization.CultureInfo.InvariantCulture, out float yaw))
+            _player.Yaw = yaw;
 
         _gl.Enable(EnableCap.DepthTest);
         _gl.Enable(EnableCap.CullFace);
@@ -150,54 +152,26 @@ public sealed class Game : IDisposable
 
     // Debugging aids, from environment variables: MINE_FPS_LOG=1 prints the HUD line to the console,
     // MINE_RAIN=1 starts with rain, MINE_TIME=0.45 sets the time of day, MINE_PITCH=0.2 the view
-    // pitch (radians), MINE_GPU_PROFILE=1 prints the GPU time of each pass (GpuProfiler).
+    // pitch (radians), MINE_YAW=1.5 the view heading, MINE_POS=800,-300 spawns exactly there, MINE_GPU_PROFILE=1 prints the GPU time of each pass (GpuProfiler).
     private static readonly string Skip = Environment.GetEnvironmentVariable("MINE_SKIP") ?? "";
     private static bool On(string pass) => !Skip.Contains(pass);
+    // Where the game starts: a meadow by a lake. MINE_POS overrides it.
+    private static readonly Vector2 Spawn = new(-517f, 128f);
+    private static readonly Vector2? SpawnAt = ParsePosition(Environment.GetEnvironmentVariable("MINE_POS"));
+    private static Vector2? ParsePosition(string? text)
+    {
+        var parts = text?.Split(',');
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        return parts is { Length: 2 } && float.TryParse(parts[0], culture, out float x) && float.TryParse(parts[1], culture, out float z)
+            ? new Vector2(x, z) : null;
+    }
     private static readonly bool LogHud = Environment.GetEnvironmentVariable("MINE_FPS_LOG") == "1";
 
     private void Respawn()
     {
-        var spawn = FlatSpawn();
+        var spawn = SpawnAt ?? Spawn;
         _player.Position = new Vector3(spawn.X, _terrainField.Height(spawn.X, spawn.Y), spawn.Y);
         _player.Velocity = Vector3.Zero;
-    }
-
-    /// <summary>
-    /// The flattest spot near the origin, searched on a widening spiral: dry land well above the
-    /// water (on the grass, not the sand) where the terrain tiles within 12 m sit at most one layer
-    /// from the centre's, and as many as possible on the same layer. Nearer spots win ties.
-    /// The layered land is rarely perfectly flat, so the flattest is taken rather than a flat one.
-    /// </summary>
-    private Vector2 FlatSpawn()
-    {
-        const float step = 16f, radius = 12f;
-        var best = Vector2.Zero;
-        float bestScore = float.MinValue;
-        for (int ring = 0; ring < 30; ring++)
-        {
-            int points = Math.Max(1, ring * 6);
-            for (int i = 0; i < points; i++)
-            {
-                float a = i * MathF.Tau / points + ring * 0.7f;
-                var center = _terrainField.TileCenter(MathF.Cos(a) * ring * step, MathF.Sin(a) * ring * step);
-                if (center.Y < TerrainField.WaterLevel + 6f) continue;
-                int same = 0, total = 0;
-                bool gentle = true;
-                for (float dz = -radius; dz <= radius && gentle; dz += TerrainField.TileSize)
-                for (float dx = -radius; dx <= radius && gentle; dx += TerrainField.TileSize)
-                {
-                    if (dx * dx + dz * dz > radius * radius) continue;
-                    float h = _terrainField.Height(center.X + dx, center.Z + dz);
-                    gentle = MathF.Abs(h - center.Y) <= TerrainField.LayerHeight;
-                    total++;
-                    if (h == center.Y) same++;
-                }
-                if (!gentle) continue;
-                float score = same / (float)total - ring * 0.004f;
-                if (score > bestScore) (bestScore, best) = (score, new Vector2(center.X, center.Z));
-            }
-        }
-        return best;
     }
 
     private void OnUpdate(double deltaTime)
@@ -297,7 +271,7 @@ public sealed class Game : IDisposable
 
         _profiler.Section("alberi");
         SetWorldUniforms(_treeShader, view * projection, eye, atmosphere, time);
-        if (On("trees")) _trees.Draw();
+        if (On("trees")) _trees.Draw(look, FieldOfView, (float)size.X / size.Y);
 
         _profiler.Section("oggetti+creature+isole");
         SetWorldUniforms(_objectShader, view * projection, eye, atmosphere, time);

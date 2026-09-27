@@ -15,7 +15,7 @@ Nelle zone basse ci sono mari e laghi che riflettono il cielo, galassia compresa
 nell'acqua bassa pulsano venature di luce ciano bioluminescente, la riva è segnata da una linea luminosa
 e sulla superficie brillano scintille come stelle cadute. Vicino alla riva si cammina nell'acqua; al largo è profonda e si **nuota**: ci si muove come in volo ma lentamente, Spazio per salire, Shift per immergersi, e da fermi si torna a galla.
 Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno; nell'acqua bassa galleggiano fiori di loto luminosi e tra l'erba spuntano fiori di ogni colore: campanule luminose, margherite pastello, tulipani, lupini dalle punte che brillano, piccoli fiori a stella luminosi e, raccolti in giardini sotto i boschi fitti, fiori nati dalla luce: steli chiari che brillano verso l'alto e si ramificano in grappoli di 3–4 fiori, foglie colorate con venature di luce, petali al neon, semi di luce che fluttuano sopra la corolla e una luce colorata che tinge l'erba intorno (iris viola dalle foglie a spada, papaveri magenta su rosette di foglie, gigli ciano dai petali ripiegati); stelle luminose, campanule e gigli crescono anche sotto i boschi.
-Sulle spiagge svettano palme scure in controluce, farfalle
+Sulle spiagge e lungo le rive dei laghi crescono boschetti di palme scure in controluce, alte e slanciate, medie o basse e tozze, mai uguali tra loro; farfalle
 luminose svolazzano sui prati (a sciami di notte), pesci che brillano nuotano nell'acqua più profonda e, tuffandosi, si incontrano banchi di grossi pesci luminosi che nuotano vicino al fondale e stormi di uccelli,
 ogni volta diversi per numero e forma, mai regolari (V sbilenche con ritardatari, nuvole che si allungano e si stringono, gruppetti che si separano e si riuniscono, vortici), volteggiano in cielo: tanti di giorno, arrivano da lontano al mattino e se ne vanno al calare della sera, e di sera e di notte se ne vede solo qualcuno.
 
@@ -23,8 +23,10 @@ Nel mondo si trovano piccoli cristalli luminosi da raccogliere, e puoi piazzarli
 una luce viola che illumina il paesaggio attorno, con un alone nell'aria.
 
 I prati sono coperti da un tappeto fitto di ciuffi d'erba (più fili da una base comune, aperti a ventaglio, raccolti in gruppetti, con ciuffi bassi che coprono il terreno tra quelli alti) a chiazze di colore (verde acqua, viola, magenta, oro-lilla, azzurro) che ondeggia al vento e brilla in controluce; le rive e l'acqua bassa sono punteggiate di canneti di altezze diverse, dai ciuffi bassi alle canne altissime, con le spighe scure delle tife; in certe zone cresce alta fino alle cosce e, al centro, più alta del personaggio, e il paesaggio è punteggiato
-di boschetti, ognuno di una sola specie, e alberi isolati in stile fiabesco: querce, cipressi, alberi dorati, turchesi, fioriti di lilla,
+di boschi fitti, con arbusti e alberelli nel sottobosco, fatti di boschetti ognuno di una sola specie, e di alberi isolati in stile fiabesco: querce, cipressi, pini, giganti, salici, alberi rosa, turchesi, fioriti di lilla,
 ad ombrello, e alcuni con sfere luminose appese che si accendono di notte.
+
+Il mondo è diviso in biomi, ognuno con i suoi alberi, i suoi fiori e il suo colore d'erba (le chiazze di colore continuano a mescolarsi, ma tendono al tono del bioma), che sfumano l'uno nell'altro ai confini: boschi indaco di pini, cipressi e giganti con iris e lupini, boschi rosa di alberi fioriti con papaveri e tulipani, boschi turchesi di salici e sfere azzurre con gigli e fiori a stella, e deserti di sabbia calda color pesca, con dune alte, alberi secchi e contorti, cespugli spogli e grappoli di cristalli che spuntano dalla sabbia. Tra le colline si aprono tanti laghi, spesso profondi.
 
 Nel cielo galleggiano isole fluttuanti con alberi in cima e cristalli luminosi appesi sotto: in volo
 ci puoi atterrare e camminarci sopra. Le nuvole sono volumetriche, si colorano all'alba e al tramonto
@@ -79,14 +81,14 @@ src/
     IslandField.cs        isole fluttuanti: dove sono, forma, alberi in cima
     Ground.cs             dove si può camminare: terreno e cime delle isole
     Creatures.cs          farfalle, pesci e stormi di uccelli (simulazione)
-    TreeField.cs          dove crescono gli alberi (boschi, alberi isolati), collisione con i tronchi
-    GroundMaterials.cs    colore e copertura dell'erba (copia in C# delle funzioni dello shader)
+    TreeField.cs          dove crescono alberi e fiori, per bioma (boschi, alberi isolati, deserti), collisione con i tronchi
+    GroundMaterials.cs    biomi, colore e copertura dell'erba (copia in C# delle funzioni dello shader)
   Rendering/
     TerrainRenderer.cs    tessere del terreno con livelli di dettaglio, costruite in background
     TerrainShaders.cs     shader di terreno e oggetti: materiali, luce, ombre, luci, foschia
     ObjectRenderer.cs     modelli procedurali degli oggetti
     GrassRenderer.cs      ciuffi d'erba attorno al giocatore (instancing, costruiti in background)
-    TreeModels.cs         modelli procedurali degli alberi, 8 stili e 4 livelli di dettaglio
+    TreeModels.cs         modelli procedurali degli alberi, 16 stili (anche secchi) e 4 livelli di dettaglio
     TreeRenderer.cs       disegno degli alberi (instancing per stile e livello di dettaglio)
     SkyRenderer.cs        cielo, sole, luna, stelle, nuvole volumetriche
     CloudNoise.cs         texture di rumore 3D per le nuvole

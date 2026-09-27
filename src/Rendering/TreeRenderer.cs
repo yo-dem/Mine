@@ -8,6 +8,9 @@ namespace Mine.Rendering;
 /// Draws the trees with instancing: one batch per model variant and level of detail, each a mesh
 /// plus a buffer of instances (position, yaw, scale). The instance lists are re-sorted into
 /// detail levels when the set of trees changes or the camera has moved a few metres.
+/// Each batch's instances are grouped by the direction they lie in from the camera (the near ones
+/// first, then <see cref="Sectors"/> slices around it), so <see cref="Draw"/> skips the slices
+/// out of view; the shadow pass still draws them all.
 /// </summary>
 public sealed unsafe class TreeRenderer : IDisposable
 {
@@ -18,11 +21,22 @@ public sealed unsafe class TreeRenderer : IDisposable
     // shadows, the shadow map covering about that far), simple below the third, a silhouette beyond.
     private static readonly float[] LodDistances = [50f, 170f, 380f];
 
+    // Direction slices around the camera. Trees nearer than NearRadius are always drawn; farther
+    // ones only when their slice is within the view, with SliceMargin to spare for their crowns and
+    // for the camera moving up to ResortDistance before the next sort.
+    private const int Sectors = 16;
+    private const float NearRadius = 40f;
+    private const float SliceMargin = 0.5f;
+
     private sealed class Batch
     {
         public uint Vao, MeshVbo, InstanceVbo;
         public int VertexCount, InstanceCount;
         public readonly List<float> Instances = new();
+        // Instances per group while sorting: 0 = near, 1.. = the slices.
+        public readonly List<float>[] Groups = Enumerable.Range(0, Sectors + 1).Select(_ => new List<float>()).ToArray();
+        // First instance of each group (and the total at the end).
+        public readonly int[] GroupStart = new int[Sectors + 2];
     }
 
     private readonly GL _gl;
@@ -46,14 +60,17 @@ public sealed unsafe class TreeRenderer : IDisposable
         _version = field.Version;
         _sortedAt = camera;
 
-        foreach (var batch in _batches) batch.Instances.Clear();
+        foreach (var batch in _batches)
+            foreach (var group in batch.Groups) group.Clear();
         foreach (var tree in field.All)
         {
-            float distance = new Vector2(tree.Position.X - camera.X, tree.Position.Z - camera.Z).Length();
+            float dx = tree.Position.X - camera.X, dz = tree.Position.Z - camera.Z;
+            float distance = MathF.Sqrt(dx * dx + dz * dz);
             if (distance > TreeField.Radius || distance > TreeModels.MaxDistance(tree.Variant)) continue;
             int lod = 0;
             while (lod < LodDistances.Length && distance >= LodDistances[lod]) lod++;
-            var list = _batches[tree.Variant, lod].Instances;
+            int group = distance < NearRadius ? 0 : 1 + Sector(MathF.Atan2(dz, dx));
+            var list = _batches[tree.Variant, lod].Groups[group];
             list.Add(tree.Position.X);
             list.Add(tree.Position.Y);
             list.Add(tree.Position.Z);
@@ -63,6 +80,13 @@ public sealed unsafe class TreeRenderer : IDisposable
 
         foreach (var batch in _batches)
         {
+            batch.Instances.Clear();
+            for (int g = 0; g <= Sectors; g++)
+            {
+                batch.GroupStart[g] = batch.Instances.Count / FloatsPerInstance;
+                batch.Instances.AddRange(batch.Groups[g]);
+            }
+            batch.GroupStart[Sectors + 1] = batch.Instances.Count / FloatsPerInstance;
             batch.InstanceCount = batch.Instances.Count / FloatsPerInstance;
             _gl.BindBuffer(BufferTargetARB.ArrayBuffer, batch.InstanceVbo);
             var data = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(batch.Instances);
@@ -71,9 +95,44 @@ public sealed unsafe class TreeRenderer : IDisposable
         }
     }
 
-    public void Draw()
+    private static int Sector(float angle) =>
+        Math.Clamp((int)((angle + MathF.PI) / MathF.Tau * Sectors), 0, Sectors - 1);
+
+    private readonly bool[] _visible = new bool[Sectors];
+
+    /// <summary>Draws the trees in view: <paramref name="look"/> is the view direction, the field of view vertical.</summary>
+    public void Draw(Vector3 look, float verticalFov, float aspect)
     {
-        foreach (var batch in _batches) DrawBatch(batch);
+        // The horizontal half-angle of the view, widened as the view tilts (the frustum then
+        // reaches farther to the sides at the ground); looking steeply up or down, everything.
+        float pitch = MathF.Asin(Math.Clamp(look.Y, -1f, 1f));
+        float halfView = MathF.Atan(MathF.Tan(verticalFov / 2) * aspect) + MathF.Abs(pitch) * 0.6f + SliceMargin;
+        bool all = MathF.Abs(pitch) > 0.8f;
+        float yaw = MathF.Atan2(look.Z, look.X);
+        for (int s = 0; s < Sectors; s++)
+        {
+            float center = -MathF.PI + (s + 0.5f) * MathF.Tau / Sectors;
+            float delta = MathF.Abs(MathF.IEEERemainder(center - yaw, MathF.Tau));
+            _visible[s] = all || delta <= halfView + MathF.PI / Sectors;
+        }
+
+        foreach (var batch in _batches)
+        {
+            if (batch.InstanceCount == 0) continue;
+            // The near group, then each run of visible slices in one draw (the groups are contiguous).
+            int runStart = 0, runEnd = batch.GroupStart[1];
+            for (int s = 0; s < Sectors; s++)
+            {
+                if (_visible[s])
+                {
+                    runEnd = batch.GroupStart[s + 2];
+                    continue;
+                }
+                DrawRange(batch, runStart, runEnd - runStart);
+                runStart = runEnd = batch.GroupStart[s + 2];
+            }
+            DrawRange(batch, runStart, runEnd - runStart);
+        }
     }
 
     /// <summary>The trees near the camera, for the shadow map (same vertex layout, read by its instanced path).</summary>
@@ -87,11 +146,19 @@ public sealed unsafe class TreeRenderer : IDisposable
         }
     }
 
-    private void DrawBatch(Batch batch)
+    private void DrawBatch(Batch batch) => DrawRange(batch, 0, batch.InstanceCount);
+
+    // Draws instances first..first+count (GL 3.3 has no base instance: the instance attributes
+    // are pointed at the first one).
+    private void DrawRange(Batch batch, int first, int count)
     {
-        if (batch.InstanceCount == 0) return;
+        if (count <= 0) return;
         _gl.BindVertexArray(batch.Vao);
-        _gl.DrawArraysInstanced(PrimitiveType.Triangles, 0, (uint)batch.VertexCount, (uint)batch.InstanceCount);
+        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, batch.InstanceVbo);
+        uint stride = FloatsPerInstance * sizeof(float);
+        Attribute(5, 4, stride, first * FloatsPerInstance);
+        Attribute(6, 1, stride, first * FloatsPerInstance + 4);
+        _gl.DrawArraysInstanced(PrimitiveType.Triangles, 0, (uint)batch.VertexCount, (uint)count);
     }
 
     private Batch CreateBatch(float[] mesh)

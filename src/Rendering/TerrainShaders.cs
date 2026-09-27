@@ -65,6 +65,22 @@ public static class TerrainShaders
 
         float noise2(vec2 p, float layer) { return valueNoise3(vec3(p, layer)); }
 
+        // Biomes (indigo, pink and turquoise woods, desert), weights summing to 1; the desert's share alone.
+        // Mirrored in C# by GroundMaterials.Biome/Desert: keep the two in sync.
+        float desertWeight(vec2 xz)
+        {
+            return smoothstep(0.70, 0.76, noise2(xz * 0.0008, 23.0) * 0.75 + noise2(xz * 0.003, 24.0) * 0.25);
+        }
+
+        vec4 biomeWeights(vec2 xz)
+        {
+            float desert = desertWeight(xz);
+            float flavour = noise2(xz * 0.0011, 21.0) * 0.7 + noise2(xz * 0.004, 22.0) * 0.3;
+            float pink = smoothstep(0.58, 0.64, flavour), teal = smoothstep(0.47, 0.41, flavour);
+            float wet = 1.0 - desert;
+            return vec4((1.0 - pink - teal) * wet, pink * wet, teal * wet, desert);
+        }
+
         // Cosmic grass in patches of one hue each: teal, violet, magenta, lilac gold, sky blue.
         // A slow noise picks the hue (with soft borders between patches), a faster one varies it.
         // Mirrored in C# by GroundMaterials.GrassColor: keep the two in sync.
@@ -77,6 +93,10 @@ public static class TerrainShaders
             c = mix(c, vec3(0.56, 0.20, 0.46), smoothstep(0.44, 0.50, patch)); // magenta
             c = mix(c, vec3(0.58, 0.46, 0.42), smoothstep(0.56, 0.62, patch)); // lilac gold
             c = mix(c, vec3(0.16, 0.32, 0.58), smoothstep(0.68, 0.74, patch)); // sky blue
+            // Each biome pulls the patches toward its own hue (indigo, pink, teal, desert straw).
+            vec4 b = biomeWeights(xz);
+            vec3 tint = vec3(0.20, 0.24, 0.56) * b.x + vec3(0.62, 0.24, 0.50) * b.y + vec3(0.10, 0.44, 0.48) * b.z + vec3(0.60, 0.46, 0.36) * b.w;
+            c = mix(c, tint, 0.4);
             return c * (0.85 + 0.3 * shade);
         }
 
@@ -86,7 +106,9 @@ public static class TerrainShaders
             float mid = noise2(p.xz * 0.045, 2.0);
             float rockW = smoothstep(0.30, 0.46, 1.0 - normalY + (mid - 0.5) * 0.12);
             // Sand on the shores: from a few metres above the water (TerrainField.WaterLevel = 15) down.
-            float sandW = smoothstep(19.5, 14.0, p.y + (mid - 0.5) * 4.0) * (1.0 - rockW);
+            // ...and over the deserts, frayed at their edges.
+            float desertSand = smoothstep(0.25, 0.7, desertWeight(p.xz) + (mid - 0.5) * 0.3);
+            float sandW = max(smoothstep(19.5, 14.0, p.y + (mid - 0.5) * 4.0), desertSand) * (1.0 - rockW);
             return vec2(rockW, sandW);
         }
         """;
@@ -164,9 +186,14 @@ public static class TerrainShaders
             {
                 vec3 toLight = uPointPos[i] - ro;
                 float t = clamp(dot(toLight, rd), 0.0, dist);
-                float miss = length(toLight - rd * t);
+                vec3 missed = toLight - rd * t;
+                float miss2 = dot(missed, missed);
+                // Past 8 m the glow is a few ten-thousandths: skipped, and lowered by its value
+                // there so it still fades smoothly to nothing.
+                if (miss2 >= 64.0) continue;
+                float glow = 0.05 / (1.0 + miss2 * 1.2) + 0.06 / (1.0 + miss2 * 30.0) - 0.00067;
                 float fade = 1.0 / (1.0 + length(toLight) * 0.04);
-                sum += uPointColor[i] * (0.05 / (1.0 + miss * miss * 1.2) + 0.06 / (1.0 + miss * miss * 30.0)) * fade;
+                sum += uPointColor[i] * glow * fade;
             }
             return sum * mix(0.25, 1.0, uNight);
         }
@@ -298,6 +325,10 @@ public static class TerrainShaders
             float strata = 0.5 + 0.5 * sin(p.y * 0.45 + mid * 6.0 + broad * 4.0);
             vec3 rock = mix(vec3(0.30, 0.23, 0.36), vec3(0.46, 0.35, 0.50), 0.5 + (strata - 0.5) * 0.45);
             vec3 sand = vec3(0.62, 0.48, 0.68);
+            // Desert sand is warmer, peach and gold under the violet sky, with faint wind ripples.
+            float desert = desertWeight(xz);
+            float ripples = 0.5 + 0.5 * sin(dot(xz, vec2(0.9, 0.45)) + mid * 9.0);
+            sand = mix(sand, vec3(0.78, 0.56, 0.52) * (0.93 + 0.07 * ripples * smoothstep(80.0, 20.0, dist)), desert);
 
             vec2 w = rockSand(p, slope);
             vec3 albedo = mix(mix(grassColor(xz), sand, w.y), rock, w.x);

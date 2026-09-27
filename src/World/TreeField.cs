@@ -10,8 +10,9 @@ public readonly record struct TreeInstance(Vector3 Position, float Yaw, float Sc
 /// <summary>
 /// Where the trees grow (forests and lone trees, placed deterministically per 32 m cell on gentle,
 /// grassy ground) and where the glowing decorations sit: lotus flowers floating in the shallows,
-/// crystal clusters and dark rocks along the shores, glowing bells in patches on the meadows. A slow "biome" noise picks which family of tree models a region uses, so forests
-/// look coherent (golden woods, dreamy teal and lilac groves...). Cells around the player are
+/// crystal clusters and dark rocks along the shores, glowing bells in patches on the meadows. The
+/// biomes (<see cref="GroundMaterials.Biome"/>) pick the family of tree models and the flowers of a
+/// region: indigo woods, pink woods, turquoise woods, and deserts of dry trees. Cells around the player are
 /// generated on the thread pool; <see cref="Version"/> changes whenever the set of trees does.
 /// </summary>
 public sealed class TreeField
@@ -22,16 +23,25 @@ public sealed class TreeField
     public const float Radius = 950f;
     private const int CellsPerTask = 48;
 
-    // Families of models (see TreeModels) grouped by the biome noise.
+    // Families of models (see TreeModels) for each biome, in the order of GroundMaterials.Biome:
+    // the trees of the canopy and those of the undergrowth.
     // Indices: 0 indigo, 1 cypress, 2 pink, 3 teal, 4 lilac blossom, 5 fireflies, 6 blue orbs,
-    // 7 umbrella, 8 giant, 9 willow, 10 pine, 11 sapling, 12 shrub.
-    private static readonly int[] Dreamy = [3, 6, 4, 9, 9, 11, 12, 12];
-    private static readonly int[] Green = [0, 5, 1, 7, 8, 10, 10, 12, 12, 11];
-    private static readonly int[] Golden = [2, 7, 2, 0, 8, 11, 11, 12];
+    // 7 umbrella, 8 giant, 9 willow, 10 pine, 11 sapling, 12 shrub, 13 dry, 14 gnarled, 15 dry shrub.
+    private static readonly int[][] Canopy =
+    [
+        [0, 0, 1, 10, 10, 8, 5], // indigo woods
+        [2, 2, 4, 4, 7],         // pink woods
+        [3, 3, 6, 9, 9],         // turquoise woods
+        [13, 13, 14, 14, 15],    // desert
+    ];
+    private static readonly int[][] Undergrowth = [[12, 12, 11], [11, 11, 12], [12, 11, 12], [15, 15, 14]];
+    private const int DesertBiome = 3;
+
+    // Forest noise above this: woods (the same threshold for the trees, their flowers and gardens).
+    private const float WoodsThreshold = 0.0f;
 
     private readonly TerrainField _terrain;
     private readonly PerlinNoise _forest;
-    private readonly PerlinNoise _biome;
     private readonly int _seed;
     private readonly Dictionary<(int X, int Z), TreeInstance[]> _cells = new();
     private readonly HashSet<(int X, int Z)> _pending = new();
@@ -48,7 +58,6 @@ public sealed class TreeField
         _terrain = terrain;
         _seed = seed;
         _forest = new PerlinNoise(seed + 20);
-        _biome = new PerlinNoise(seed + 21);
     }
 
     public IEnumerable<TreeInstance> All => _cells.Values.SelectMany(c => c).Concat(_fixed.Values.SelectMany(f => f));
@@ -151,7 +160,7 @@ public sealed class TreeField
     /// <summary>
     /// Gardens of flowers born of light (irises, poppies, lilies), the only place they grow: glowing
     /// patches under the thick woods (a garden noise picks about half of them), densest at their
-    /// heart and where the trees crowd. One kind rules each garden.
+    /// heart and where the trees crowd. The biome picks the kind.
     /// </summary>
     private void AddLightGardens(List<TreeInstance> list, int cx, int cz, Random random)
     {
@@ -162,31 +171,39 @@ public sealed class TreeField
             float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.35f);
             float z = TerrainField.InsideTile((cz + random.NextSingle()) * CellSize, 0.35f);
             float garden = _forest.Fractal(x * 0.012f + 300f, z * 0.012f - 200f, 2);
-            // The same forest noise as the trees (dense above 0.05): the thicker the wood, the more flowers.
-            float woods = Math.Clamp((_forest.Fractal(x * 0.0025f, z * 0.0025f, 3) - 0.05f) / 0.15f, 0f, 1f);
+            // The same forest noise as the trees: the thicker the wood, the more flowers.
+            float woods = Math.Clamp((_forest.Fractal(x * 0.0025f, z * 0.0025f, 3) - WoodsThreshold) / 0.15f, 0f, 1f);
             float density = Math.Clamp(garden / 0.15f, 0f, 1f) * woods;
             if (random.NextSingle() >= density * 0.8f) continue;
             float y = _terrain.Height(x, z);
             if (y < water + 2f || _terrain.Normal(x, z, 1f).Y < 0.8f) continue;
-            float species = _forest.Fractal(x * 0.004f - 150f, z * 0.004f + 260f, 2);
-            int dominant = species < -0.1f ? 0 : species < 0.1f ? 1 : 2;
-            var kind = kinds[random.NextSingle() < 0.15f ? random.Next(kinds.Length) : dominant];
+            // Each wood has its flower: irises in the indigo woods, poppies in the pink, lilies in the
+            // turquoise; none in the desert.
+            int biome = PickBiome(x, z, random);
+            if (biome == DesertBiome) continue;
+            var kind = kinds[random.NextSingle() < 0.15f ? random.Next(kinds.Length) : biome];
             list.Add(new TreeInstance(new Vector3(x, y - 0.03f, z), random.NextSingle() * MathF.Tau,
                 1.1f + 0.45f * random.NextSingle(), TreeModels.VariantOf(kind)));
         }
     }
 
     /// <summary>
-    /// Flowers mixed with the grass: in the meadows, patches where one kind dominates (daisies,
-    /// tulips, lupins, starflowers) with a few others mixed in; under the woods, glowing starflowers
-    /// and bells.
+    /// Flowers mixed with the grass: in the meadows, patches where one of the biome's kinds dominates
+    /// (daisies, tulips, lupins, starflowers) with a few others mixed in; under the woods, glowing
+    /// starflowers and bells; in the deserts, the odd starflower.
     /// </summary>
     private void AddFlowers(List<TreeInstance> list, int cx, int cz, Random random)
     {
         const float water = TerrainField.WaterLevel;
-        // The flowers born of light grow only in their gardens (AddLightGardens).
-        TreeModels.Decoration[] meadow =
-            [TreeModels.Decoration.Daisies, TreeModels.Decoration.Tulips, TreeModels.Decoration.Lupins, TreeModels.Decoration.Starflowers];
+        // The flowers born of light grow only in their gardens (AddLightGardens). Each biome has its
+        // meadow flowers (indigo: lupins and starflowers, pink: tulips and daisies, turquoise:
+        // starflowers and daisies); the deserts only the odd starflower.
+        var meadows = new[]
+        {
+            new[] { TreeModels.Decoration.Lupins, TreeModels.Decoration.Starflowers, TreeModels.Decoration.Lupins, TreeModels.Decoration.Daisies },
+            new[] { TreeModels.Decoration.Tulips, TreeModels.Decoration.Daisies, TreeModels.Decoration.Tulips, TreeModels.Decoration.Lupins },
+            new[] { TreeModels.Decoration.Starflowers, TreeModels.Decoration.Daisies, TreeModels.Decoration.Starflowers, TreeModels.Decoration.Tulips },
+        };
         for (int i = 0; i < 40; i++)
         {
             float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.35f);
@@ -196,7 +213,13 @@ public sealed class TreeField
             if (y < water + 2f || _terrain.Normal(x, z, 1f).Y < 0.8f) continue;
 
             TreeModels.Decoration kind;
-            if (_forest.Fractal(x * 0.0025f, z * 0.0025f, 3) > 0.05f)
+            int biome = PickBiome(x, z, random);
+            if (biome == DesertBiome)
+            {
+                if (roll > 0.015f) continue;
+                kind = TreeModels.Decoration.Starflowers;
+            }
+            else if (_forest.Fractal(x * 0.0025f, z * 0.0025f, 3) > WoodsThreshold)
             {
                 // Under the woods.
                 if (roll > 0.35f) continue;
@@ -207,6 +230,7 @@ public sealed class TreeField
                 // Everywhere in moderation, a little thicker in patches.
                 float patch = _forest.Fractal(x * 0.015f + 90f, z * 0.015f - 30f, 2);
                 if (roll > 0.3f + 0.2f * Math.Clamp(patch + 0.1f, 0f, 1f)) continue;
+                var meadow = meadows[biome];
                 float species = _forest.Fractal(x * 0.008f - 70f, z * 0.008f + 55f, 2);
                 // Bands of the species noise (it mostly spans about -0.4..0.4), one per kind of flower.
                 int dominant = Math.Clamp((int)((species + 0.35f) / 0.7f * meadow.Length), 0, meadow.Length - 1);
@@ -215,6 +239,37 @@ public sealed class TreeField
             list.Add(new TreeInstance(new Vector3(x, y - 0.03f, z), random.NextSingle() * MathF.Tau,
                 1.05f + 0.5f * random.NextSingle(), TreeModels.VariantOf(kind)));
         }
+    }
+
+    /// <summary>
+    /// Groves of palms, mostly along the lake and sea shores: a grove noise picks where they gather,
+    /// thickest just above the water and thinning out up the banks (a few also stand farther
+    /// inland). Palms of three builds and many sizes, leaning every way.
+    /// </summary>
+    private void AddPalmGroves(List<TreeInstance> list, int cx, int cz, Random random)
+    {
+        const float water = TerrainField.WaterLevel;
+        for (int i = 0; i < 30; i++)
+        {
+            float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.5f);
+            float z = TerrainField.InsideTile((cz + random.NextSingle()) * CellSize, 0.5f);
+            float grove = _forest.Fractal(x * 0.011f - 510f, z * 0.011f + 330f, 2);
+            if (grove < 0.05f) continue;
+            float y = _terrain.Height(x, z);
+            if (y < water + 0.8f) continue;
+            float shore = Math.Clamp((water + 12f - y) / 9f, 0f, 1f); // 1 up to 3 m above the water, 0 from 12 m
+            float density = Math.Clamp((grove - 0.05f) / 0.2f, 0f, 1f) * (0.08f + 0.92f * shore);
+            if (random.NextSingle() >= density * 0.5f || _terrain.Normal(x, z, 1f).Y < 0.8f) continue;
+            list.Add(RandomPalm(x, y, z, random.NextSingle() * MathF.Tau, random));
+        }
+    }
+
+    // A palm of a random build (mostly the middling one) and size.
+    private static TreeInstance RandomPalm(float x, float y, float z, float yaw, Random random)
+    {
+        float roll = random.NextSingle();
+        var kind = roll < 0.25f ? TreeModels.Decoration.TallPalm : roll < 0.5f ? TreeModels.Decoration.ShortPalm : TreeModels.Decoration.Palm;
+        return new TreeInstance(new Vector3(x, y - 0.2f, z), yaw, 0.7f + 0.65f * random.NextSingle(), TreeModels.VariantOf(kind));
     }
 
     /// <summary>
@@ -307,41 +362,75 @@ public sealed class TreeField
         float centerX = (cx + 0.5f) * CellSize, centerZ = (cz + 0.5f) * CellSize;
         float forest = _forest.Fractal(centerX * 0.0025f, centerZ * 0.0025f, 3);
         var random = new Random((int)Hash(cx, cz));
+        float desert = GroundMaterials.Desert(centerX, centerZ);
 
-        // Dense woods where the forest noise is high, the odd lone tree elsewhere.
-        int count = forest > 0.05f ? 4 + (int)((forest - 0.05f) * 34) : random.NextSingle() < 0.3f ? 1 + random.Next(2) : 0;
+        // Thick woods where the forest noise is high, the odd lone tree elsewhere; in the deserts,
+        // sparse groves of dry trees. Under the canopy, shrubs and saplings.
+        int count = forest > WoodsThreshold ? 8 + (int)((forest - WoodsThreshold) * 55) : random.NextSingle() < 0.3f ? 1 + random.Next(2) : 0;
+        count = (int)MathF.Round(float.Lerp(count, forest > WoodsThreshold ? 1 + forest * 10 : random.NextSingle() < 0.25f ? 1 : 0, desert));
+        int undergrowth = forest > WoodsThreshold ? count / 2 : 0;
 
-        float biome = _biome.Fractal(centerX * 0.0012f, centerZ * 0.0012f, 2);
-        int[] family = biome < -0.2f ? Dreamy : biome > 0.15f ? Golden : Green;
-
-        var trees = new List<TreeInstance>(count);
-        for (int i = 0; i < count; i++)
+        var trees = new List<TreeInstance>(count + undergrowth);
+        for (int i = 0; i < count + undergrowth; i++)
         {
+            bool under = i >= count;
             // Well inside a terrain tile, so the trunk stands on its flat top.
             float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.6f);
             float z = TerrainField.InsideTile((cz + random.NextSingle()) * CellSize, 0.6f);
             float y = _terrain.Height(x, z);
-            // Gentle ground only, and not on the sand or the rock (see the terrain materials).
+            // Gentle ground only, and not on the shore sand or the rock (see the terrain materials).
             if (y < TerrainField.WaterLevel + 5f || _terrain.Normal(x, z, 1f).Y < 0.86f) continue;
             // Tall grass meadows are open land.
             if (GroundMaterials.TallGrass(x, z) > 0.2f) continue;
-            // One species rules each grove; now and then another one grows among it.
-            int variant = random.NextSingle() < OtherSpeciesChance ? family[random.Next(family.Length)] : GroveSpecies(x, z, family);
-            trees.Add(new TreeInstance(new Vector3(x, y - 0.05f, z), random.NextSingle() * MathF.Tau, 0.75f + 0.55f * random.NextSingle(), variant));
+            int biome = PickBiome(x, z, random);
+            int variant;
+            float scale;
+            if (under)
+            {
+                var family = Undergrowth[biome];
+                variant = family[random.Next(family.Length)];
+                scale = 0.7f + 0.6f * random.NextSingle();
+            }
+            else
+            {
+                // One species rules each grove; now and then another one grows among it.
+                var family = Canopy[biome];
+                variant = random.NextSingle() < OtherSpeciesChance ? family[random.Next(family.Length)] : GroveSpecies(x, z, family);
+                scale = 0.75f + 0.6f * random.NextSingle();
+            }
+            trees.Add(new TreeInstance(new Vector3(x, y - 0.05f, z), random.NextSingle() * MathF.Tau, scale, variant));
         }
 
-        AddDecorations(trees, cx, cz, random, biome);
+        AddDecorations(trees, cx, cz, random);
         return trees.ToArray();
     }
 
+    /// <summary>
+    /// The biome at a point, drawn at random by the biomes' weights there: inside a biome it is
+    /// always that one, and across a border the two mix, thinning out into each other.
+    /// </summary>
+    private static int PickBiome(float x, float z, Random random)
+    {
+        var w = GroundMaterials.Biome(x, z);
+        float roll = random.NextSingle();
+        if ((roll -= w.X) < 0) return 0;
+        if ((roll -= w.Y) < 0) return 1;
+        if ((roll -= w.Z) < 0) return 2;
+        return DesertBiome;
+    }
+
     /// <summary>Samples a few points of the cell and decorates each according to the ground there.</summary>
-    private void AddDecorations(List<TreeInstance> list, int cx, int cz, Random random, float biome)
+    private void AddDecorations(List<TreeInstance> list, int cx, int cz, Random random)
     {
         AddReeds(list, cx, cz, random);
+        AddPalmGroves(list, cx, cz, random);
         AddFlowers(list, cx, cz, random);
         AddLightGardens(list, cx, cz, random);
         const float water = TerrainField.WaterLevel;
-        var crystals = TreeModels.VariantOf(biome < 0f ? TreeModels.Decoration.CyanCrystals : TreeModels.Decoration.VioletCrystals);
+        var weights = GroundMaterials.Biome((cx + 0.5f) * CellSize, (cz + 0.5f) * CellSize);
+        // Cyan crystals by the turquoise woods, violet ones elsewhere.
+        var crystals = TreeModels.VariantOf(weights.Z > 0.5f ? TreeModels.Decoration.CyanCrystals : TreeModels.Decoration.VioletCrystals);
+        bool desert = weights.W > 0.5f;
         for (int i = 0; i < 20; i++)
         {
             float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.4f);
@@ -361,15 +450,20 @@ public sealed class TreeField
             {
                 // The shore: palms and crystal clusters.
                 if (roll < 0.03f && y > water + 0.8f)
-                    list.Add(new TreeInstance(new Vector3(x, y - 0.2f, z), yaw, 0.8f + 0.5f * random.NextSingle(),
-                        TreeModels.VariantOf(TreeModels.Decoration.Palm)));
+                    list.Add(RandomPalm(x, y, z, yaw, random));
                 else if (roll < 0.065f)
                     list.Add(new TreeInstance(new Vector3(x, y - 0.3f, z), yaw, 0.7f + 1.5f * random.NextSingle(), crystals));
             }
             else if (y >= water + 2f)
             {
                 float normalY = _terrain.Normal(x, z, 1f).Y;
-                if (normalY < 0.75f)
+                if (desert)
+                {
+                    // Crystal clusters rising from the desert sand.
+                    if (roll < 0.02f)
+                        list.Add(new TreeInstance(new Vector3(x, y - 0.3f, z), yaw, 0.7f + 1.6f * random.NextSingle(), crystals));
+                }
+                else if (normalY < 0.75f)
                 {
                     // Rocky slopes: the odd crystal cluster.
                     if (roll < 0.012f)

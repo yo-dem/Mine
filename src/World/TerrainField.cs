@@ -24,6 +24,15 @@ public sealed class TerrainField
     // but a few metres out the water is deep enough to swim.
     private const float DepthScale = 3f;
 
+    // Lakes (see Lakes): at most one per cell of LakeCell, on low and middling land. Each has a
+    // wobbly shore LakeRadius across, banks sloping gently down to it over LakeBank metres, and a
+    // floor that sinks toward its middle (then DepthScale deepens it further, like all water).
+    private const float LakeCell = 400f;
+    private const float LakeChance = 0.6f;
+    private const float LakeMinRadius = 40f, LakeMaxRadius = 120f;
+    private const float LakeBank = 130f;
+    private const float LakeMinDepth = 2f, LakeMaxDepth = 11f;
+
     private const float SpireCell = 180f;      // at most one spire per cell of this size
     private const float SpireChance = 0.22f;
 
@@ -32,6 +41,7 @@ public sealed class TerrainField
     private readonly PerlinNoise _warp;
     private readonly PerlinNoise _dunes;
     private readonly PerlinNoise _detail;
+    private readonly PerlinNoise _lakes;
     private readonly int _seed;
 
     public TerrainField(int seed)
@@ -42,6 +52,7 @@ public sealed class TerrainField
         _warp = new PerlinNoise(seed + 2);
         _dunes = new PerlinNoise(seed + 3);
         _detail = new PerlinNoise(seed + 4);
+        _lakes = new PerlinNoise(seed + 5);
     }
 
     /// <summary>Height of the tile under (x, z): the smooth height at its centre, snapped to a layer.</summary>
@@ -79,12 +90,16 @@ public sealed class TerrainField
         float wz = _warp.Fractal(x * 0.0025f + 31.7f, z * 0.0025f - 17.3f, 2) * 90f;
         float hills = _hills.Fractal((x + wx) * 0.004f, (z + wz) * 0.004f, 5);
 
-        // Long rounded dune ridges, strongest where the land is low.
+        // Long rounded dune ridges, strongest where the land is low, and tallest in the deserts
+        // (whose hills are also gentler).
+        float desert = GroundMaterials.Desert(x, z);
         float duneNoise = _dunes.Fractal(x * 0.006f + hills * 0.3f, z * 0.0025f, 3);
         float dune = 1f - MathF.Sqrt(duneNoise * duneNoise + 0.02f); // rounded crest, no sharp ridge
-        float lowland = Smooth(0.2f, -0.3f, continent);
+        float lowland = MathF.Max(Smooth(0.2f, -0.3f, continent), desert);
 
-        float h = 20f + continent * 35f + hills * 30f + dune * dune * 9f * lowland;
+        float h = 20f + continent * 35f + hills * 30f * (1f - 0.4f * desert) + dune * dune * (9f + 6f * desert) * lowland;
+
+        h = Lakes(x, z, h);
 
         h += _detail.Fractal(x * 0.05f, z * 0.05f, 2) * 0.4f;
         if (h < WaterLevel) h = WaterLevel - (WaterLevel - h) * DepthScale;
@@ -127,6 +142,46 @@ public sealed class TerrainField
         }
         hit = default;
         return false;
+    }
+
+    /// <summary>
+    /// Scoops lakes out of the land at height <paramref name="h"/>: the ground sinks gently to just
+    /// under the water at the shore, then drops to a floor deeper toward the middle.
+    /// </summary>
+    private float Lakes(float x, float z, float h)
+    {
+        int cx = (int)MathF.Floor(x / LakeCell), cz = (int)MathF.Floor(z / LakeCell);
+        float bank = 0, floor = 0;
+        for (int dz = -1; dz <= 1; dz++)
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            uint hash = Hash(cx + dx + 9001, cz + dz - 4507);
+            if ((hash & 0xFFFF) / 65536f > LakeChance) continue;
+            float px = (cx + dx + 0.2f + 0.6f * ((hash >> 8) & 0xFF) / 255f) * LakeCell;
+            float pz = (cz + dz + 0.2f + 0.6f * ((hash >> 16) & 0xFF) / 255f) * LakeCell;
+            float radius = LakeMinRadius + (LakeMaxRadius - LakeMinRadius) * ((hash >> 24) & 0xF) / 15f;
+            float ox = x - px, oz = z - pz;
+            float r = MathF.Sqrt(ox * ox + oz * oz);
+            if (r >= (radius + LakeBank) * 1.4f) continue;
+            // Not up in the high lands, where the banks would have to be cliffs.
+            if (_continent.Fractal(px * 0.0006f, pz * 0.0006f, 3) > 0.2f) continue;
+
+            // A wobbly shore: the distance is measured against a radius that changes around the
+            // lake (noise sampled on a circle, so it wraps seamlessly).
+            float cos = r > 1e-3f ? ox / r : 1f, sin = r > 1e-3f ? oz / r : 0f;
+            float seed = (hash & 0xFF) * 0.53f;
+            float wobble = 1f + 0.3f * _lakes.Noise(cos * 1.3f + seed, sin * 1.3f - seed)
+                              + 0.12f * _lakes.Noise(cos * 3.1f - seed, sin * 3.1f + seed);
+            float d = r / wobble;
+            float depth = LakeMinDepth + (LakeMaxDepth - LakeMinDepth) * ((hash >> 28) & 0xF) / 15f;
+            bank = MathF.Max(bank, Smooth(radius + LakeBank, radius, d));
+            floor = MathF.Max(floor, Smooth(radius, radius * 0.25f, d) * depth);
+        }
+        if (bank <= 0) return h;
+        // Only ever lowers the land (the sea floor stays where it is).
+        float shore = WaterLevel - 1f;
+        if (h > shore) h += (shore - h) * bank;
+        return h - floor;
     }
 
     /// <summary>Rare tall rock needles with a steep flank and a rounded top.</summary>

@@ -68,7 +68,7 @@ public sealed class DayCycle
 
     private static readonly Vector3 MoonLight = Rgb(80, 66, 150);
 
-    public float TimeOfDay = 0.45f;
+    public float TimeOfDay = 8f / 24f; // the game starts at 8 in the morning
 
     /// <summary>Game seconds since start; runs faster while time is sped up (drives the clouds).</summary>
     public double Elapsed { get; private set; }

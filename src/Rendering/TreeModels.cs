@@ -27,7 +27,8 @@ public static class TreeModels
         Vector3? Orbs = null, // colour of glowing orbs hanging from the crown, if any
         bool Stacked = false, // cypress: blobs stacked up the trunk
         bool Flat = false,    // umbrella: wide, flat crown on long, low branches
-        bool Weeping = false); // willow: long blobs hanging below the branch tips
+        bool Weeping = false, // willow: long blobs hanging below the branch tips
+        bool Bare = false);   // dry tree: no leaves, branches forking into twigs
 
     private static readonly Style[] Styles =
     [
@@ -44,6 +45,10 @@ public static class TreeModels
         new("Pino", 12f, 0.30f, 0, 2.7f, new(1f, 0.55f, 1f), new(0.05f, 0.07f, 0.20f), new(0.18f, 0.30f, 0.60f), new(0.16f, 0.12f, 0.20f), Stacked: true),
         new("Alberello", 3.6f, 0.16f, 3, 1.3f, new(1f, 0.85f, 1f), new(0.40f, 0.12f, 0.36f), new(1.0f, 0.55f, 0.85f), new(0.22f, 0.15f, 0.22f)),
         new("Arbusto", 1.4f, 0.10f, 2, 1.0f, new(1.2f, 0.7f, 1.2f), new(0.10f, 0.14f, 0.30f), new(0.32f, 0.42f, 0.72f), new(0.18f, 0.14f, 0.22f)),
+        // Dry trees of the deserts: bleached, twisted, bare.
+        new("Secco", 6.5f, 0.30f, 5, 0f, Vector3.One, default, default, new(0.50f, 0.42f, 0.50f), Bare: true),
+        new("Contorto", 4.2f, 0.36f, 4, 0f, Vector3.One, default, default, new(0.30f, 0.22f, 0.30f), Bare: true),
+        new("Cespuglio secco", 1.1f, 0.06f, 7, 0f, Vector3.One, default, default, new(0.46f, 0.36f, 0.40f), Bare: true),
     ];
 
     /// <summary>Glowing decorations that share the tree pipeline (instancing, wind, shadows), after the tree styles.</summary>
@@ -63,6 +68,8 @@ public static class TreeModels
         Irises,      // a fan of upright sword leaves, flowers with raised and drooping petals
         Poppies,     // a rosette of broad leaves lying on the ground, cup flowers on thin stems
         Lilies,      // arching strap leaves, leafy stems, glowing trumpets
+        TallPalm,    // a very tall, slender palm with a deep curve
+        ShortPalm,   // a short, stocky palm with a big crown
     }
 
     public static int TreeStyleCount => Styles.Length;
@@ -81,7 +88,7 @@ public static class TreeModels
         Decoration.Lupins => 140f,
         Decoration.Irises or Decoration.Lilies or Decoration.Poppies => 120f,
         Decoration.Reeds => 400f,
-        Decoration.Palm => float.MaxValue,
+        Decoration.Palm or Decoration.TallPalm or Decoration.ShortPalm => float.MaxValue,
         _ => 700f,
     };
 
@@ -107,6 +114,8 @@ public static class TreeModels
         Decoration.VioletCrystals or Decoration.CyanCrystals => 0.7f,
         Decoration.Reeds => 0f,
         Decoration.Palm => 0.24f,
+        Decoration.TallPalm => 0.22f,
+        Decoration.ShortPalm => 0.3f,
         _ => 0f, // flowers do not block the way
     };
 
@@ -153,6 +162,20 @@ public static class TreeModels
             }
             crownCenter = trunk[3];
         }
+        else if (style.Bare)
+        {
+            // Dry tree: crooked branches from the upper trunk, each forking into two or three
+            // twigs that fork once more, all reaching up and out.
+            for (int b = 0; b < style.Branches; b++)
+            {
+                float angle = b * MathF.Tau / style.Branches + random.NextSingle() * 0.9f;
+                float startT = 0.35f + 0.5f * random.NextSingle();
+                var start = trunk[(int)MathF.Round(startT * (trunk.Length - 1))];
+                var direction = Vector3.Normalize(new Vector3(MathF.Cos(angle), 0.5f + 0.7f * random.NextSingle(), MathF.Sin(angle)));
+                float length = h * (0.3f + 0.15f * random.NextSingle());
+                AddTwigs(segments, random, start, direction, length, style.TrunkRadius * 0.45f, 0.6f, 2);
+            }
+        }
         else
         {
             blobs.Add(new(top + new Vector3(0, style.CrownRadius * 0.35f, 0), style.CrownRadius, style.CrownScale, random.NextSingle() * 10, 1f));
@@ -195,14 +218,18 @@ public static class TreeModels
         }
 
         var mesh = new List<float>();
-        if (lod == LodCount - 1)
+        if (lod == LodCount - 1 && !style.Bare)
         {
             BuildSilhouette(mesh, style, trunk, blobs);
             return mesh.ToArray();
         }
-        int sides = lod switch { 0 => 8, 1 => 6, _ => 4 };
+        int sides = lod switch { 0 => 8, 1 => 6, 2 => 4, _ => 3 };
         foreach (var s in segments)
+        {
+            // Far away, a dry tree keeps only its trunk and thicker branches.
+            if (style.Bare && lod >= 2 && s.RadiusA < style.TrunkRadius * (lod == 2 ? 0.15f : 0.3f)) continue;
             Cylinder(mesh, s, sides, style.Bark);
+        }
         var sphere = Icosphere(lod switch { 0 => 2, 1 => 1, _ => 0 });
         foreach (var blob in blobs)
             Foliage(mesh, sphere, blob, crownCenter, style);
@@ -214,6 +241,31 @@ public static class TreeModels
                     Vertex(mesh, orb.Center + d * orb.Radius, d, orbColor, 1f, 1f);
         }
         return mesh.ToArray();
+    }
+
+    /// <summary>
+    /// A crooked branch from <paramref name="start"/> (two segments, bending), which then forks into
+    /// two or three thinner ones, <paramref name="depth"/> times.
+    /// </summary>
+    private static void AddTwigs(List<Segment> segments, Random random, Vector3 start, Vector3 direction, float length,
+        float radius, float sway, int depth)
+    {
+        var bend = new Vector3(random.NextSingle() - 0.5f, random.NextSingle() * 0.3f, random.NextSingle() - 0.5f) * 0.6f;
+        var middle = start + direction * length * 0.5f;
+        var end = middle + Vector3.Normalize(direction + bend) * length * 0.5f;
+        float nextSway = MathF.Min(sway + 0.12f, 0.95f);
+        segments.Add(new(start, middle, radius, radius * 0.75f, sway, (sway + nextSway) * 0.5f));
+        segments.Add(new(middle, end, radius * 0.75f, radius * 0.5f, (sway + nextSway) * 0.5f, nextSway));
+        if (depth == 0) return;
+        int forks = 2 + random.Next(2);
+        var heading = Vector3.Normalize(end - middle);
+        for (int f = 0; f < forks; f++)
+        {
+            float a = random.NextSingle() * MathF.Tau;
+            var spread = new Vector3(MathF.Cos(a), 0.4f + 0.4f * random.NextSingle(), MathF.Sin(a)) * (0.7f + 0.3f * random.NextSingle());
+            AddTwigs(segments, random, end, Vector3.Normalize(heading + spread), length * (0.5f + 0.2f * random.NextSingle()),
+                radius * 0.5f, nextSway, depth - 1);
+        }
     }
 
     /// <summary>Far-away version: one straight trunk and one ellipsoid enclosing every foliage blob.</summary>
@@ -397,34 +449,43 @@ public static class TreeModels
                 LeafyFlowers(mesh, random, decoration, lod);
                 break;
             case Decoration.Palm:
+            case Decoration.TallPalm:
+            case Decoration.ShortPalm:
             {
-                // A tall, slender trunk curving toward the water, crowned with long arching fronds:
-                // a dark silhouette against the glowing sky, as on a tropical shore at dusk.
-                float lean = 0.9f + 0.6f * random.NextSingle();
+                // A slender trunk curving toward the water, crowned with long arching fronds: a dark
+                // silhouette against the glowing sky, as on a tropical shore at dusk. Three builds
+                // (with the instance scale on top) so a grove never looks like copies of one palm.
+                var (height, radius, bend, frondLength, fronds0) = decoration switch
+                {
+                    Decoration.TallPalm => (13f, 0.22f, 1.5f, 3.2f, 11),
+                    Decoration.ShortPalm => (4.6f, 0.3f, 0.8f, 3.4f, 12),
+                    _ => (8.5f, 0.24f, 1f, 2.8f, 10),
+                };
+                float lean = (0.9f + 0.6f * random.NextSingle()) * bend;
                 int rings = lod >= 2 ? 5 : 9;
                 var trunk = new Vector3[rings + 1];
                 for (int i = 0; i <= rings; i++)
                 {
                     float t = i / (float)rings;
-                    trunk[i] = new Vector3(lean * t * t * 2.2f, t * 8.5f, 0.3f * MathF.Sin(t * 2.5f));
+                    trunk[i] = new Vector3(lean * t * t * 2.2f, t * height, 0.3f * MathF.Sin(t * 2.5f));
                 }
                 var bark = new Vector3(0.10f, 0.07f, 0.13f);
                 for (int i = 0; i < rings; i++)
                 {
                     float t0 = i / (float)rings, t1 = (i + 1) / (float)rings;
-                    Cylinder(mesh, new Segment(trunk[i], trunk[i + 1], 0.24f * (1 - 0.35f * t0), 0.24f * (1 - 0.35f * t1),
+                    Cylinder(mesh, new Segment(trunk[i], trunk[i + 1], radius * (1 - 0.35f * t0), radius * (1 - 0.35f * t1),
                         t0 * t0 * 0.6f, t1 * t1 * 0.6f), lod >= 2 ? 4 : 6, bark * (0.8f + 0.25f * t1));
                 }
 
                 var top = trunk[rings];
-                int fronds = lod >= 2 ? 7 : 10;
+                int fronds = lod >= 2 ? 7 : fronds0;
                 int steps = lod >= 2 ? 4 : 7;
                 for (int f = 0; f < fronds; f++)
                 {
                     float a = f * MathF.Tau / fronds + random.NextSingle() * 0.4f;
                     var outward = new Vector3(MathF.Cos(a), 0, MathF.Sin(a));
                     var across = new Vector3(-outward.Z, 0, outward.X);
-                    float length = 2.8f + 1.2f * random.NextSingle();
+                    float length = frondLength + 1.2f * random.NextSingle();
                     float rise = 0.6f + 0.5f * random.NextSingle();
                     var leaf = Vector3.Lerp(new Vector3(0.06f, 0.10f, 0.14f), new Vector3(0.12f, 0.16f, 0.26f), random.NextSingle());
                     Vector3 Point(float t) => top + outward * length * t + new Vector3(0, rise * MathF.Sin(t * 2.2f) - 1.9f * t * t, 0);
