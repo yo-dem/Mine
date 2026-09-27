@@ -35,13 +35,16 @@ public sealed unsafe class GrassRenderer : IDisposable
         public uint Vao, Vbo;
         public int Count;
         public bool Ready;
+        // The blades are sorted by thinning key: Keys[i] is blade i's, so the blades that survive
+        // the thinning at a given distance are a prefix (see Draw).
+        public float[] Keys = [];
     }
 
     private readonly GL _gl;
     private readonly TerrainField _terrain;
     private readonly uint _bladeVbo;
     private readonly Dictionary<(int X, int Z), Tile> _tiles = new();
-    private readonly ConcurrentQueue<((int X, int Z) Key, float[] Blades)> _done = new();
+    private readonly ConcurrentQueue<((int X, int Z) Key, (float[] Blades, float[] Keys) Built)> _done = new();
     private readonly List<(int X, int Z)> _toRemove = new();
 
     public GrassRenderer(GL gl, TerrainField terrain)
@@ -71,7 +74,7 @@ public sealed unsafe class GrassRenderer : IDisposable
         }
 
         for (int i = 0; i < UploadsPerFrame && _done.TryDequeue(out var result); i++)
-            if (_tiles.TryGetValue(result.Key, out var tile)) Upload(tile, result.Blades);
+            if (_tiles.TryGetValue(result.Key, out var tile)) Upload(tile, result.Built.Blades, result.Built.Keys);
 
         _toRemove.Clear();
         foreach (var (key, tile) in _tiles)
@@ -94,12 +97,36 @@ public sealed unsafe class GrassRenderer : IDisposable
             if (!tile.Ready || tile.Count == 0 || DistanceToTile(camera, key.X, key.Z) > Radius) continue;
             var center = new Vector2((key.X + 0.5f) * TileSize - camera.X, (key.Z + 0.5f) * TileSize - camera.Z);
             if (Vector2.Dot(center, flatForward) < -TileSize * 0.75f && MathF.Abs(forward.Y) < 0.9f) continue;
+            // The vertex shader drops the blades whose key is above the share kept at their distance
+            // (the same formula as there): none nearer than the tile's nearest point survives, so
+            // only that prefix of the sorted blades is drawn. Far tiles skip most of their blades.
+            float kept = float.Lerp(1f, 0.07f, SmoothStep(8f, Radius * 0.85f, DistanceToTile(camera, key.X, key.Z)));
+            int count = UpperBound(tile.Keys, kept);
+            if (count == 0) continue;
             _gl.BindVertexArray(tile.Vao);
-            _gl.DrawArraysInstanced(PrimitiveType.TriangleStrip, 0, 7, (uint)tile.Count);
+            _gl.DrawArraysInstanced(PrimitiveType.TriangleStrip, 0, 7, (uint)count);
         }
     }
 
-    private float[] BuildBlades(int tx, int tz)
+    private static float SmoothStep(float edge0, float edge1, float x)
+    {
+        float t = Math.Clamp((x - edge0) / (edge1 - edge0), 0f, 1f);
+        return t * t * (3f - 2f * t);
+    }
+
+    // How many of the ascending keys are at most `value`.
+    private static int UpperBound(float[] keys, float value)
+    {
+        int lo = 0, hi = keys.Length;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) >>> 1;
+            if (keys[mid] <= value) lo = mid + 1; else hi = mid;
+        }
+        return lo;
+    }
+
+    private (float[] Blades, float[] Keys) BuildBlades(int tx, int tz)
     {
         // The smooth height at the centre of every terrain tile under this grass tile (plus a ring,
         // for slopes): blades stand on the tile's layer, and the smooth slope picks the material.
@@ -181,10 +208,20 @@ public sealed unsafe class GrassRenderer : IDisposable
                 }
             }
         }
-        return blades.ToArray();
+        // Sorted by thinning key (see Draw).
+        int total = blades.Count / FloatsPerBlade;
+        var keys = new float[total];
+        var order = new int[total];
+        for (int i = 0; i < total; i++) (keys[i], order[i]) = (blades[i * FloatsPerBlade + 6], i);
+        Array.Sort(keys, order);
+        var sorted = new float[blades.Count];
+        for (int i = 0; i < total; i++)
+            for (int f = 0; f < FloatsPerBlade; f++)
+                sorted[i * FloatsPerBlade + f] = blades[order[i] * FloatsPerBlade + f];
+        return (sorted, keys);
     }
 
-    private void Upload(Tile tile, float[] blades)
+    private void Upload(Tile tile, float[] blades, float[] keys)
     {
         tile.Vao = _gl.GenVertexArray();
         tile.Vbo = _gl.GenBuffer();
@@ -210,6 +247,7 @@ public sealed unsafe class GrassRenderer : IDisposable
 
         _gl.BindVertexArray(0);
         tile.Count = blades.Length / FloatsPerBlade;
+        tile.Keys = keys;
         tile.Ready = true;
     }
 

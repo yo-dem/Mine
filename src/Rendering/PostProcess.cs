@@ -174,6 +174,9 @@ public sealed unsafe class PostProcess : IDisposable
     }
     private bool _lowQuality;
 
+    /// <summary>Width of the scene buffer in pixels.</summary>
+    public int SceneWidth => _width;
+
     /// <summary>Height of the scene buffer in pixels (for effects sized in pixels).</summary>
     public int SceneHeight => _height;
 
@@ -219,7 +222,10 @@ public sealed unsafe class PostProcess : IDisposable
     }
 
     /// <summary>Binds the HDR scene framebuffer; everything drawn until <see cref="Finish"/> goes there.</summary>
-    public void BeginScene()
+    public void BeginScene() => BindScene();
+
+    /// <summary>Binds the HDR scene framebuffer again after drawing elsewhere (e.g. the half-resolution clouds).</summary>
+    public void BindScene()
     {
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _sceneFbo);
         _gl.Viewport(0, 0, (uint)_width, (uint)_height);

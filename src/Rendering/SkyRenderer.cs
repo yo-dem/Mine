@@ -8,8 +8,9 @@ namespace Mine.Rendering;
 /// Draws the cosmic sky (gradient, a giant spiral galaxy, nebulae, dense stars, shooting stars,
 /// the sun, a big moon, volumetric clouds) as a full-screen triangle.
 /// Output is HDR (bright things above 1, for the bloom); tone mapping happens in the post-process pass.
-/// It is drawn after the opaque geometry, at the far plane with a less-or-equal depth test, so the
-/// expensive cloud ray march only runs on the pixels where the sky is actually visible.
+/// It is drawn after the opaque geometry, at the far plane with a less-or-equal depth test, so it
+/// only shades the pixels where the sky is actually visible. The expensive cloud ray march runs
+/// before it, at half resolution and only near those pixels (<see cref="DrawClouds"/>).
 /// The sky GLSL is shared with the terrain shader so the fog matches the sky exactly.
 /// </summary>
 public sealed class SkyRenderer : IDisposable
@@ -361,15 +362,16 @@ public sealed class SkyRenderer : IDisposable
         }
         """;
 
-    private const string FragmentSource = "#version 330 core\n" + Glsl + """
+    // The cloud ray march, drawn at half resolution into its own texture (see DrawClouds): the
+    // clouds are soft, so a quarter of the samples look the same at a quarter of the cost.
+    private const string CloudFragmentSource = "#version 330 core\n" + Glsl + """
 
         in vec2 vNdc;
         uniform mat4 uInvViewProj; // rotation-only view, so the camera sits at the origin
         uniform vec3 uCameraPos;
-        uniform float uUnderwater;
-        uniform vec3 uAmbient;
         uniform int uCloudSteps;      // ray-march samples (quality)
         uniform int uCloudLightSteps; // samples toward the light per ray-march sample
+        uniform sampler2D uSceneDepth; // full-resolution depth of the opaque scene
         out vec4 FragColor;
 
         float henyeyGreenstein(float cosAngle, float g)
@@ -447,6 +449,35 @@ public sealed class SkyRenderer : IDisposable
             return vec4(light * fade, mix(1.0, transmittance, fade));
         }
 
+        // True when a full-resolution pixel whose bilinear lookup reaches this texel shows the sky
+        // (a 4x4 footprint of the scene depth; the sky is where the depth buffer is still clear).
+        bool skyNearby()
+        {
+            ivec2 size = textureSize(uSceneDepth, 0) - 1;
+            ivec2 base = ivec2(gl_FragCoord.xy) * 2;
+            for (int y = -1; y <= 2; y++)
+            for (int x = -1; x <= 2; x++)
+                if (texelFetch(uSceneDepth, clamp(base + ivec2(x, y), ivec2(0), size), 0).r >= 1.0) return true;
+            return false;
+        }
+
+        void main()
+        {
+            if (!skyNearby()) { FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+            vec4 far = uInvViewProj * vec4(vNdc, 1.0, 1.0);
+            FragColor = marchClouds(uCameraPos, normalize(far.xyz / far.w));
+        }
+        """;
+
+    private const string FragmentSource = "#version 330 core\n" + Glsl + """
+
+        in vec2 vNdc;
+        uniform mat4 uInvViewProj; // rotation-only view, so the camera sits at the origin
+        uniform float uUnderwater;
+        uniform vec3 uAmbient;
+        uniform sampler2D uClouds; // light scattered by the clouds (rgb) and transmittance (a), half resolution
+        out vec4 FragColor;
+
         void main()
         {
             vec4 far = uInvViewProj * vec4(vNdc, 1.0, 1.0);
@@ -457,21 +488,27 @@ public sealed class SkyRenderer : IDisposable
                 FragColor = vec4(vec3(0.03, 0.06, 0.2) + uAmbient * 0.15 + vec3(0.02, 0.08, 0.12) * (1.0 - uNight), 1.0);
                 return;
             }
-            vec4 clouds = marchClouds(uCameraPos, d);
+            vec4 clouds = texture(uClouds, vNdc * 0.5 + 0.5);
             FragColor = vec4(skyColor(d, true) * clouds.a + clouds.rgb, 1.0);
         }
         """;
 
     private readonly GL _gl;
-    private readonly Shader _shader;
+    private readonly Shader _shader, _cloudShader;
     private readonly uint _vao; // core profile needs a bound VAO even with no attributes
+    private uint _cloudFbo, _cloudTexture;
+    private int _cloudWidth, _cloudHeight;
 
     public SkyRenderer(GL gl)
     {
         _gl = gl;
         _shader = new Shader(gl, VertexSource, FragmentSource);
+        _cloudShader = new Shader(gl, VertexSource, CloudFragmentSource);
         _vao = gl.GenVertexArray();
     }
+
+    /// <summary>Texture unit the half-resolution clouds are bound to while drawing the sky.</summary>
+    public const int CloudsUnit = 5;
 
     /// <summary>Texture unit the cloud noise is bound to while drawing the sky and the world.</summary>
     public const int CloudNoiseUnit = 2;
@@ -520,15 +557,67 @@ public sealed class SkyRenderer : IDisposable
     /// <summary>Low quality (integrated GPUs): fewer cloud samples.</summary>
     public bool LowQuality;
 
+    /// <summary>
+    /// Ray-marches the clouds at half the scene resolution into their own texture, only near the
+    /// pixels where the sky shows (<paramref name="depthUnit"/> holds the opaque scene's depth).
+    /// Leaves the cloud framebuffer bound: the caller binds the scene again.
+    /// </summary>
+    public unsafe void DrawClouds(Matrix4x4 inverseViewProjection, Vector3 cameraPosition, float cloudTime, in Atmosphere atmosphere,
+        float time, int depthUnit, int sceneWidth, int sceneHeight)
+    {
+        int width = Math.Max(1, (sceneWidth + 1) / 2), height = Math.Max(1, (sceneHeight + 1) / 2);
+        if (width != _cloudWidth || height != _cloudHeight)
+        {
+            DeleteCloudTarget();
+            (_cloudWidth, _cloudHeight) = (width, height);
+            _cloudTexture = _gl.GenTexture();
+            _gl.BindTexture(TextureTarget.Texture2D, _cloudTexture);
+            _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba16f, (uint)width, (uint)height, 0, PixelFormat.Rgba, PixelType.HalfFloat, (void*)0);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+            _cloudFbo = _gl.GenFramebuffer();
+            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _cloudFbo);
+            _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _cloudTexture, 0);
+        }
+
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _cloudFbo);
+        _gl.Viewport(0, 0, (uint)width, (uint)height);
+        _cloudShader.Use();
+        _cloudShader.Set("uCloudSteps", LowQuality ? 16 : 32);
+        _cloudShader.Set("uCloudLightSteps", LowQuality ? 2 : 3);
+        _cloudShader.Set("uInvViewProj", inverseViewProjection);
+        _cloudShader.Set("uCameraPos", cameraPosition);
+        _cloudShader.Set("uSceneDepth", depthUnit);
+        SetUniforms(_cloudShader, atmosphere, time, cloudTime);
+        _gl.Disable(EnableCap.DepthTest);
+        _gl.DepthMask(false);
+        _gl.BindVertexArray(_vao);
+        _gl.DrawArrays(PrimitiveType.Triangles, 0, 3);
+        _gl.DepthMask(true);
+        _gl.Enable(EnableCap.DepthTest);
+    }
+
+    private void DeleteCloudTarget()
+    {
+        if (_cloudFbo == 0) return;
+        _gl.DeleteFramebuffer(_cloudFbo);
+        _gl.DeleteTexture(_cloudTexture);
+        _cloudFbo = _cloudTexture = 0;
+    }
+
+    /// <summary>Draws the sky over the pixels nothing covers, with the clouds from <see cref="DrawClouds"/>.</summary>
     public void Draw(Matrix4x4 inverseViewProjection, Vector3 cameraPosition, float cloudTime, in Atmosphere atmosphere, float time)
     {
         _shader.Use();
-        _shader.Set("uCloudSteps", LowQuality ? 16 : 32);
-        _shader.Set("uCloudLightSteps", LowQuality ? 2 : 3);
         _shader.Set("uInvViewProj", inverseViewProjection);
-        _shader.Set("uCameraPos", cameraPosition);
         _shader.Set("uUnderwater", cameraPosition.Y < Mine.World.TerrainField.WaterLevel ? 1f : 0f);
         _shader.Set("uAmbient", atmosphere.Ambient);
+        _shader.Set("uClouds", CloudsUnit);
+        _gl.ActiveTexture(TextureUnit.Texture0 + CloudsUnit);
+        _gl.BindTexture(TextureTarget.Texture2D, _cloudTexture);
+        _gl.ActiveTexture(TextureUnit.Texture0);
         SetUniforms(_shader, atmosphere, time, cloudTime);
 
         _gl.DepthFunc(DepthFunction.Lequal); // the far plane still passes where the buffer is clear
@@ -541,7 +630,9 @@ public sealed class SkyRenderer : IDisposable
 
     public void Dispose()
     {
+        DeleteCloudTarget();
         _gl.DeleteVertexArray(_vao);
         _shader.Dispose();
+        _cloudShader.Dispose();
     }
 }

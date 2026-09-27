@@ -48,6 +48,7 @@ public sealed class Game : IDisposable
     private RainRenderer _rain = null!;
     private readonly Weather _weather = new();
     private PostProcess _post = null!;
+    private GpuProfiler _profiler = null!;
     private Shader _waterShader = null!;
     private WaterRenderer _water = null!;
     private readonly Player _player = new();
@@ -74,7 +75,7 @@ public sealed class Game : IDisposable
         {
             Size = new Vector2D<int>(1280, 720),
             Title = "Mine",
-            VSync = true,
+            VSync = Environment.GetEnvironmentVariable("MINE_NO_VSYNC") != "1",
             // 3.3 core + forward compatible also runs on macOS (which caps at 4.1).
             API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(3, 3)),
         };
@@ -127,6 +128,7 @@ public sealed class Game : IDisposable
         _motes = new MoteRenderer(_gl);
         _rain = new RainRenderer(_gl);
         _post = new PostProcess(_gl);
+        _profiler = new GpuProfiler(_gl);
         _waterShader = new Shader(_gl, TerrainShaders.WaterVertex, TerrainShaders.WaterFragment);
         _water = new WaterRenderer(_gl);
         // Integrated GPUs get the lighter clouds and a lower render scale; Q switches at any time.
@@ -136,6 +138,10 @@ public sealed class Game : IDisposable
 
         Respawn();
         if (Environment.GetEnvironmentVariable("MINE_RAIN") == "1") _weather.Toggle();
+        if (float.TryParse(Environment.GetEnvironmentVariable("MINE_TIME"), System.Globalization.CultureInfo.InvariantCulture, out float timeOfDay))
+            _dayCycle.TimeOfDay = timeOfDay;
+        if (float.TryParse(Environment.GetEnvironmentVariable("MINE_PITCH"), System.Globalization.CultureInfo.InvariantCulture, out float pitch))
+            _player.Pitch = pitch;
 
         _gl.Enable(EnableCap.DepthTest);
         _gl.Enable(EnableCap.CullFace);
@@ -143,7 +149,10 @@ public sealed class Game : IDisposable
     }
 
     // Debugging aids, from environment variables: MINE_FPS_LOG=1 prints the HUD line to the console,
-    // MINE_RAIN=1 starts with rain.
+    // MINE_RAIN=1 starts with rain, MINE_TIME=0.45 sets the time of day, MINE_PITCH=0.2 the view
+    // pitch (radians), MINE_GPU_PROFILE=1 prints the GPU time of each pass (GpuProfiler).
+    private static readonly string Skip = Environment.GetEnvironmentVariable("MINE_SKIP") ?? "";
+    private static bool On(string pass) => !Skip.Contains(pass);
     private static readonly bool LogHud = Environment.GetEnvironmentVariable("MINE_FPS_LOG") == "1";
 
     private void Respawn()
@@ -245,11 +254,13 @@ public sealed class Game : IDisposable
         var view = Matrix4x4.CreateLookAt(eye, eye + look, Vector3.UnitY);
         var projection = Matrix4x4.CreatePerspectiveFieldOfView(FieldOfView, (float)size.X / size.Y, NearPlane, FarPlane);
 
+        _profiler.BeginFrame();
+        _profiler.Section("ombre");
         var atmosphere = _dayCycle.Sample();
         float time = (float)_time;
         _lightCount = _objects.CollectLights(eye, time, _lights, _treeField.GlowingLights(eye, 80f).Concat(_treeField.FlowerLights(eye)));
         var shadowCenter = _player.Position;
-        _shadowMap.Render(shadowCenter, atmosphere.LightDirection, time, () =>
+        if (On("shadow")) _shadowMap.Render(shadowCenter, atmosphere.LightDirection, time, () =>
         {
             _terrain.DrawNear(shadowCenter, ShadowMap.Radius * 1.5f);
             _shadowMap.SetInstanced(true);
@@ -271,20 +282,24 @@ public sealed class Game : IDisposable
         var skyView = Matrix4x4.CreateLookAt(Vector3.Zero, look, Vector3.UnitY);
         var skyViewProjection = skyView * projection;
 
+        _profiler.Section("terreno");
         _shadowMap.Bind(0);
         SetWorldUniforms(_terrainShader, view * projection, eye, atmosphere, time);
-        _terrain.Draw(eye, look);
+        if (On("terrain")) _terrain.Draw(eye, look);
 
         // Grass blades are seen from both sides.
+        _profiler.Section("erba");
         SetWorldUniforms(_grassShader, view * projection, eye, atmosphere, time);
         _grassShader.Set("uGrassRadius", GrassRenderer.Radius);
         _gl.Disable(EnableCap.CullFace);
-        _grass.Draw(eye, look);
+        if (On("grass")) _grass.Draw(eye, look);
         _gl.Enable(EnableCap.CullFace);
 
+        _profiler.Section("alberi");
         SetWorldUniforms(_treeShader, view * projection, eye, atmosphere, time);
-        _trees.Draw();
+        if (On("trees")) _trees.Draw();
 
+        _profiler.Section("oggetti+creature+isole");
         SetWorldUniforms(_objectShader, view * projection, eye, atmosphere, time);
         foreach (var obj in _objects.All)
         {
@@ -306,12 +321,26 @@ public sealed class Game : IDisposable
         _objectShader.Set("uHighlight", 0f);
         _islandRenderer.Draw();
 
-        // The sky last, only where nothing covers it (see SkyRenderer).
-        Matrix4x4.Invert(skyViewProjection, out var inverseSkyViewProj);
-        _sky.Draw(inverseSkyViewProj, eye, (float)_dayCycle.Elapsed, atmosphere, time);
-
-        // The water, over a snapshot of everything beneath it.
+        // A snapshot of the opaque scene: the water shows it beneath, the clouds read its depth.
+        // (Taken before the sky: where the water covers the sky, it is deep enough to hide it.)
+        _profiler.Section("copia");
         _post.SnapshotForWater(colorUnit: 3, depthUnit: 4);
+
+        // The sky last, only where nothing covers it (see SkyRenderer), over the clouds ray-marched
+        // at half resolution.
+        _profiler.Section("nuvole");
+        Matrix4x4.Invert(skyViewProjection, out var inverseSkyViewProj);
+        bool underwater = eye.Y < TerrainField.WaterLevel;
+        if (On("sky") && !underwater)
+        {
+            _sky.DrawClouds(inverseSkyViewProj, eye, (float)_dayCycle.Elapsed, atmosphere, time, depthUnit: 4, _post.SceneWidth, _post.SceneHeight);
+            _post.BindScene();
+        }
+        _profiler.Section("cielo");
+        if (On("sky")) _sky.Draw(inverseSkyViewProj, eye, (float)_dayCycle.Elapsed, atmosphere, time);
+
+        // The water, over the snapshot.
+        _profiler.Section("acqua");
         SetWorldUniforms(_waterShader, view * projection, eye, atmosphere, time);
         _waterShader.Set("uUnderColor", 3);
         _waterShader.Set("uUnderDepth", 4);
@@ -320,16 +349,19 @@ public sealed class Game : IDisposable
         _waterShader.Set("uFar", FarPlane);
         _waterShader.Set("uWaterLevel", TerrainField.WaterLevel);
         _waterShader.Set("uWaterExtent", WaterRenderer.Extent);
-        _water.Draw();
+        if (On("water")) _water.Draw();
 
+        _profiler.Section("pulviscolo+pioggia");
         float heightAboveGround = eye.Y - _ground.Height(eye.X, eye.Z, eye.Y);
         float pointScale = _post.SceneHeight / (2f * MathF.Tan(FieldOfView / 2));
         _motes.Draw(view * projection, eye, atmosphere, time, heightAboveGround, pointScale);
         if (eye.Y > TerrainField.WaterLevel) _rain.Draw(view * projection, eye, time, _weather.Rain, atmosphere.Night, pointScale);
 
-        _post.Finish(atmosphere.Night);
+        _profiler.Section("post");
+        if (On("post")) _post.Finish(atmosphere.Night);
 
         _crosshair.Draw();
+        _profiler.EndFrame();
     }
 
     /// <summary>Binds a world shader and sets everything it needs for this frame.</summary>

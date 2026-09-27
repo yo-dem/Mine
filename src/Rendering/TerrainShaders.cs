@@ -145,8 +145,10 @@ public static class TerrainShaders
             for (int i = 0; i < uPointCount; i++)
             {
                 vec3 toLight = uPointPos[i] - pos;
-                float d = length(toLight);
-                float edge = clamp(1.0 - (d * d) / (uPointRadius[i] * uPointRadius[i]), 0.0, 1.0);
+                float d2 = dot(toLight, toLight), r2 = uPointRadius[i] * uPointRadius[i];
+                if (d2 >= r2) continue; // out of reach: no light at all
+                float d = sqrt(d2);
+                float edge = 1.0 - d2 / r2;
                 float falloff = edge * edge / (1.0 + d * d * 0.15);
                 float facing = max(dot(n, toLight / max(d, 1e-3)) * 0.8 + 0.2, 0.0);
                 sum += uPointColor[i] * falloff * facing;
@@ -354,6 +356,7 @@ public static class TerrainShaders
             vec3 root = aBase.xyz;
             float dist = distance(root.xz, uCameraPos.xz);
             // The grass is dense: thin it out soon, the survivors growing wider to keep the ground covered.
+            // GrassRenderer.Draw uses the same formula to skip the blades no tile could keep.
             float keep = mix(1.0, 0.07, smoothstep(8.0, uGrassRadius * 0.85, dist));
 
             vWorldPos = root;
