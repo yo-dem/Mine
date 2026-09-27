@@ -152,7 +152,7 @@ public sealed class Creatures
             if (!b.Active || HorizontalDistance(b.Position, player) > ButterflyRange)
             {
                 if (i >= butterflies) { b.Active = false; continue; }
-                b.Active = TrySpawn(player, 6f, ButterflyRange * 0.8f, (x, z, h) => h > water + 0.3f, out var p);
+                b.Active = TrySpawn(player, 6f, ButterflyRange * 0.8f, (x, z, h) => h > water + 0.3f && !_terrain.InPond(x, z, 1f), out var p);
                 if (!b.Active) continue;
                 b.Position = p + new Vector3(0, 0.6f + 1.8f * _random.NextSingle(), 0);
                 b.Velocity = RandomHorizontal() * 1.2f;
@@ -168,7 +168,7 @@ public sealed class Creatures
             if (near < 4f) b.Velocity += away / near * (4f - near) * 3f * dt;
             float speed = b.Velocity.Length();
             if (speed > 1.6f) b.Velocity *= 1.6f / speed;
-            float ground = MathF.Max(_terrain.Height(b.Position.X, b.Position.Z), water);
+            float ground = Surface(b.Position.X, b.Position.Z);
             float target = ground + 1.2f + 0.8f * MathF.Sin(b.Phase + b.Position.X * 0.3f);
             b.Velocity.Y += (target - b.Position.Y) * 1.5f * dt - b.Velocity.Y * 0.8f * dt;
             b.Position += b.Velocity * dt;
@@ -515,6 +515,14 @@ public sealed class Creatures
     }
 
     private static float Frac(float x) => x - MathF.Floor(x);
+
+    /// <summary>The ground, or the water over it: the sea, or a basin under a waterfall.</summary>
+    private float Surface(float x, float z)
+    {
+        float surface = MathF.Max(_terrain.Height(x, z), TerrainField.WaterLevel);
+        if (_terrain.InPond(x, z, 1f) && _terrain.PondAt(x, z, out var pond)) surface = MathF.Max(surface, pond.Surface);
+        return surface;
+    }
 
     private bool TrySpawn(Vector3 player, float minDistance, float maxDistance, Func<float, float, float, bool> accept, out Vector3 position)
     {

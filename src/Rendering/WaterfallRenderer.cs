@@ -138,10 +138,26 @@ public sealed unsafe class WaterfallRenderer : IDisposable
                 float rf = r / vExtra;
                 float rings = pow(0.5 + 0.5 * sin(r * 2.4 - t * 3.0), 6.0) * exp(-rf * 2.2);
                 float veins = smoothstep(0.55, 0.8, vnoise(vUv * 0.6 + vec2(t * 0.15, -t * 0.1)));
-                float foam = smoothstep(1.4, 0.0, r) * (0.3 + 0.7 * vnoise(vUv * 4.0 + t * 3.0)) * 0.6;
                 float shore = smoothstep(0.7, 1.0, rf) * (0.6 + 0.4 * sin(t * 1.3 + atan(vUv.y, vUv.x) * 5.0));
-                alpha = 0.85;
-                glow = mix(Cyan, Silver, 0.5) * (0.25 + 1.1 * rings + 0.5 * veins * (1.0 - rf * 0.5) + 0.7 * shore) + Silver * foam;
+
+                // Foam churned up by the fall: dense and boiling where the water lands, then patches
+                // of bubbles carried outward (two flow phases cross-faded, so the drift never
+                // stretches), thinning toward the bank, and foam lines along the ring crests.
+                vec2 outward = vUv / max(r, 0.01);
+                float phase1 = fract(t * 0.2), phase2 = fract(t * 0.2 + 0.5);
+                vec2 p1 = vUv - outward * phase1 * 4.0, p2 = vUv - outward * phase2 * 4.0 + vec2(17.3, 5.1);
+                float blend = abs(1.0 - 2.0 * phase1);
+                float patches = mix(smoothstep(0.35, 0.7, vnoise(p1 * 0.9)), smoothstep(0.35, 0.7, vnoise(p2 * 0.9)), blend);
+                float bubbles = mix(vnoise(p1 * 5.0), vnoise(p2 * 5.0), blend);
+                bubbles = smoothstep(0.35, 0.75, bubbles) * (0.6 + 0.4 * vnoise(vUv * 13.0 + t * 2.0));
+                float core = smoothstep(3.5, 0.3, r) * (0.75 + 0.25 * vnoise(vUv * 6.0 + vec2(t * 4.0, -t * 3.0)));
+                float foam = clamp(core + patches * bubbles * exp(-rf * 1.1) * 1.8 + rings * 0.6 * (1.0 - rf)
+                                   + shore * 0.35 * bubbles, 0.0, 1.0);
+
+                alpha = mix(0.85, 0.97, foam);
+                body = mix(Deep, vec3(0.85, 0.9, 0.97) * mix(1.1, 0.3, uNight), foam);
+                glow = mix(Cyan, Silver, 0.5) * (0.25 + 1.1 * rings + 0.5 * veins * (1.0 - rf * 0.5) + 0.7 * shore) * (1.0 - 0.6 * foam)
+                     + Silver * foam * mix(0.05, 0.4, uNight);
             }
             else
             {

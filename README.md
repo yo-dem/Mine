@@ -31,7 +31,7 @@ Il mondo è diviso in biomi, ognuno con i suoi alberi, i suoi fiori e il suo col
 Nel cielo galleggiano isole fluttuanti con alberi in cima e cristalli luminosi appesi sotto: in volo
 ci puoi atterrare e camminarci sopra. Da poche, rare isole un filo di acqua luminescente scorre fino
 al bordo e precipita in sottili rivoli argentati avvolti da una foschia di vapore che, a terra, finiscono
-sempre in un ampio bacino luminoso,
+sempre in un ampio bacino luminoso e schiumoso,
 con cerchi di luce che si allargano dal punto in cui cade l'acqua e schizzi di goccioline che saltano
 e ricadono. Lungo i rivoli si vede l'acqua scorrere, a impulsi di luce che scendono veloci. Le nuvole sono volumetriche, si colorano all'alba e al tramonto
 e proiettano ombre in movimento sul paesaggio. Il bloom fa brillare sole, luci e cristalli,
