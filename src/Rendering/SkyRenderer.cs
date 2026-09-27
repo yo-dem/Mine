@@ -34,7 +34,7 @@ public sealed class SkyRenderer : IDisposable
         uniform sampler3D uCloudNoise;
         uniform float uCloudTime; // game seconds, so clouds speed up with the clock
         const float CloudBottom = 260.0;
-        const float CloudTop = 580.0;
+        const float CloudTop = 760.0;
 
         // Cloud density at a point: broad shapes from low-frequency noise, rounded at the base and
         // thinning toward the top of the layer; detail erodes the edges into wisps. lod blurs the
@@ -47,7 +47,9 @@ public sealed class SkyRenderer : IDisposable
             vec3 q = (p + wind) * 0.0011;
             float shape = textureLod(uCloudNoise, q * vec3(1.0, 1.8, 1.0), lod).r * 0.7 + textureLod(uCloudNoise, q * 2.7 + 0.37, lod + 1.4).r * 0.3;
             float profile = smoothstep(0.0, 0.12, h) * smoothstep(1.0, 0.4, h);
-            float d = (shape * profile - 0.6) * 3.0;
+            // A very broad noise opens clear skies between banks of big towering clouds.
+            float macro = textureLod(uCloudNoise, q * 0.23 + 0.11, lod + 1.0).r;
+            float d = (shape * profile - (0.6 + (0.5 - macro) * 0.32)) * 4.2;
             if (detail && d > 0.0) d -= (1.0 - textureLod(uCloudNoise, q * 5.0 + 0.71, lod + 2.3).r) * 0.2;
             return clamp(d, 0.0, 1.0);
         }
@@ -85,57 +87,115 @@ public sealed class SkyRenderer : IDisposable
             return (1.0 - smoothstep(1.0 - w, 1.0 + w, e)) * step(0.5, dot(d, center));
         }
 
-        // Blocky 16x16 moon, in the style of the block textures: grey-blue with craters.
-        vec3 moonSurface(vec2 q)
+        // Craters on the moon at one scale: a few random ones per cell of a grid over the disk,
+        // each a darker bowl shaded from the light side with a bright rim. Returns a shade factor.
+        float moonCraters(vec2 uv, vec2 light, float density)
         {
-            vec2 p = floor((q * 0.5 + 0.5) * 16.0) + 0.5;
-            float shade = 0.94 + 0.06 * hash13(vec3(p, 7.0));
-            if (hash13(vec3(floor(p / 5.0), 3.0)) > 0.6) shade *= 0.93; // darker "seas"
-
-            const vec3 craters[5] = vec3[5](
-                vec3(4.5, 5.0, 2.6), vec3(10.5, 10.0, 3.2), vec3(11.5, 3.5, 1.6),
-                vec3(4.0, 12.0, 1.9), vec3(8.0, 7.5, 1.2));
-            for (int i = 0; i < 5; i++)
+            float shade = 1.0;
+            vec2 cell = floor(uv);
+            for (int y = -1; y <= 1; y++)
+            for (int x = -1; x <= 1; x++)
             {
-                float r = length(p - craters[i].xy) / craters[i].z;
-                if (r < 1.0) shade *= r > 0.7 ? 0.92 : 0.84;
+                vec2 id = cell + vec2(x, y);
+                float h = hash13(vec3(id, 21.0));
+                if (h > density) continue;
+                vec2 center = id + vec2(hash13(vec3(id, 5.0)), hash13(vec3(id, 8.0)));
+                float radius = 0.18 + 0.3 * hash13(vec3(id, 13.0));
+                vec2 off = (uv - center) / radius;
+                float r = length(off);
+                if (r > 1.4) continue;
+                // Inside the bowl the wall facing the light is lit, the other in shadow.
+                float facing = dot(off, light);
+                float bowl = smoothstep(1.0, 0.75, r);
+                shade *= mix(1.0, 0.82 + 0.25 * facing, bowl);
+                shade *= 1.0 + 0.25 * exp(-(r - 1.0) * (r - 1.0) * 40.0) * max(-facing, 0.3); // raised rim
             }
-            return vec3(0.55, 0.6, 0.72) * shade;
+            return shade;
         }
 
-        // The galaxy: a huge spiral seen face-on, like a swirling planet. Logarithmic arms wind
-        // slowly around a bright core, sprinkled with star dust, inside a glowing spherical rim,
-        // with fainter spiral wisps trailing outside it.
+        // The moon: a softly lit sphere of pale lilac silver with darker violet seas, smooth noise
+        // grain and craters at two scales, lit from one side (a gibbous phase with a soft
+        // terminator), the dark side faintly glowing blue so the disk stays whole.
+        vec3 moonSurface(vec2 q)
+        {
+            float rr = min(dot(q, q), 1.0);
+            vec3 n = vec3(q, sqrt(1.0 - rr));
+            vec3 light = normalize(vec3(-0.55, 0.3, 0.78));
+            float seas = smoothstep(0.42, 0.66, textureLod(uCloudNoise, n * 0.35 + vec3(0.3, 0.1, 0.7), 0.0).r);
+            float grain = texture(uCloudNoise, n * 1.6 + vec3(0.2)).r * 0.6 + texture(uCloudNoise, n * 4.0 + vec3(0.5)).r * 0.4;
+            vec3 albedo = mix(vec3(0.84, 0.85, 1.0), vec3(0.40, 0.36, 0.62), seas * 0.85) * (0.75 + 0.4 * grain);
+            vec2 flatLight = normalize(light.xy);
+            albedo *= moonCraters(q * 3.2 + 7.0, flatLight, 0.3) * moonCraters(q * 7.0 + 3.0, flatLight, 0.16); // few big, some small
+            float lit = smoothstep(-0.08, 0.3, dot(n, light));
+            float limb = mix(0.7, 1.0, n.z);
+            // Kept well below white (tone map and bloom would wash the craters and seas out).
+            return albedo * (lit * 0.55 + vec3(0.05, 0.06, 0.13)) * limb;
+        }
+
+        // The moon's glow: a bright corona hugging the disk, a wide soft halo, and a faint ring
+        // of ice light, reddish inside and bluish outside, three moon widths out.
+        vec3 moonHalo(vec3 d)
+        {
+            float a = acos(clamp(dot(d, uMoonDir), -1.0, 1.0));
+            float edge = max(a - 0.139, 0.0); // the disk's angular radius
+            vec3 c = vec3(0.62, 0.66, 1.0) * (exp(-edge * 28.0) * 0.3 + exp(-edge * 7.0) * 0.2);
+            float ring = exp(-pow((a - 0.42) / 0.028, 2.0)) * 0.07;
+            c += mix(vec3(1.0, 0.6, 0.8), vec3(0.5, 0.75, 1.0), smoothstep(0.39, 0.45, a)) * ring;
+            return c;
+        }
+
+        // The galaxy: a huge spiral seen face-on, like a swirling planet. Five logarithmic arms,
+        // wavy and broken into clumps by noise, spiral out of a blazing core and its bulge,
+        // with dark lanes of dust between them, cyan clouds among the pink and violet, star dust,
+        // a soft glowing spherical rim, and fainter spiral wisps trailing outside it. Everything
+        // is blurred (coarse noise mips, broad arms, wide falloffs): dramatic, but never crisp.
         vec3 galaxy(vec3 d)
         {
             // Measured by angle from its centre, so it can span most of the sky: the rim sits
             // 68 degrees out, wider than the view, so it never fits on screen whole.
             float facing = clamp(dot(d, uGalaxyDir), -1.0, 1.0);
             float r = acos(facing) / 1.19;
-            if (r > 1.7) return vec3(0.0);
+            if (r > 1.8) return vec3(0.0);
             vec3 t1 = normalize(cross(uGalaxyDir, vec3(0.0, 1.0, 0.0)));
             vec3 t2 = cross(t1, uGalaxyDir);
             vec2 flat2 = vec2(dot(d, t1), dot(d, t2));
             vec2 q = flat2 / max(length(flat2), 1e-5) * r;
             float angle = atan(q.y, q.x);
-            float swirl = angle - log(r + 0.03) * 2.8 + uTime * 0.02;
-            // Noise twisted along the arms breaks them into clumps and streaks, like brush strokes.
-            // (Sampled through cos/sin of the swirl, so there is no seam where the polar angle wraps.)
-            // Blurred (a coarse mip) and with broad arms, so the galaxy reads as soft glowing haze.
-            float streaks = textureLod(uCloudNoise, vec3(cos(swirl) * r * 0.9, sin(swirl) * r * 0.9, 0.37 + r * 0.4), 2.0).r;
-            float arms = pow(max(0.5 + 0.5 * cos(swirl * 2.0), 0.0), 1.4) * (0.55 + 0.8 * streaks);
-            float inside = smoothstep(1.15, 0.7, r);
+            float swirl = angle - log(r + 0.12) * 3.0 + uTime * 0.02; // wound looser near the core
+            // Noise twisted along the arms breaks them into clumps and streaks and bends them.
+            // (Sampled through cos/sin of the swirl, so there is no seam where the polar angle wraps;
+            // the arm count is a whole number for the same reason.)
+            float streaks = textureLod(uCloudNoise, vec3(cos(swirl) * r * 0.9, sin(swirl) * r * 0.9, 0.37 + r * 0.4), 3.0).r;
+            float clouds = textureLod(uCloudNoise, vec3(cos(swirl) * r * 0.6 + 0.5, sin(swirl) * r * 0.6, 0.71 + r * 0.3), 3.5).r;
+            // Broad noise over the sky itself (not along the spiral) bends the arms unevenly, so the
+            // spiral loses its symmetry.
+            float bend = textureLod(uCloudNoise, vec3(q * 0.55 + 0.3, 0.13), 2.5).r;
+            float wavy = swirl + (streaks - 0.5) * 2.6 + (bend - 0.5) * 3.0;
+            // Each arm has its own strength: the index changes in the dark lanes, where it cannot be
+            // seen, and wraps with the angle (five arms, five indices).
+            float armIndex = mod(floor((wavy * 5.0 + 3.14159) / 6.28318), 5.0);
+            float armStrength = 0.45 + 0.8 * hash13(vec3(armIndex, 11.0, 5.0));
+            // The arms are broken into bright clumps, and emerge from the bulge rather than reaching the centre.
+            float clump = smoothstep(0.25, 0.75, streaks);
+            float arms = pow(max(0.5 + 0.5 * cos(wavy * 5.0), 0.0), 0.9) * (0.1 + 1.35 * clump) * armStrength * smoothstep(0.08, 0.35, r);
+            // Fainter spurs branching between the main arms.
+            float spurs = pow(max(0.5 + 0.5 * cos(wavy * 5.0 + 2.6 + clouds * 2.0), 0.0), 2.0) * 0.35 * clouds;
+            float inside = smoothstep(1.2, 0.6, r);
 
-            vec3 armColor = mix(vec3(0.25, 0.15, 0.85), vec3(0.95, 0.5, 1.0), arms * exp(-r * 1.2));
-            vec3 c = armColor * (0.3 + arms * 1.2) * exp(-r * 1.6) * inside;
-            c += vec3(1.0, 0.8, 1.0) * (exp(-r * 14.0) * 0.9 + exp(-r * 4.0) * 0.25); // core
-            c += vec3(0.55, 0.4, 1.0) * exp(-((r - 1.0) * 6.0) * ((r - 1.0) * 6.0)) * 0.9;         // rim
+            vec3 armColor = mix(vec3(0.22, 0.12, 0.8), vec3(1.0, 0.45, 0.95), arms * exp(-r * 1.0));
+            armColor = mix(armColor, vec3(0.3, 0.8, 1.0), smoothstep(0.45, 0.8, clouds) * smoothstep(0.2, 0.7, r) * 0.6);
+            float glow = arms * 1.7 + spurs;
+            // Dust lanes: the gaps between the arms fall dark, softly.
+            float lanes = mix(0.2, 1.0, smoothstep(0.0, 0.45, arms + spurs + smoothstep(0.3, 0.05, r)));
+            vec3 c = armColor * (0.25 + glow) * exp(-r * 1.5) * inside * lanes;
+            c += vec3(1.0, 0.82, 1.0) * (exp(-r * 12.0) * 0.55 + exp(-r * r * 18.0) * 0.3 + exp(-r * 3.5) * 0.12); // core, bulge, halo
+            c += vec3(0.55, 0.4, 1.0) * exp(-((r - 1.0) * 3.5) * ((r - 1.0) * 3.5)) * 0.7; // soft rim
             vec2 dust = floor(q * 420.0);
-            float sparkle = step(0.965, hash13(vec3(dust, 3.0))) * (0.5 + 0.5 * sin(uTime * 3.0 + hash13(vec3(dust, 9.0)) * 40.0));
-            c += vec3(1.0, 0.9, 1.0) * sparkle * (0.3 + arms) * inside * 0.8;
+            float sparkle = step(0.97, hash13(vec3(dust, 3.0))) * (0.5 + 0.5 * sin(uTime * 3.0 + hash13(vec3(dust, 9.0)) * 40.0));
+            c += vec3(1.0, 0.9, 1.0) * sparkle * (0.2 + arms) * inside * 0.5;
             // Outer wisps continue the arms beyond the rim, fading out.
-            float outer = smoothstep(1.0, 1.2, r) * exp(-(r - 1.0) * 1.8);
-            c += vec3(0.4, 0.3, 1.0) * pow(max(0.5 + 0.5 * cos(swirl * 2.0 + 0.6), 0.0), 3.0) * outer * 0.6;
+            float outer = smoothstep(0.9, 1.25, r) * exp(-(r - 1.0) * 1.6);
+            c += vec3(0.4, 0.3, 1.0) * pow(max(0.5 + 0.5 * cos(wavy * 5.0 + 0.6), 0.0), 1.5) * (0.5 + streaks) * outer * 0.6;
             return c * uGalaxyGlow;
         }
 
@@ -148,24 +208,48 @@ public sealed class SkyRenderer : IDisposable
             return mix(vec3(0.35, 0.1, 0.6), vec3(0.1, 0.25, 0.7), b) * veil * 0.55;
         }
 
-        // A shooting star every few seconds: a short bright streak with a fading tail.
-        vec3 shootingStar(vec3 d)
+        uniform float uManualStar;   // game time a shooting star was launched by hand (debug), or far in the past
+        uniform float uManualSeed;
+        uniform vec3 uManualStart;   // where it starts: ahead of the camera, up in the sky
+
+        // One shooting star, `age` seconds old: it glides slowly along the great circle from `start`
+        // around `axis` (40-90 degrees in 3-4.5 s) with a long tail, brightening quickly and fading
+        // out slowly over the second half of its flight.
+        vec3 streak(vec3 d, float seed, float age, vec3 start, vec3 axis)
         {
-            const float period = 5.0;
+            float duration = 3.0 + 1.5 * hash13(vec3(seed, 3.0, 8.0));
+            float progress = age / duration;
+            if (progress < 0.0 || progress > 1.0) return vec3(0.0);
+            vec3 velocity = normalize(cross(start, axis));
+            vec3 normal = cross(start, velocity);
+            float sweep = (0.7 + 0.9 * hash13(vec3(seed, 5.0, 2.0))) * progress;
+            // Measured along the circle itself (a straight tangent would drift off the path).
+            float angle = atan(dot(d, velocity), dot(d, start));
+            float behind = sweep - angle;
+            float across = dot(d, normal);
+            float tailLength = 0.3 + 0.25 * hash13(vec3(seed, 1.0, 9.0));
+            float tail = pow(smoothstep(tailLength, 0.0, behind), 1.5) * step(-0.002, behind);
+            float life = smoothstep(0.0, 0.08, progress) * (1.0 - smoothstep(0.45, 1.0, progress));
+            return vec3(1.0, 0.9, 1.0) * tail * exp(-across * across * 3e5) * life * 4.0;
+        }
+
+        // Now and then (one slot in two, every 9 s) a shooting star crosses a good part of the sky,
+        // plus any launched by hand (kept visible by day too).
+        vec3 shootingStar(vec3 d, float visibility)
+        {
+            const float period = 9.0;
             float slot = floor(uTime / period);
-            float h = hash13(vec3(slot, 7.0, 1.0));
-            if (h < 0.35) return vec3(0.0);
-            float progress = fract(uTime / period) * period / 0.9; // lasts 0.9 s
-            if (progress > 1.0) return vec3(0.0);
-            float a = hash13(vec3(slot, 2.0, 5.0)) * 6.283;
-            vec3 start = normalize(vec3(cos(a), 0.45 + 0.4 * hash13(vec3(slot, 4.0, 4.0)), sin(a)));
-            vec3 velocity = normalize(cross(start, vec3(0.3, 1.0, 0.2)));
-            vec3 head = normalize(start + velocity * progress * 0.45);
-            vec3 q = d - head * dot(d, head);
-            float along = dot(q, velocity);
-            float across = length(q - velocity * along);
-            float tail = smoothstep(-0.12, 0.0, along) * step(along, 0.002);
-            return vec3(1.0, 0.9, 1.0) * tail * exp(-across * across * 4e5) * (1.0 - progress) * 4.0;
+            vec3 c = vec3(0.0);
+            if (hash13(vec3(slot, 7.0, 1.0)) > 0.5)
+            {
+                float a = hash13(vec3(slot, 2.0, 5.0)) * 6.283;
+                vec3 start = normalize(vec3(cos(a), 0.35 + 0.5 * hash13(vec3(slot, 4.0, 4.0)), sin(a)));
+                vec3 axis = normalize(vec3(hash13(vec3(slot, 6.0, 1.0)) - 0.5, 1.0, hash13(vec3(slot, 9.0, 3.0)) - 0.5));
+                c += streak(d, slot, uTime - slot * period, start, axis) * visibility;
+            }
+            // Around the vertical: it sweeps sideways across the view (see LaunchShootingStar).
+            c += streak(d, uManualSeed, uTime - uManualStar, uManualStart, vec3(0.0, 1.0, 0.0)) * max(visibility, 0.6);
+            return c;
         }
 
         // bodies = false leaves out sun, moon and stars (used for fog and sky light).
@@ -204,9 +288,14 @@ public sealed class SkyRenderer : IDisposable
             // Stars, nebulae and the galaxy turn slowly with the sky.
             float ca = cos(uSkyAngle * 0.25), sa = sin(uSkyAngle * 0.25); // uSkyAngle is continuous
             vec3 s = vec3(ca * d.x + sa * d.z, d.y, -sa * d.x + ca * d.z);
-            c += nebula(s) * starVisibility * aboveHorizon;
-            c += galaxy(d) * aboveHorizon;
-            c += shootingStar(d) * starVisibility * aboveHorizon;
+            // The moon is solid: nothing beyond it (nebulae, galaxy, stars) shows through its disk.
+            vec2 mq = bodyCoords(d, uMoonDir, 0.14, -0.35);
+            float moonAlpha = smoothstep(-0.02, 0.3, d.y) * uNight;
+            float moon = diskMask(mq, d, uMoonDir, 0.16) * moonAlpha; // a soft edge
+            float behind = aboveHorizon * (1.0 - moon);
+            c += nebula(s) * starVisibility * behind;
+            c += galaxy(d) * behind;
+            c += shootingStar(d, starVisibility) * behind;
             if (starVisibility > 0.0)
             {
                 vec3 p = s * 220.0;
@@ -223,16 +312,21 @@ public sealed class SkyRenderer : IDisposable
                                + 0.2 * sin(uTime * 9.3 + phase * 7.3);
                     float twinkle = max(1.0 + wave * mix(0.7, 0.35, up), 0.0);
                     float fade = smoothstep(0.0, 0.25, d.y); // extinction near the horizon
-                    c += vec3(1.8, 1.8, 2.1) * smoothstep(0.45, 0.0, r) * magnitude * twinkle * fade * starVisibility;
+                    c += vec3(1.8, 1.8, 2.1) * smoothstep(0.45, 0.0, r) * magnitude * twinkle * fade * starVisibility * (1.0 - moon);
                 }
             }
 
-            // Slightly tilted squares: a small sun and a big, faint and hazy moon.
+            // A small square sun, and the round moon with its halo.
             vec2 sq = bodyCoords(d, uSunDir, 0.045, 0.3);
             c += vec3(5.0, 4.4, 3.6) * diskMask(sq, d, uSunDir, 0.0) * aboveHorizon * (1.0 - uNight);
-            vec2 mq = bodyCoords(d, uMoonDir, 0.14, -0.35);
-            float moonAlpha = 0.95 * smoothstep(-0.02, 0.3, d.y) * uNight;
-            c = mix(c, c * 0.5 + moonSurface(mq), diskMask(mq, d, uMoonDir, 0.1) * moonAlpha);
+            if (moonAlpha > 0.0) c += moonHalo(d) * moonAlpha * (1.0 - moon);
+            if (moon > 0.0)
+            {
+                // A faint veil of the night air over the moon: lower contrast, tinged with the sky.
+                vec3 surface = moonSurface(mq);
+                vec3 veiled = mix(surface, c * 0.8 + vec3(0.16, 0.15, 0.28), 0.3);
+                c = mix(c, c * 0.25 + veiled, moon);
+            }
             return c;
         }
         """;
@@ -287,10 +381,12 @@ public sealed class SkyRenderer : IDisposable
 
             bool moonlit = uNight > 0.5;
             vec3 lightDir = moonlit ? uMoonDir : uSunDir;
-            vec3 lightColor = moonlit ? vec3(0.22, 0.26, 0.45) * uNight : uSunGlow * 1.7;
-            vec3 ambient = mix(uHorizon, uZenith, 0.55) * 0.75 + uSunHorizon * uHaze * 0.25;
+            // Bright moonlight: at night the clouds are dark masses with silver-lit edges.
+            vec3 lightColor = moonlit ? vec3(0.5, 0.56, 0.95) * uNight * 1.5 : uSunGlow * 2.1;
+            vec3 ambient = (mix(uHorizon, uZenith, 0.55) * 0.75 + uSunHorizon * uHaze * 0.35) * mix(1.0, 0.55, uNight);
+
             float cosAngle = dot(rd, lightDir);
-            float phase = mix(henyeyGreenstein(cosAngle, 0.7), henyeyGreenstein(cosAngle, -0.2), 0.4) * 4.0;
+            float phase = mix(henyeyGreenstein(cosAngle, 0.7), henyeyGreenstein(cosAngle, -0.2), 0.4) * 5.0;
 
             float transmittance = 1.0;
             vec3 light = vec3(0.0);
@@ -308,10 +404,12 @@ public sealed class SkyRenderer : IDisposable
                         if (j > uCloudLightSteps) break;
                         depth += cloudDensity(p + lightDir * (float(j) * lightStep), false, lod + 1.0) * lightStep;
                     }
-                    float toLight = exp(-depth * 0.03);
+                    float toLight = exp(-depth * 0.04); // deep, dark cores; bright sunlit rims
                     float powder = 1.0 - exp(-density * 5.0);
                     float height = (p.y - CloudBottom) / (CloudTop - CloudBottom);
-                    vec3 scattered = lightColor * toLight * phase * powder + ambient * (0.45 + 0.55 * height);
+                    vec3 scattered = lightColor * toLight * phase * powder + ambient * (0.28 + 0.72 * height); // dark bellies
+                    // The galaxy's glow tinges the cloud tops at night.
+                    scattered += vec3(0.3, 0.18, 0.6) * uGalaxyGlow * uNight * 0.35 * height;
                     float stepTransmittance = exp(-density * 0.025 * stepLength);
                     light += transmittance * scattered * (1.0 - stepTransmittance);
                     transmittance *= stepTransmittance;
@@ -371,6 +469,24 @@ public sealed class SkyRenderer : IDisposable
         shader.Set("uGalaxyDir", atmosphere.GalaxyDirection);
         shader.Set("uGalaxyGlow", atmosphere.GalaxyGlow);
         shader.Set("uTime", time);
+        shader.Set("uManualStar", _manualStar.Time);
+        shader.Set("uManualSeed", _manualStar.Seed);
+        shader.Set("uManualStart", _manualStar.Start);
+    }
+
+    private static (float Time, float Seed, Vector3 Start) _manualStar = (-1e4f, 0f, Vector3.UnitY);
+
+    /// <summary>
+    /// Launches a shooting star now (debug), starting up in the sky off to one side of
+    /// <paramref name="forward"/> and sweeping around the vertical, so it crosses the view.
+    /// </summary>
+    public static void LaunchShootingStar(float time, Vector3 forward)
+    {
+        var flat = new Vector2(forward.X, forward.Z);
+        flat = flat.LengthSquared() > 1e-6f ? Vector2.Normalize(flat) : Vector2.UnitX;
+        float a = MathF.Atan2(flat.Y, flat.X) - 0.5f;
+        var start = Vector3.Normalize(new Vector3(MathF.Cos(a), 0.6f, MathF.Sin(a)));
+        _manualStar = (time, _manualStar.Seed + 1f, start);
     }
 
     /// <summary>Low quality (integrated GPUs): fewer cloud samples.</summary>

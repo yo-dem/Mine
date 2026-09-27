@@ -9,7 +9,7 @@ tra un livello e l'altro (un gradino si sale camminando, fino a un metro saltand
 proceduralmente: colline dolci e dune a strati di mezzo blocco (i salti più alti sono rarissimi)
 e guglie di roccia surreali, visibili fino a oltre un chilometro, in una palette cosmica viola, indaco
 e turchese. Il ciclo giorno/notte (20 minuti) respira tra lunghi crepuscoli dorati, con il sole basso sull'orizzonte, un mezzogiorno breve e luminoso in cui il sole sale alto nel cielo,
-e una notte cosmica dominata da un'enorme galassia a spirale, una grande luna pixellosa, nebulose, stelle fittissime e stelle cadenti. La sabbia e i prati scintillano di granelli luminosi.
+e una notte cosmica dominata da un'enorme galassia a spirale dai cinque bracci sfumati, irregolare, con scie di polvere scura, una grande luna argento-lilla con crateri, mari viola e un alone luminoso, nuvole cupe dai bordi argentati, nebulose, stelle fittissime e, ogni tanto, stelle cadenti che solcano lentamente gran parte del cielo con una lunga scia. La sabbia e i prati scintillano di granelli luminosi.
 
 Nelle zone basse ci sono mari e laghi che riflettono il cielo, galassia compresa, con spiagge di sabbia viola:
 nell'acqua bassa pulsano venature di luce ciano bioluminescente, la riva è segnata da una linea luminosa
@@ -59,6 +59,7 @@ portatili con due schede usa quella dedicata; la prima volta si riavvia da solo 
 | Click sinistro | Raccogli il cristallo che guardi |
 | Click destro | Piazza un cristallo sul terreno |
 | Q | Qualità alta / bassa (bassa: automatica sulle schede integrate) |
+| 1 | Fai partire una stella cadente davanti a te (debug) |
 | Esc | Libera il mouse (di nuovo Esc: esci) |
 
 ## Struttura

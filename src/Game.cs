@@ -373,6 +373,9 @@ public sealed class Game : IDisposable
             case Key.Q:
                 SetLowQuality(!_sky.LowQuality);
                 break;
+            case Key.Number1: // debug: a shooting star across the view
+                SkyRenderer.LaunchShootingStar((float)_time, _player.LookDirection);
+                break;
             case Key.F:
                 _player.Flying = !_player.Flying;
                 _player.Velocity = Vector3.Zero;
