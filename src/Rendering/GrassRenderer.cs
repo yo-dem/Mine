@@ -157,6 +157,7 @@ public sealed unsafe class GrassRenderer : IDisposable
             var center = new Vector3(x0 + lx, y - 0.02f, z0 + lz);
             const float water = TerrainField.WaterLevel; // shores and shallows hold reed clumps instead (TreeField)
             if (normalY < 0.6f || y < water + 1f) continue; // certainly rock, sand or water: skip early
+            if (_terrain.InPond(center.X, center.Z, 0.5f)) continue; // under a waterfall's pond
             float grass = GroundMaterials.GrassWeight(center, normalY);
             if (grass < 0.35f) continue;
             var color = GroundMaterials.GrassColor(center.X, center.Z);

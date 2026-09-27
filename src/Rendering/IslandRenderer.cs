@@ -100,7 +100,10 @@ public sealed unsafe class IslandRenderer : IDisposable
             for (int k = 1; k <= UnderRings; k++)
             {
                 float t = k / (float)UnderRings;
-                float wobble = 1f + 0.15f * MathF.Sin(4 * angle + t * 7 + island.Seed) + 0.08f * MathF.Sin(11 * angle - t * 5);
+                // The wobble grows in below the lip, so the rock never juts out past the edge of
+                // the top (where the waterfalls pour over).
+                float wobble = 1f + (0.15f * MathF.Sin(4 * angle + t * 7 + island.Seed) + 0.08f * MathF.Sin(11 * angle - t * 5))
+                                    * MathF.Min(t / 0.3f, 1f);
                 float radius = edge * MathF.Pow(1 - t, 0.75f) * wobble;
                 float y = c.Y - 0.6f - island.Depth * MathF.Pow(t, 1.15f) + 1.5f * MathF.Sin(angle * 3 + t * 5 + island.Seed) * t * (1 - t);
                 positions[TopRings + k, s] = new Vector3(c.X, y, c.Z) + dir * radius;

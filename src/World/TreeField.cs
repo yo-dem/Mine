@@ -402,6 +402,8 @@ public sealed class TreeField
         }
 
         AddDecorations(trees, cx, cz, random);
+        // Nothing grows in the ponds under the islands' waterfalls.
+        trees.RemoveAll(t => _terrain.InPond(t.Position.X, t.Position.Z, 1.5f));
         return trees.ToArray();
     }
 

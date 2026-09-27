@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Numerics;
 
 namespace Mine.World;
@@ -33,6 +34,10 @@ public sealed class TerrainField
     private const float LakeBank = 130f;
     private const float LakeMinDepth = 2f, LakeMaxDepth = 11f;
 
+    // Ponds under the islands' waterfalls (see Ponds): a basin PondRadius-ish wide, ringed by a
+    // bank at least half a layer above the water, then a slope back down to the land.
+    private const float PondBank = 2f, PondSlope = 4f;
+
     private const float SpireCell = 180f;      // at most one spire per cell of this size
     private const float SpireChance = 0.22f;
 
@@ -43,7 +48,12 @@ public sealed class TerrainField
     private readonly PerlinNoise _detail;
     private readonly PerlinNoise _lakes;
     private readonly int _seed;
+    private readonly ConcurrentDictionary<(int X, int Z), Pond[]> _ponds = new();
 
+    /// <summary>A pond at the foot of a waterfall: centre, radius and water surface height.</summary>
+    public readonly record struct Pond(float X, float Z, float Radius, float Surface);
+
+    /// <summary>The seed must be the one the islands use, since the ponds lie under their waterfalls.</summary>
     public TerrainField(int seed)
     {
         _seed = seed;
@@ -79,7 +89,63 @@ public sealed class TerrainField
     /// <summary>A height snapped to the nearest layer.</summary>
     public static float Layer(float height) => MathF.Round(height / LayerHeight) * LayerHeight;
 
-    public float SmoothHeight(float x, float z)
+    public float SmoothHeight(float x, float z) => Ponds(x, z, BaseHeight(x, z));
+
+    /// <summary>The pond whose basin, bank or slope contains (x, z), if any.</summary>
+    public bool PondAt(float x, float z, out Pond pond)
+    {
+        foreach (var p in PondsIn((int)MathF.Floor(x / IslandField.CellSize), (int)MathF.Floor(z / IslandField.CellSize)))
+        {
+            float dx = x - p.X, dz = z - p.Z;
+            if (dx * dx + dz * dz < (p.Radius + PondBank + PondSlope) * (p.Radius + PondBank + PondSlope)) { pond = p; return true; }
+        }
+        pond = default;
+        return false;
+    }
+
+    /// <summary>Whether (x, z) is in a pond's water, or within <paramref name="margin"/> metres of it.</summary>
+    public bool InPond(float x, float z, float margin = 0f)
+    {
+        if (!PondAt(x, z, out var p)) return false;
+        float dx = x - p.X, dz = z - p.Z;
+        return dx * dx + dz * dz < (p.Radius + margin) * (p.Radius + margin);
+    }
+
+    /// <summary>
+    /// The ponds of an island cell, where its waterfalls land on dry land (not into the sea or a
+    /// lake). The water sits a little under the land's layer there, so the basin is dug in.
+    /// </summary>
+    private Pond[] PondsIn(int cx, int cz) => _ponds.GetOrAdd((cx, cz), key =>
+    {
+        if (IslandField.Site(_seed, key.X, key.Z) is not { } site) return [];
+        var ponds = new List<Pond>();
+        for (int i = 0; i < site.FallAngles.Length; i++)
+        {
+            var foot = IslandField.FallFoot(site, i);
+            float ground = BaseHeight(foot.X, foot.Y);
+            if (ground < WaterLevel + 1.5f) continue;
+            ponds.Add(new Pond(foot.X, foot.Y, 4f + site.FallWidths[i], Layer(ground) - 0.2f));
+        }
+        return ponds.ToArray();
+    });
+
+    /// <summary>Digs the ponds: a rounded basin under the water, a bank round it, a slope back to the land.</summary>
+    private float Ponds(float x, float z, float h)
+    {
+        if (!PondAt(x, z, out var p)) return h;
+        float d = MathF.Sqrt((x - p.X) * (x - p.X) + (z - p.Z) * (z - p.Z));
+        if (d < p.Radius)
+        {
+            float f = d / p.Radius;
+            return MathF.Min(h, p.Surface - 0.5f - 1.2f * (1f - f * f));
+        }
+        float bank = p.Surface + 0.45f;
+        if (d < p.Radius + PondBank) return MathF.Max(h, bank);
+        float t = Smooth(p.Radius + PondBank, p.Radius + PondBank + PondSlope, d);
+        return MathF.Max(h, bank + (h - bank) * t);
+    }
+
+    private float BaseHeight(float x, float z)
     {
         // Large, slow swells of the land.
         float continent = _continent.Fractal(x * 0.0006f, z * 0.0006f, 3);

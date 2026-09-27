@@ -39,6 +39,7 @@ public sealed class Game : IDisposable
     private TerrainRenderer _terrain = null!;
     private IslandField _islands = null!;
     private IslandRenderer _islandRenderer = null!;
+    private WaterfallRenderer _waterfalls = null!;
     private Ground _ground = null!;
     private Creatures _creatures = null!;
     private CreatureRenderer _creatureRenderer = null!;
@@ -120,6 +121,7 @@ public sealed class Game : IDisposable
         _treeField = new TreeField(_terrainField, seed: 1337);
         _islands = new IslandField(_terrainField, seed: 1337);
         _islandRenderer = new IslandRenderer(_gl);
+        _waterfalls = new WaterfallRenderer(_gl);
         _ground = new Ground(_terrainField, _islands);
         _creatures = new Creatures(_terrainField);
         _creatureRenderer = new CreatureRenderer(_gl);
@@ -205,6 +207,7 @@ public sealed class Game : IDisposable
         _islands.Update(_player.Position);
         if (_islands.Version != islandVersion) _treeField.SetFixedTrees("islands", _islands.Trees);
         _islandRenderer.Update(_islands);
+        _waterfalls.Update(_islands);
         _treeField.Update(_player.Position);
         _treeField.ResolveCollision(ref _player.Position, 0.35f);
         _terrain.Update(_player.Eye);
@@ -232,7 +235,7 @@ public sealed class Game : IDisposable
         _profiler.Section("ombre");
         var atmosphere = _dayCycle.Sample();
         float time = (float)_time;
-        _lightCount = _objects.CollectLights(eye, time, _lights, _treeField.GlowingLights(eye, 80f).Concat(_treeField.FlowerLights(eye)));
+        _lightCount = _objects.CollectLights(eye, time, _lights, _treeField.GlowingLights(eye, 80f).Concat(_treeField.FlowerLights(eye)).Concat(_waterfalls.Lights(eye)));
         var shadowCenter = _player.Position;
         if (On("shadow")) _shadowMap.Render(shadowCenter, atmosphere.LightDirection, time, () =>
         {
@@ -324,6 +327,10 @@ public sealed class Game : IDisposable
         _waterShader.Set("uWaterLevel", TerrainField.WaterLevel);
         _waterShader.Set("uWaterExtent", WaterRenderer.Extent);
         if (On("water")) _water.Draw();
+
+        // The islands' waterfalls and their ponds: translucent and glowing, over everything opaque.
+        _profiler.Section("cascate");
+        if (On("falls")) _waterfalls.Draw(view * projection, eye, atmosphere.Night, time);
 
         _profiler.Section("pulviscolo+pioggia");
         float heightAboveGround = eye.Y - _ground.Height(eye.X, eye.Z, eye.Y);
@@ -483,6 +490,7 @@ public sealed class Game : IDisposable
     {
         _terrain?.Dispose();
         _islandRenderer?.Dispose();
+        _waterfalls?.Dispose();
         _cloudNoise?.Dispose();
         _motes?.Dispose();
         _rain?.Dispose();

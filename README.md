@@ -29,7 +29,9 @@ ad ombrello, e alcuni con sfere luminose appese che si accendono di notte.
 Il mondo è diviso in biomi, ognuno con i suoi alberi, i suoi fiori e il suo colore d'erba (le chiazze di colore continuano a mescolarsi, ma tendono al tono del bioma), che sfumano l'uno nell'altro ai confini: boschi indaco di pini, cipressi e giganti con iris e lupini, boschi rosa di alberi fioriti con papaveri e tulipani, boschi turchesi di salici e sfere azzurre con gigli e fiori a stella, e deserti di sabbia calda color pesca, con dune alte, alberi secchi e contorti, cespugli spogli e grappoli di cristalli che spuntano dalla sabbia. Tra le colline si aprono tanti laghi, spesso profondi.
 
 Nel cielo galleggiano isole fluttuanti con alberi in cima e cristalli luminosi appesi sotto: in volo
-ci puoi atterrare e camminarci sopra. Le nuvole sono volumetriche, si colorano all'alba e al tramonto
+ci puoi atterrare e camminarci sopra. Da circa metà delle isole un ruscello di acqua luminescente scorre
+fino al bordo e precipita in una o due cascate che, a terra, riempiono un laghetto luminoso circondato
+da nebbiolina, con cerchi di luce che si allargano dal punto in cui cade l'acqua. Le nuvole sono volumetriche, si colorano all'alba e al tramonto
 e proiettano ombre in movimento sul paesaggio. Il bloom fa brillare sole, luci e cristalli,
 e l'aria è piena di particelle: granelli dorati di giorno,
 spore lilla al tramonto, lucciole di notte. Col tasto 2 arriva la pioggia: il cielo si chiude in un indaco profondo, cade una pioggia fitta di fili sottilissimi e argentei, e sull'acqua si aprono cerchi luminosi.
@@ -98,6 +100,7 @@ src/
     WaterRenderer.cs      mari e laghi (lo shader è in TerrainShaders)
     CreatureRenderer.cs   modelli e animazione delle creature
     IslandRenderer.cs     modelli delle isole fluttuanti
+    WaterfallRenderer.cs  cascate luminose delle isole e i loro laghetti
     MeshBuilder.cs        costruzione di modelli (oggetti, isole)
     ShadowMap.cs          mappa delle ombre vista dal sole
     Shader.cs, Crosshair.cs

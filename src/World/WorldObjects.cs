@@ -187,7 +187,7 @@ public sealed class WorldObjects
     {
         long id = ((long)(cx & 0xFFFFF) << 28) | ((long)(cz & 0xFFFFF) << 8) | (uint)index;
         id += 1; // keep generated ids positive and non-zero
-        if (_taken.Contains(id) || _terrain.Normal(x, z).Y < 0.8f) return;
+        if (_taken.Contains(id) || _terrain.Normal(x, z).Y < 0.8f || _terrain.InPond(x, z, 1f)) return;
         list.Add(new WorldObject(id, kind, _terrain.TileCenter(x, z), yaw));
     }
 
