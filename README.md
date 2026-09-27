@@ -9,10 +9,11 @@ tra un livello e l'altro (un gradino si sale camminando, fino a un metro saltand
 proceduralmente: colline dolci e dune a strati di mezzo blocco (i salti più alti sono rarissimi)
 e guglie di roccia surreali, visibili fino a oltre un chilometro, in una palette cosmica viola, indaco
 e turchese. Il ciclo giorno/notte (20 minuti) respira tra lunghi crepuscoli dorati, con il sole basso sull'orizzonte, un mezzogiorno breve e luminoso in cui il sole sale alto nel cielo,
-e una notte cosmica dominata da un'enorme galassia a spirale dai cinque bracci sfumati, irregolare, con scie di polvere scura, una grande luna argento-lilla con crateri, mari viola e un alone luminoso, nuvole cupe dai bordi argentati, nebulose, stelle fittissime e, ogni tanto, stelle cadenti che solcano lentamente gran parte del cielo con una lunga scia. La sabbia e i prati scintillano di granelli luminosi.
+e una notte cosmica dominata da un'enorme galassia a spirale dai cinque bracci sfumati, irregolare, con scie di polvere scura, un pianeta gigante a falce, scuro e screpolato di venature luminose, con il bordo acceso di lilla e magenta e due piccole lune accanto, aurore a cortina ciano, blu e magenta che salgono dall'orizzonte, nuvole cupe dai bordi magenta, nebulose, stelle fittissime e, ogni tanto, stelle cadenti che solcano lentamente gran parte del cielo con una lunga scia. La sabbia e i prati scintillano di granelli luminosi.
 
 Nelle zone basse ci sono mari e laghi che riflettono il cielo, galassia compresa, con spiagge di sabbia viola:
-nell'acqua bassa pulsano venature di luce ciano bioluminescente, la riva è segnata da una linea luminosa
+nell'acqua bassa pulsano venature di luce ciano bioluminescente, verso la riva arrivano onde che si alzano
+nell'acqua bassa e si rompono in creste di schiuma rosa e bianca luminosa, con un bagliore ciano sul fronte,
 e sulla superficie brillano scintille come stelle cadute. Vicino alla riva si cammina nell'acqua; al largo è profonda e si **nuota**: ci si muove come in volo ma lentamente, Spazio per salire, Shift per immergersi, e da fermi si torna a galla.
 Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno; nell'acqua bassa galleggiano fiori di loto luminosi e tra l'erba spuntano fiori di ogni colore: campanule luminose, margherite pastello, tulipani, lupini dalle punte che brillano, piccoli fiori a stella luminosi e, raccolti in giardini sotto i boschi fitti, fiori nati dalla luce: steli chiari che brillano verso l'alto e si ramificano in grappoli di 3–4 fiori, foglie colorate con venature di luce, petali al neon, semi di luce che fluttuano sopra la corolla e una luce colorata che tinge l'erba intorno (iris viola dalle foglie a spada, papaveri magenta su rosette di foglie, gigli ciano dai petali ripiegati); stelle luminose, campanule e gigli crescono anche sotto i boschi.
 Sulle spiagge e lungo le rive dei laghi crescono boschetti di palme scure in controluce, alte e slanciate, medie o basse e tozze, mai uguali tra loro; farfalle
@@ -96,7 +97,7 @@ src/
     GrassRenderer.cs      ciuffi d'erba attorno al giocatore (instancing, costruiti in background)
     TreeModels.cs         modelli procedurali degli alberi, 16 stili (anche secchi) e 4 livelli di dettaglio
     TreeRenderer.cs       disegno degli alberi (instancing per stile e livello di dettaglio)
-    SkyRenderer.cs        cielo, sole, luna, stelle, nuvole volumetriche
+    SkyRenderer.cs        cielo, sole, pianeta gigante e lune, aurore, stelle, nuvole volumetriche
     CloudNoise.cs         texture di rumore 3D per le nuvole
     PostProcess.cs        buffer HDR, bloom, color grading
     MoteRenderer.cs       particelle magiche: granelli, spore, lucciole
@@ -104,6 +105,7 @@ src/
     WaterRenderer.cs      mari e laghi (lo shader è in TerrainShaders)
     CreatureRenderer.cs   modelli e animazione delle creature
     IslandRenderer.cs     modelli delle isole fluttuanti
+    SeaFloorMap.cs        forma continua del fondale attorno al giocatore, per le onde
     WaterfallRenderer.cs  cascate luminose delle isole e i loro laghetti
     MeshBuilder.cs        costruzione di modelli (oggetti, isole)
     ShadowMap.cs          mappa delle ombre vista dal sole

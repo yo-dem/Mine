@@ -40,6 +40,7 @@ public sealed class Game : IDisposable
     private IslandField _islands = null!;
     private IslandRenderer _islandRenderer = null!;
     private WaterfallRenderer _waterfalls = null!;
+    private SeaFloorMap _seaFloor = null!;
     private Ground _ground = null!;
     private Creatures _creatures = null!;
     private CreatureRenderer _creatureRenderer = null!;
@@ -122,6 +123,7 @@ public sealed class Game : IDisposable
         _islands = new IslandField(_terrainField, seed: 1337);
         _islandRenderer = new IslandRenderer(_gl);
         _waterfalls = new WaterfallRenderer(_gl);
+        _seaFloor = new SeaFloorMap(_gl, _terrainField);
         _ground = new Ground(_terrainField, _islands);
         _creatures = new Creatures(_terrainField);
         _creatureRenderer = new CreatureRenderer(_gl);
@@ -252,6 +254,7 @@ public sealed class Game : IDisposable
         if (_islands.Version != islandVersion) _treeField.SetFixedTrees("islands", _islands.Trees);
         _islandRenderer.Update(_islands);
         _waterfalls.Update(_islands);
+        _seaFloor.Update(_player.Eye);
         _treeField.Update(_player.Position);
         _treeField.ResolveCollision(ref _player.Position, 0.35f);
         _terrain.Update(_player.Eye);
@@ -365,6 +368,10 @@ public sealed class Game : IDisposable
         SetWorldUniforms(_waterShader, view * projection, eye, atmosphere, time);
         _waterShader.Set("uUnderColor", 3);
         _waterShader.Set("uUnderDepth", 4);
+        _seaFloor.Bind();
+        _waterShader.Set("uSeaFloor", SeaFloorMap.Unit);
+        _waterShader.Set("uSeaFloorOrigin", float.IsNaN(_seaFloor.Origin.X) ? new Vector2(1e9f) : _seaFloor.Origin);
+        _waterShader.Set("uSeaFloorExtent", SeaFloorMap.Extent);
         _waterShader.Set("uScreenSize", _post.SceneSize);
         _waterShader.Set("uNear", NearPlane);
         _waterShader.Set("uFar", FarPlane);
@@ -542,6 +549,7 @@ public sealed class Game : IDisposable
         _terrain?.Dispose();
         _islandRenderer?.Dispose();
         _waterfalls?.Dispose();
+        _seaFloor?.Dispose();
         _cloudNoise?.Dispose();
         _motes?.Dispose();
         _rain?.Dispose();

@@ -535,6 +535,10 @@ public static class TerrainShaders
         in vec3 vWorldPos;
 
         uniform sampler2D uUnderColor; // the scene before the water was drawn
+        uniform sampler2D uSeaFloor;   // smooth land height around the camera (SeaFloorMap)
+        uniform vec2 uSeaFloorOrigin;
+        uniform float uSeaFloorExtent;
+        uniform float uWaterLevel;
         uniform sampler2D uUnderDepth;
         uniform vec2 uScreenSize;
         uniform float uNear;
@@ -658,6 +662,37 @@ public static class TerrainShaders
                 glow += mix(vec3(0.6, 0.9, 1.0), vec3(1.0, 0.7, 1.0), hash13(vec3(cell, 3.0)))
                       * sparkle * pow(max(0.5 + 0.5 * sin(uTime * 3.0 + h * 70.0), 0.0), 4.0) * 3.0 * smoothstep(90.0, 40.0, dist);
             }
+            // Breaking waves: bands rolling in to the shore, laid out along the depth contours of the
+            // smooth sea floor (so they follow every coastline in soft curves, not the layered tiles),
+            // rearing up as the water gets shallow and breaking into glowing pink-white foam that
+            // trails behind each crest, a cyan glow on each rising face. Each wave is stronger or
+            // weaker along its length, and broken up where it is weak.
+            vec2 mapUv = (vWorldPos.xz - uSeaFloorOrigin) / uSeaFloorExtent;
+            float inMap = smoothstep(0.0, 0.08, min(min(mapUv.x, mapUv.y), min(1.0 - mapUv.x, 1.0 - mapUv.y)));
+            float seaDepth = uWaterLevel - texture(uSeaFloor, mapUv).r;
+            if (inMap > 0.0 && seaDepth < 7.0 && uUnderwater < 0.5)
+            {
+                float depth = max(seaDepth, 0.0);
+                float wobble = texture(uCloudNoise, vec3(vWorldPos.xz * 0.012, 0.15)).r;
+                float s = depth / 1.6 + uTime * 0.28 + wobble * 1.5;
+                float f = fract(s), id = floor(s);
+                float strength = smoothstep(0.3, 0.6, texture(uCloudNoise, vec3(vWorldPos.xz * 0.02 + id * 0.37, 0.55)).r);
+                float along = texture(uCloudNoise, vec3(vWorldPos.xz * 0.09 + vec2(id * 0.21, uTime * 0.01), 0.75)).r;
+                float rising = smoothstep(7.0, 2.5, depth);
+                float breaking = smoothstep(2.8, 0.6, depth);
+                float crest = pow(f, mix(9.0, 3.5, breaking));
+                float trail = exp(-f * mix(9.0, 3.0, breaking)) * breaking;
+                // Churned foam: bubbly, not a flat band.
+                float bubbles = texture(uCloudNoise, vec3(vWorldPos.xz * 0.35 + vec2(0.0, uTime * 0.05), 0.35)).r;
+                trail *= 0.55 + 0.9 * bubbles;
+                float broken = smoothstep(0.25, 0.6, along + breaking * 0.3);
+                float surf = min((crest + trail * 0.7) * rising * strength * broken, 1.0) * inMap;
+                float face = smoothstep(0.45, 0.93, f) * (1.0 - crest) * rising * strength * inMap;
+                vec3 foam = mix(vec3(1.0, 0.82, 1.0), vec3(0.95, 0.42, 1.0), 0.4 + 0.3 * sin(vWorldPos.x * 0.05 + vWorldPos.z * 0.04));
+                color = mix(color, foam * mix(1.1, 0.35, uNight), surf * 0.85);
+                glow += foam * surf * 2.4 + vec3(0.25, 0.7, 1.0) * face * 0.8;
+            }
+
             color += glow * mix(0.45, 1.0, uNight);
 
             FragColor = finishColor(min(color, vec3(8.0)), vWorldPos, 1.0);

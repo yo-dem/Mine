@@ -6,7 +6,8 @@ namespace Mine.Rendering;
 
 /// <summary>
 /// Draws the cosmic sky (gradient, a giant spiral galaxy, nebulae, dense stars, shooting stars,
-/// the sun, a big moon, volumetric clouds) as a full-screen triangle.
+/// the sun, a giant crescent planet with two small moons, auroras, volumetric clouds) as a
+/// full-screen triangle.
 /// Output is HDR (bright things above 1, for the bloom); tone mapping happens in the post-process pass.
 /// It is drawn after the opaque geometry, at the far plane with a less-or-equal depth test, so it
 /// only shades the pixels where the sky is actually visible. The expensive cloud ray march runs
@@ -129,36 +130,64 @@ public sealed class SkyRenderer : IDisposable
             return shade;
         }
 
-        // The moon: a softly lit sphere of pale lilac silver with darker violet seas, smooth noise
-        // grain and craters at two scales, lit from one side (a gibbous phase with a soft
-        // terminator), the dark side faintly glowing blue so the disk stays whole.
-        vec3 moonSurface(vec2 q)
+        // The moon is a giant planet, seen as a crescent: lit from behind and to one side, so most
+        // of its face is in shadow (deep violet, cratered, with faint glowing cracks) and only a
+        // thin crescent catches the light, while its limb glows lilac-magenta all round, brightest
+        // on the lit side. Two small moons of the same kind hang beside it.
+        const float PlanetSize = 0.36; // tangent of its angular radius (about 20 degrees)
+        const vec3 PlanetLight = vec3(-0.55, -0.4, -0.75); // mostly from behind: a thin crescent
+
+        vec3 planetSurface(vec2 q)
         {
             float rr = min(dot(q, q), 1.0);
             vec3 n = vec3(q, sqrt(1.0 - rr));
-            vec3 light = normalize(vec3(-0.55, 0.3, 0.78));
-            float seas = smoothstep(0.42, 0.66, textureLod(uCloudNoise, n * 0.35 + vec3(0.3, 0.1, 0.7), 0.0).r);
-            float grain = texture(uCloudNoise, n * 1.6 + vec3(0.2)).r * 0.6 + texture(uCloudNoise, n * 4.0 + vec3(0.5)).r * 0.4;
-            vec3 albedo = mix(vec3(0.84, 0.85, 1.0), vec3(0.40, 0.36, 0.62), seas * 0.85) * (0.75 + 0.4 * grain);
+            vec3 light = normalize(PlanetLight);
             vec2 flatLight = normalize(light.xy);
-            albedo *= moonCraters(q * 3.2 + 7.0, flatLight, 0.3) * moonCraters(q * 7.0 + 3.0, flatLight, 0.16); // few big, some small
-            float lit = smoothstep(-0.08, 0.3, dot(n, light));
-            float limb = mix(0.7, 1.0, n.z);
-            // Kept well below white (tone map and bloom would wash the craters and seas out).
-            return albedo * (lit * 0.55 + vec3(0.05, 0.06, 0.13)) * limb;
+            float grain = texture(uCloudNoise, n * 1.4 + vec3(0.2)).r * 0.6 + texture(uCloudNoise, n * 3.5 + vec3(0.5)).r * 0.4;
+            float v = texture(uCloudNoise, n * 0.9 + vec3(0.7, 0.2, 0.4)).r;
+            float cracks = pow(max(1.0 - abs(v - 0.5) * 2.0, 0.0), 14.0);
+            float craters = moonCraters(q * 4.0 + 7.0, flatLight, 0.3) * moonCraters(q * 9.0 + 3.0, flatLight, 0.16);
+            vec3 shadowed = vec3(0.09, 0.05, 0.2) * (0.7 + 0.5 * grain) * craters + vec3(0.6, 0.3, 0.95) * cracks * 0.22;
+            float lit = smoothstep(-0.05, 0.35, dot(n, light));
+            vec3 crescent = vec3(0.78, 0.62, 1.0) * (0.75 + 0.35 * grain) * craters * lit * 0.5;
+            float limb = pow(1.0 - n.z, 3.0);
+            vec3 rim = mix(vec3(0.55, 0.38, 1.0), vec3(1.0, 0.5, 0.95), lit)
+                     * limb * (0.2 + 0.9 * smoothstep(-0.4, 0.5, dot(normalize(q + vec2(1e-4)), flatLight)));
+            return shadowed + crescent + rim;
         }
 
-        // The moon's glow: a bright corona hugging the disk, a wide soft halo, and a faint ring
-        // of ice light, reddish inside and bluish outside, three moon widths out.
-        vec3 moonHalo(vec3 d)
+        // The planet's glow: a lilac-magenta corona hugging the disk, stronger on the lit side,
+        // and a wide soft halo.
+        vec3 moonHalo(vec3 d, vec2 q)
         {
             float a = acos(clamp(dot(d, uMoonDir), -1.0, 1.0));
-            float edge = max(a - 0.139, 0.0); // the disk's angular radius
-            vec3 c = vec3(0.62, 0.66, 1.0) * (exp(-edge * 28.0) * 0.3 + exp(-edge * 7.0) * 0.2);
-            float k = (a - 0.42) / 0.028; // (no pow of a negative base: NaN on some GPUs)
-            float ring = exp(-k * k) * 0.07;
-            c += mix(vec3(1.0, 0.6, 0.8), vec3(0.5, 0.75, 1.0), smoothstep(0.39, 0.45, a)) * ring;
-            return c;
+            float edge = max(a - 0.346, 0.0); // the disk's angular radius, atan(PlanetSize)
+            float side = 0.5 + 0.5 * dot(normalize(q + vec2(1e-4)), normalize(PlanetLight.xy));
+            return mix(vec3(0.5, 0.4, 1.0), vec3(0.95, 0.4, 0.95), side)
+                 * (exp(-edge * 22.0) * (0.15 + 0.35 * side) + exp(-edge * 5.0) * 0.12);
+        }
+
+        // Auroras: curtains of light hanging over a few stretches of the horizon at night, their
+        // rays rising from a wavering hem, cyan at the foot, then blue, with magenta tips, slowly
+        // drifting and flickering.
+        vec3 aurora(vec3 d)
+        {
+            if (uNight < 0.05 || d.y < 0.0) return vec3(0.0);
+            float az = atan(d.z, d.x);
+            vec2 ring = vec2(cos(az), sin(az)); // noise sampled on a circle: no seam
+            float t = uTime * 0.015;
+            float sector = smoothstep(0.45, 0.62, texture(uCloudNoise, vec3(ring * 0.6, 0.2 + t * 0.3)).r);
+            if (sector <= 0.0) return vec3(0.0);
+            float hem = 0.02 + 0.1 * texture(uCloudNoise, vec3(ring * 1.5, 0.6 + t)).r;
+            float top = hem + 0.25 + 0.4 * texture(uCloudNoise, vec3(ring * 2.5, 0.8 + t * 0.5)).r;
+            float h = clamp((d.y - hem) / (top - hem), 0.0, 1.0);
+            if (d.y < hem - 0.02) return vec3(0.0);
+            float rays = smoothstep(0.35, 0.8, texture(uCloudNoise, vec3(ring * 9.0, 0.4 + t * 2.0 + h * 0.15)).r)
+                       * (0.55 + 0.45 * texture(uCloudNoise, vec3(ring * 23.0, 0.1 + t * 4.0)).r);
+            float profile = smoothstep(-0.02, 0.06, h) * pow(1.0 - h, 1.4);
+            vec3 color = mix(vec3(0.2, 0.95, 1.0), vec3(0.3, 0.38, 1.0), smoothstep(0.1, 0.5, h));
+            color = mix(color, vec3(1.0, 0.35, 0.9), smoothstep(0.5, 0.95, h));
+            return color * rays * profile * sector * uNight * 1.1;
         }
 
         // The galaxy: a huge spiral seen face-on, like a swirling planet. Five logarithmic arms,
@@ -308,9 +337,9 @@ public sealed class SkyRenderer : IDisposable
             float ca = cos(uSkyAngle * 0.25), sa = sin(uSkyAngle * 0.25); // uSkyAngle is continuous
             vec3 s = vec3(ca * d.x + sa * d.z, d.y, -sa * d.x + ca * d.z);
             // The moon is solid: nothing beyond it (nebulae, galaxy, stars) shows through its disk.
-            vec2 mq = bodyCoords(d, uMoonDir, 0.14, -0.35);
+            vec2 mq = bodyCoords(d, uMoonDir, PlanetSize, -0.35);
             float moonAlpha = smoothstep(-0.02, 0.3, d.y) * uNight;
-            float moon = diskMask(mq, d, uMoonDir, 0.16) * moonAlpha; // a soft edge
+            float moon = diskMask(mq, d, uMoonDir, 0.02) * moonAlpha;
             float behind = aboveHorizon * (1.0 - moon);
             c += nebula(s) * starVisibility * behind;
             c += galaxy(d) * behind;
@@ -337,14 +366,28 @@ public sealed class SkyRenderer : IDisposable
             // A small square sun, and the round moon with its halo.
             vec2 sq = bodyCoords(d, uSunDir, 0.045, 0.3);
             c += vec3(5.0, 4.4, 3.6) * diskMask(sq, d, uSunDir, 0.0) * aboveHorizon * (1.0 - uNight);
-            if (moonAlpha > 0.0) c += moonHalo(d) * moonAlpha * (1.0 - moon);
+            if (moonAlpha > 0.0) c += moonHalo(d, mq) * moonAlpha * (1.0 - moon);
             if (moon > 0.0)
             {
-                // A faint veil of the night air over the moon: lower contrast, tinged with the sky.
-                vec3 surface = moonSurface(mq);
-                vec3 veiled = mix(surface, c * 0.8 + vec3(0.16, 0.15, 0.28), 0.3);
-                c = mix(c, c * 0.25 + veiled, moon);
+                // A faint veil of the night air over the planet, tinged with the sky.
+                vec3 veiled = mix(planetSurface(mq), c * 0.8 + vec3(0.1, 0.08, 0.2), 0.15);
+                c = mix(c, c * 0.2 + veiled, moon);
             }
+            if (moonAlpha > 0.0 && dot(d, uMoonDir) > 0.5)
+            {
+                // Its two small moons, beside it.
+                for (int i = 0; i < 2; i++)
+                {
+                    vec2 center = i == 0 ? vec2(1.3, 0.95) : vec2(0.62, -1.3);
+                    float size = i == 0 ? 0.09 : 0.065;
+                    vec2 lq = (mq - center) / size;
+                    float w = min(fwidth(lq.x) + fwidth(lq.y), 0.5);
+                    float m = (1.0 - smoothstep(1.0 - w, 1.0 + w, length(lq))) * moonAlpha;
+                    if (m > 0.0) c = mix(c, planetSurface(lq), m);
+                }
+            }
+            // Auroras hang in the air, in front of everything in the sky.
+            c += aurora(d) * aboveHorizon;
             // Shooting stars burn up in the air, far nearer than anything in the sky: they cross
             // in front of the moon, the galaxy and the nebulae (the clouds still hide them).
             c += shootingStar(d, starVisibility) * aboveHorizon;
@@ -403,8 +446,8 @@ public sealed class SkyRenderer : IDisposable
 
             bool moonlit = uNight > 0.5;
             vec3 lightDir = moonlit ? uMoonDir : uSunDir;
-            // Bright moonlight: at night the clouds are dark masses with silver-lit edges.
-            vec3 lightColor = moonlit ? vec3(0.5, 0.56, 0.95) * uNight * 1.5 : uSunGlow * 2.1;
+            // At night the clouds are dark masses with magenta-lit edges, from the giant planet.
+            vec3 lightColor = moonlit ? vec3(0.62, 0.34, 0.85) * uNight * 1.2 : uSunGlow * 2.1;
             vec3 ambient = (mix(uHorizon, uZenith, 0.55) * 0.75 + uSunHorizon * uHaze * 0.35) * mix(1.0, 0.55, uNight);
 
             float cosAngle = dot(rd, lightDir);
