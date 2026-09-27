@@ -7,6 +7,7 @@ public enum CreatureKind
     Butterfly,
     Bird,
     Fish,
+    DeepFish,
 }
 
 /// <summary>One creature: where it is, where it is heading, its size, and a phase that desynchronises its animation.</summary>
@@ -46,6 +47,30 @@ public sealed class Creatures
     private readonly Creature[] _butterflies = new Creature[ButterflyCount];
     private readonly Creature[] _fish = new Creature[FishCount];
     private readonly float[] _fishMinDepth = new float[FishCount];
+
+    // Deep water schools: glowing fish swimming well below the surface, to be seen when diving.
+    // Each school keeps together around a centre that roams the deep water near the player.
+    private const int DeepSchools = 3, MaxPerSchool = 6;
+    private const float DeepRange = 38f, DeepSpawnDepth = 6f, DeepMinDepth = 4f;
+    // Schools are born and roam only where the water stays deep all around (far from the shores),
+    // and keep this far apart from each other.
+    private const float DeepClearance = 18f, SchoolSpacing = 16f;
+    private readonly Creature[] _deepFish = new Creature[DeepSchools * MaxPerSchool];
+    private readonly Vector3[] _deepOffsets = new Vector3[DeepSchools * MaxPerSchool]; // (back, side, up) within the school, in fish lengths
+    private readonly float[] _deepResponse = new float[DeepSchools * MaxPerSchool]; // how quickly each fish follows (its own lag)
+    private readonly Vector3[] _deepHeading = new Vector3[DeepSchools * MaxPerSchool]; // where each fish points (horizontal)
+    private readonly float[] _deepSpeed = new float[DeepSchools * MaxPerSchool];
+    private readonly School[] _schools = new School[DeepSchools];
+
+    private struct School
+    {
+        public Vector3 Position, Velocity;
+        public Vector3 Heading; // horizontal unit vector, turned toward where the school wants to go at a limited rate
+        public float Level;  // 0 = just over the bottom .. 1 = just under the surface
+        public float Scale, Speed, Spread;
+        public int Count;
+        public bool Active;
+    }
     private readonly Creature[] _birds = new Creature[FlockCount * MaxBirdsPerFlock];
     private readonly Vector3[] _birdSlots = new Vector3[FlockCount * MaxBirdsPerFlock]; // random in [-1, 1]³: each bird's own spot
     private readonly Vector3[] _birdQuirks = new Vector3[FlockCount * MaxBirdsPerFlock]; // random in [0, 1]³: arm, place in the V, straggling
@@ -107,6 +132,7 @@ public sealed class Creatures
     {
         CreatureKind.Butterfly => _butterflies,
         CreatureKind.Bird => _birds,
+        CreatureKind.DeepFish => _deepFish,
         _ => _fish,
     };
 
@@ -179,6 +205,8 @@ public sealed class Creatures
             if (speed < 0.6f) f.Velocity *= 0.6f / MathF.Max(speed, 1e-3f);
             f.Position += f.Velocity * dt;
         }
+
+        UpdateDeepFish(player, dt);
 
         // Flocks wheel around an anchor that drifts after the player, keeping them in view.
         if (float.IsNaN(_flockAnchor.X)) _flockAnchor = player;
@@ -270,6 +298,192 @@ public sealed class Creatures
         }
     }
 
+    /// <summary>
+    /// Schools in the deep. Each school is a point that roams near the player at its own level
+    /// between the bottom and the surface, meandering gently and turning (at a limited rate, never
+    /// abruptly) away from the other schools and toward deep water well before the bottom rises.
+    /// Its fish are not tied to it: each swims on its own, with its own inertia and lag, easing
+    /// toward a loose place around the school that slowly drifts, and keeping clear of the others;
+    /// so they glide like the fish at the surface, each a little out of step. A school that
+    /// strays too far (or finds no way on) respawns in deep water.
+    /// </summary>
+    private void UpdateDeepFish(Vector3 player, float dt)
+    {
+        const float water = TerrainField.WaterLevel;
+        const float TurnRate = 0.3f; // radians per second
+        for (int k = 0; k < DeepSchools; k++)
+        {
+            ref var school = ref _schools[k];
+            if (!school.Active || HorizontalDistance(school.Position, player) > DeepRange)
+            {
+                school.Active = false; // so it does not keep itself away from its own old place
+                school.Active = TrySpawn(player, 8f, DeepRange * 0.85f, AcceptSchool, out var p);
+                for (int j = 0; j < MaxPerSchool; j++) _deepFish[k * MaxPerSchool + j].Active = false;
+                if (!school.Active) continue;
+                school.Level = 0.15f + 0.6f * _random.NextSingle();
+                school.Heading = RandomHorizontal();
+                school.Scale = 1.3f + 1.4f * _random.NextSingle();
+                school.Speed = 0.7f + 0.6f * _random.NextSingle();
+                school.Spread = 1f + 0.3f * _random.NextSingle();
+                school.Count = 3 + _random.Next(MaxPerSchool - 2);
+                school.Position = new Vector3(p.X, float.Lerp(p.Y + 1.2f, water - 1.5f, school.Level), p.Z);
+                school.Velocity = school.Heading * school.Speed;
+                for (int j = 0; j < MaxPerSchool; j++)
+                {
+                    int index = k * MaxPerSchool + j;
+                    _deepOffsets[index] = SchoolSlot(k, j);
+                    _deepResponse[index] = 0.5f + 0.7f * _random.NextSingle();
+                    _deepFish[index] = new Creature
+                    {
+                        Active = j < school.Count,
+                        Scale = school.Scale * (0.8f + 0.4f * _random.NextSingle()),
+                        Phase = k * 20f + _random.NextSingle() * 10f, // whole school: same floor(phase / 20), same glow
+                    };
+                    _deepFish[index].Position = SchoolTarget(school, index, _deepFish[index].Phase);
+                    _deepFish[index].Velocity = school.Velocity;
+                    _deepHeading[index] = school.Heading;
+                    _deepSpeed[index] = school.Speed;
+                }
+            }
+
+            // Where the school would like to go: a gentle meander, away from the other schools.
+            var heading = school.Heading;
+            float meander = 0.35f * MathF.Sin(_time * 0.09f + k * 2.3f) + 0.2f * MathF.Sin(_time * 0.23f + k * 5.1f);
+            var desired = Rotate(heading, meander);
+            for (int o = 0; o < DeepSchools; o++)
+            {
+                if (o == k || !_schools[o].Active) continue;
+                var away = school.Position - _schools[o].Position;
+                away.Y = 0;
+                float distance = away.Length();
+                if (distance < SchoolSpacing && distance > 1e-3f) desired += away / distance * (SchoolSpacing - distance) / SchoolSpacing * 2f;
+            }
+            desired = Vector3.Normalize(desired + new Vector3(1e-4f, 0, 0));
+            // Deep water ahead and on both flanks (the school is a few metres wide), or look for it.
+            var flank = new Vector3(-desired.Z, 0, desired.X) * (4f * school.Scale);
+            if (!IsDeep(school.Position + desired * 12f, DeepMinDepth + 1f)
+                || !IsDeep(school.Position + desired * 4f + flank, DeepMinDepth) || !IsDeep(school.Position + desired * 4f - flank, DeepMinDepth))
+            {
+                if (!TryDeepHeading(school.Position, heading, DeepMinDepth + 1f, out var deep, 12f)) { school.Active = false; continue; }
+                desired = deep;
+            }
+            // Turn toward it at a limited rate.
+            float turn = MathF.Atan2(heading.X * desired.Z - heading.Z * desired.X, Vector3.Dot(heading, desired));
+            school.Heading = Rotate(heading, Math.Clamp(turn, -TurnRate * dt, TurnRate * dt));
+
+            // Keep to the school's level: the whole school (up to ~0.7 fish lengths above and below
+            // its centre) stays clear of both the bottom and the surface, easing up and down.
+            float bottom = _terrain.Height(school.Position.X, school.Position.Z);
+            if (water - bottom < DeepMinDepth * 0.6f) { school.Active = false; continue; } // wedged in the shallows
+            float halfHeight = 0.7f * 0.9f * school.Scale * school.Spread + 0.3f;
+            float targetY = float.Lerp(bottom + 0.8f + halfHeight, water - 1.2f - halfHeight, school.Level);
+            float vy = Math.Clamp((targetY - school.Position.Y) * 0.3f, -0.4f, 0.4f);
+            school.Velocity = school.Heading * school.Speed + new Vector3(0, vy, 0);
+            school.Position += school.Velocity * dt;
+
+            float length = 0.9f * school.Scale;
+            for (int j = 0; j < school.Count; j++)
+            {
+                int index = k * MaxPerSchool + j;
+                ref var fish = ref _deepFish[index];
+                // Ease toward its place, match the school's pace, and keep clear of the others.
+                var desiredVelocity = school.Velocity + (SchoolTarget(school, index, fish.Phase) - fish.Position) * 0.35f;
+                for (int i = 0; i < school.Count; i++)
+                {
+                    if (i == j) continue;
+                    var away = fish.Position - _deepFish[k * MaxPerSchool + i].Position;
+                    float distance = away.Length();
+                    if (distance < 1.6f * length && distance > 1e-3f) desiredVelocity += away / distance * (1.6f * length - distance) * 2f;
+                }
+                // A fish never stops nor spins on the spot: it turns its heading toward where it wants
+                // to go at a limited rate, and only changes its pace (between 40% and 180% of the
+                // school's), easing its climb or dive.
+                float response = 1f - MathF.Exp(-_deepResponse[index] * dt);
+                ref var fishHeading = ref _deepHeading[index];
+                var flat = new Vector3(desiredVelocity.X, 0, desiredVelocity.Z);
+                if (flat.LengthSquared() > 0.01f)
+                {
+                    flat = Vector3.Normalize(flat);
+                    float fishTurn = MathF.Atan2(fishHeading.X * flat.Z - fishHeading.Z * flat.X, Vector3.Dot(fishHeading, flat));
+                    float maxTurn = 1f * dt;
+                    fishHeading = Rotate(fishHeading, Math.Clamp(fishTurn * response * 8f, -maxTurn, maxTurn));
+                }
+                float pace = Math.Clamp(Vector3.Dot(desiredVelocity, fishHeading), school.Speed * 0.4f, school.Speed * 1.8f);
+                _deepSpeed[index] += (pace - _deepSpeed[index]) * response;
+                float climb = fish.Velocity.Y + (Math.Clamp(desiredVelocity.Y, -0.5f, 0.5f) - fish.Velocity.Y) * response;
+                fish.Velocity = fishHeading * _deepSpeed[index] + new Vector3(0, climb, 0);
+                fish.Position += fish.Velocity * dt;
+                // Should two still come too close, nudge them apart gently (never into each other).
+                for (int i = 0; i < j; i++)
+                {
+                    ref var other = ref _deepFish[k * MaxPerSchool + i];
+                    var away = fish.Position - other.Position;
+                    float distance = away.Length();
+                    if (distance >= length || distance < 1e-3f) continue;
+                    var push = away / distance * MathF.Min(length - distance, 0.5f * dt * 4f) * 0.5f;
+                    fish.Position += push;
+                    other.Position -= push;
+                }
+                // Never through the bottom nor out of the water.
+                float floor = _terrain.Height(fish.Position.X, fish.Position.Z) + 0.4f;
+                if (fish.Position.Y < floor) { fish.Position.Y = floor; fish.Velocity.Y = MathF.Max(fish.Velocity.Y, 0f); }
+                if (fish.Position.Y > water - 0.8f) { fish.Position.Y = water - 0.8f; fish.Velocity.Y = MathF.Min(fish.Velocity.Y, 0f); }
+            }
+        }
+    }
+
+    /// <summary>A fish's place in its school: its slot behind/beside/above the centre, slowly drifting.</summary>
+    private Vector3 SchoolTarget(in School school, int index, float phase)
+    {
+        var o = _deepOffsets[index];
+        o += new Vector3(MathF.Sin(_time * 0.11f + phase), MathF.Sin(_time * 0.08f + phase * 1.7f), MathF.Sin(_time * 0.13f + phase * 0.6f)) * 0.35f;
+        var side = new Vector3(-school.Heading.Z, 0, school.Heading.X);
+        float spacing = 0.9f * school.Scale * school.Spread; // offsets are in fish lengths (the mesh is ~0.9 long)
+        return school.Position + (-school.Heading * o.X + side * o.Y) * spacing + new Vector3(0, o.Z * spacing, 0);
+    }
+
+    /// <summary>A horizontal vector turned by <paramref name="angle"/> radians around the vertical.</summary>
+    private static Vector3 Rotate(Vector3 v, float angle)
+    {
+        float c = MathF.Cos(angle), s = MathF.Sin(angle);
+        return new Vector3(v.X * c - v.Z * s, 0, v.X * s + v.Z * c);
+    }
+
+    /// <summary>
+    /// A school's place for fish <paramref name="j"/>: random within a loose box (in fish lengths),
+    /// but at least <c>MinGap</c> from the places before it, so the fish never overlap.
+    /// </summary>
+    private Vector3 SchoolSlot(int school, int j)
+    {
+        const float MinGap = 1.4f;
+        Vector3 best = default;
+        float bestGap = -1f;
+        for (int attempt = 0; attempt < 30; attempt++)
+        {
+            var candidate = new Vector3((_random.NextSingle() * 2f - 1f) * 2.4f, (_random.NextSingle() * 2f - 1f) * 1.8f, (_random.NextSingle() * 2f - 1f) * 0.7f);
+            float gap = float.MaxValue;
+            for (int i = 0; i < j; i++) gap = MathF.Min(gap, Vector3.Distance(candidate, _deepOffsets[school * MaxPerSchool + i]));
+            if (gap >= MinGap) return candidate;
+            if (gap > bestGap) (bestGap, best) = (gap, candidate);
+        }
+        return best;
+    }
+
+    /// <summary>Schools spawn only in deep water that stays deep for <see cref="DeepClearance"/> metres all around.</summary>
+    private bool AcceptSchool(float x, float z, float h)
+    {
+        if (TerrainField.WaterLevel - h < DeepSpawnDepth) return false;
+        for (int k = 0; k < 8; k++)
+        {
+            float a = k * MathF.Tau / 8f;
+            for (float r = DeepClearance * 0.5f; r <= DeepClearance; r += DeepClearance * 0.5f)
+                if (!IsDeep(new Vector3(x + MathF.Cos(a) * r, 0, z + MathF.Sin(a) * r), DeepMinDepth)) return false;
+        }
+        for (int o = 0; o < DeepSchools; o++)
+            if (_schools[o].Active && HorizontalDistance(_schools[o].Position, new Vector3(x, 0, z)) < SchoolSpacing) return false;
+        return true;
+    }
+
     /// <summary>Fish spawn only in open water: deep, and deep all around, far from any shore.</summary>
     private bool AcceptFish(float x, float z, float h)
     {
@@ -286,7 +500,7 @@ public sealed class Creatures
     private bool IsDeep(Vector3 p, float depth) => TerrainField.WaterLevel - _terrain.Height(p.X, p.Z) >= depth;
 
     /// <summary>The heading closest to <paramref name="forward"/> along which the water stays deep for a few metres.</summary>
-    private bool TryDeepHeading(Vector3 p, Vector3 forward, float depth, out Vector3 heading)
+    private bool TryDeepHeading(Vector3 p, Vector3 forward, float depth, out Vector3 heading, float reach = 5f)
     {
         ReadOnlySpan<float> angles = [0.5f, -0.5f, 1f, -1f, 1.6f, -1.6f, 2.3f, -2.3f, MathF.PI];
         float side = _random.NextSingle() < 0.5f ? 1f : -1f; // no bias toward one side
@@ -294,7 +508,7 @@ public sealed class Creatures
         {
             float a = angle * side, c = MathF.Cos(a), s = MathF.Sin(a);
             var d = new Vector3(forward.X * c - forward.Z * s, 0, forward.X * s + forward.Z * c);
-            if (IsDeep(p + d * 2.5f, depth) && IsDeep(p + d * 5f, depth)) { heading = d; return true; }
+            if (IsDeep(p + d * (reach * 0.5f), depth) && IsDeep(p + d * reach, depth)) { heading = d; return true; }
         }
         heading = default;
         return false;

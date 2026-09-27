@@ -36,7 +36,7 @@ public sealed unsafe class ShadowMap : IDisposable
         void main()
         {
             vec3 world = uInstanced == 1
-                ? treeWorld(aPos, aSway, aInstance, aScale, uTime)
+                ? treeWorld(aPos, aSway, aInstance, aScale, uTime, 0.0)
                 : (uModel * vec4(aPos, 1.0)).xyz;
             gl_Position = uLightViewProj * vec4(world, 1.0);
         }
@@ -53,6 +53,9 @@ public sealed unsafe class ShadowMap : IDisposable
     private readonly uint _texture;
 
     public Matrix4x4 LightViewProjection { get; private set; }
+
+    private const float StepAngle = 0.0045f; // radians
+    private Vector3 _direction = Vector3.UnitY;
 
     public ShadowMap(GL gl)
     {
@@ -91,7 +94,11 @@ public sealed unsafe class ShadowMap : IDisposable
     /// </summary>
     public void Render(Vector3 center, Vector3 lightDirection, float time, Action drawCasters)
     {
-        var view = Matrix4x4.CreateLookAt(Vector3.Zero, -lightDirection, Vector3.UnitY);
+        // The sun moves all the time: following it every frame would turn the shadow texel grid a
+        // little each frame and make every shadow edge crawl. Follow it in small steps instead
+        // (a quarter of a degree: a few centimetres at the tip of a tall tree's shadow).
+        if (Vector3.Dot(lightDirection, _direction) < MathF.Cos(StepAngle)) _direction = lightDirection;
+        var view = Matrix4x4.CreateLookAt(Vector3.Zero, -_direction, Vector3.UnitY);
 
         // Snap the centre to whole shadow texels so the edges don't shimmer as the player moves.
         var c = Vector3.Transform(center, view);

@@ -38,11 +38,12 @@ public static class TerrainShaders
             return vec3(c * v.x - s * v.z, v.y, s * v.x + c * v.z);
         }
 
-        vec3 treeWorld(vec3 pos, float sway, vec4 instance, float scale, float time)
+        // shiver 0 drops the leaves' quick trembling (the shadow pass: it made shadows flicker).
+        vec3 treeWorld(vec3 pos, float sway, vec4 instance, float scale, float time, float shiver)
         {
             vec3 world = instance.xyz + treeRotate(pos * scale, instance.w);
             world += windOffset(instance.xyz, time) * 0.1 * sway * scale;
-            float leaf = step(0.99, sway);
+            float leaf = step(0.99, sway) * shiver;
             world += vec3(sin(time * 5.3 + dot(world, vec3(1.7, 2.1, 1.3))), 0.0,
                           cos(time * 4.7 + dot(world, vec3(1.1, 1.9, 2.3)))) * 0.03 * leaf;
             return world;
@@ -433,7 +434,7 @@ public static class TerrainShaders
 
         void main()
         {
-            vec3 world = treeWorld(aPos, aSway, aInstance, aScale, uTime);
+            vec3 world = treeWorld(aPos, aSway, aInstance, aScale, uTime, 1.0);
             vWorldPos = world;
             vNormal = treeRotate(aNormal, aInstance.w);
             vColor = aColor;
@@ -598,7 +599,7 @@ public static class TerrainShaders
 
     /// <summary>
     /// Butterflies (kind 0) flap both wings up together, birds (1) beat them up and down, fish (2)
-    /// swing their tail. Butterflies and fish glow in a hue picked by their phase; birds are dark
+    /// and deep fish (3) swing their tail. Butterflies and fish glow in a hue picked by their phase; birds are dark
     /// silhouettes by day that light up pale blue at night.
     /// </summary>
     public const string CreatureVertex = """
@@ -637,12 +638,22 @@ public static class TerrainShaders
             {
                 p.z += sin(t * 9.0 - p.x * 9.0) * 0.08 * aAnim;
             }
+            else if (uKind == 3)
+            {
+                p.z += sin(t * 5.0 - p.x * 7.0) * 0.1 * aAnim; // slower, deeper strokes
+            }
 
             float c = cos(aInstance.w), s = sin(aInstance.w);
             p *= aExtra.x;
             vec3 world = aInstance.xyz + vec3(c * p.x - s * p.z, p.y, s * p.x + c * p.z);
 
             vec3 hue = mix(vec3(0.35, 0.9, 1.0), vec3(0.95, 0.5, 1.0), fract(aExtra.y * 0.37));
+            if (uKind == 3)
+            {
+                // Deep fish: one of four glows per school (Creatures gives a school phases in one band of 20).
+                float k = fract(floor(aExtra.y / 20.0) * 0.618);
+                hue = k < 0.25 ? vec3(0.3, 1.0, 0.9) : k < 0.5 ? vec3(0.55, 0.45, 1.0) : k < 0.75 ? vec3(1.0, 0.4, 0.8) : vec3(1.0, 0.8, 0.4);
+            }
             if (uKind == 1)
             {
                 vColor = mix(vec3(0.06, 0.04, 0.12), vec3(0.55, 0.75, 1.0), uNight);

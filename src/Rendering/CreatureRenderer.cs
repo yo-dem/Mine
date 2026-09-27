@@ -135,6 +135,40 @@ public sealed unsafe class CreatureRenderer : IDisposable
                 T(tail, new(-0.42f, 0, 0), new(-0.45f, -0.08f, 0), 1f);
                 break;
             }
+            case CreatureKind.DeepFish:
+            {
+                // A deep-bodied fish of the depths: a dim body with a tall dorsal fin, side fins and
+                // a broad forked tail, and a row of glowing spots along each flank.
+                var c = Vector3.One;
+                Vector3 head = new(0.34f, 0.01f, 0), tail = new(-0.32f, 0, 0);
+                Vector3 l = new(0.04f, 0, 0.09f), r = new(0.04f, 0, -0.09f), up = new(0.04f, 0.14f, 0), down = new(0.04f, -0.12f, 0);
+                float Swing(Vector3 p) => Math.Clamp((0.15f - p.X) / 0.7f, 0f, 1f);
+                void T(Vector3 a, Vector3 b, Vector3 d, float e)
+                {
+                    V(a.X, a.Y, a.Z, c, e, Swing(a));
+                    V(b.X, b.Y, b.Z, c, e, Swing(b));
+                    V(d.X, d.Y, d.Z, c, e, Swing(d));
+                }
+                T(head, l, up, 0.3f); T(head, up, r, 0.3f); T(head, r, down, 0.3f); T(head, down, l, 0.3f);
+                T(tail, up, l, 0.25f); T(tail, r, up, 0.25f); T(tail, down, r, 0.25f); T(tail, l, down, 0.25f);
+                // Dorsal fin, side fins, tail.
+                T(new(0.12f, 0.12f, 0), new(-0.2f, 0.24f, 0), new(-0.22f, 0.06f, 0), 0.7f);
+                T(new(0.14f, -0.04f, 0.07f), new(-0.02f, -0.1f, 0.2f), new(0.0f, -0.05f, 0.08f), 0.6f);
+                T(new(0.14f, -0.04f, -0.07f), new(0.0f, -0.05f, -0.08f), new(-0.02f, -0.1f, -0.2f), 0.6f);
+                T(tail, new(-0.55f, 0.16f, 0), new(-0.46f, 0, 0), 0.9f);
+                T(tail, new(-0.46f, 0, 0), new(-0.55f, -0.16f, 0), 0.9f);
+                // Glowing spots: small diamonds just outside each flank.
+                for (int k = 0; k < 5; k++)
+                {
+                    float x = 0.22f - k * 0.1f, z = 0.085f - Math.Abs(x - 0.04f) * 0.12f + 0.01f;
+                    foreach (float side in new[] { 1f, -1f })
+                    {
+                        Vector3 p0 = new(x + 0.025f, 0.01f, z * side), p1 = new(x, 0.035f, z * side), p2 = new(x - 0.025f, 0.01f, z * side), p3 = new(x, -0.015f, z * side);
+                        T(p0, p1, p2, 1f); T(p0, p2, p3, 1f);
+                    }
+                }
+                break;
+            }
         }
         return m;
     }
