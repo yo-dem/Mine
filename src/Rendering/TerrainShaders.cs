@@ -372,7 +372,7 @@ public static class TerrainShaders
             float dist = length(vWorldPos - uCameraPos);
             vec3 albedo = terrainAlbedo(vWorldPos, vSlope, dist);
             albedo = mix(albedo, SnowColor, snowOn(vWorldPos, n.y)) * vAo * tileEdges(vWorldPos, n, dist);
-            vec3 color = litColor(albedo, vWorldPos, n, 0.0) + glitter(vWorldPos, n, vSlope, dist);
+            vec3 color = litColor(albedo, vWorldPos, n, 0.0) + glitter(vWorldPos, n, vSlope, dist) * uMagic;
             FragColor = finishColor(color, vWorldPos, 1.0);
         }
         """;
@@ -713,7 +713,7 @@ public static class TerrainShaders
                 glow += foam * surf * 2.4 + vec3(0.25, 0.7, 1.0) * face * 0.8;
             }
 
-            color += glow * mix(0.45, 1.0, uNight);
+            color += glow * mix(0.45, 1.0, uNight) * mix(0.15, 1.0, uMagic);
 
             FragColor = finishColor(min(color, vec3(8.0)), vWorldPos, 1.0);
         }

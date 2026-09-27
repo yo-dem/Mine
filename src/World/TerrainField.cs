@@ -179,12 +179,15 @@ public sealed class TerrainField
 
         float h = 20f + continent * 35f + hills * 30f * (1f - 0.4f * desert) + dune * dune * (9f + 6f * desert) * lowland;
 
+        // Flatter worlds keep only a share of the relief, around a level a few metres above the water.
+        const float reliefBase = 21f;
+        h = reliefBase + (h - reliefBase) * WorldPreset.Current.Relief;
         h += WorldPreset.Current.LandLift;
         h = Lakes(x, z, h);
 
         h += _detail.Fractal(x * 0.05f, z * 0.05f, 2) * 0.4f;
         if (h < WaterLevel) h = WaterLevel - (WaterLevel - h) * DepthScale;
-        return h + Spires(x, z);
+        return WorldPreset.Current.Relief < 0.5f ? h : h + Spires(x, z);
     }
 
     /// <summary>
@@ -209,7 +212,7 @@ public sealed class TerrainField
         }
         h += _detail.Fractal(x * 0.05f, z * 0.05f, 2) * 0.4f;
         if (h < WaterLevel) h = WaterLevel - (WaterLevel - h) * DepthScale;
-        return h + Spires(x, z);
+        return WorldPreset.Current.Relief < 0.5f ? h : h + Spires(x, z);
     }
 
     /// <summary>
