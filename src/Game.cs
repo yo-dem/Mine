@@ -163,8 +163,12 @@ public sealed class Game : IDisposable
     {
         if (fullscreen)
         {
-            if (_window.Monitor?.VideoMode.Resolution is { } resolution) _window.Size = resolution;
+            // Going full screen lands on the primary monitor whatever the window is on, so move it
+            // back to the window's monitor afterwards.
+            var monitor = _window.Monitor;
+            if (monitor?.VideoMode.Resolution is { } resolution) _window.Size = resolution;
             _window.WindowState = WindowState.Fullscreen;
+            if (monitor is not null && _window.Monitor?.Index != monitor.Index) _window.Monitor = monitor;
         }
         else
         {
@@ -173,6 +177,23 @@ public sealed class Game : IDisposable
             if (_window.Monitor is { } monitor)
                 _window.Position = monitor.Bounds.Origin + (monitor.Bounds.Size - WindowedSize) / 2;
         }
+    }
+
+    /// <summary>
+    /// Moves the game to the next monitor, staying full screen (at that monitor's resolution) or
+    /// windowed as it was: the window is centred on the next monitor, then made full screen there.
+    /// </summary>
+    private void NextMonitor()
+    {
+        var monitors = Silk.NET.Windowing.Monitor.GetMonitors(_window).ToList();
+        if (monitors.Count < 2) return;
+        int current = monitors.FindIndex(m => m.Index == _window.Monitor?.Index);
+        var next = monitors[(current + 1) % monitors.Count];
+        bool fullscreen = _window.WindowState == WindowState.Fullscreen;
+        _window.WindowState = WindowState.Normal;
+        _window.Size = WindowedSize;
+        _window.Position = next.Bounds.Origin + (next.Bounds.Size - WindowedSize) / 2;
+        if (fullscreen) SetFullscreen(true);
     }
 
     // Debugging aids, from environment variables: MINE_FPS_LOG=1 prints the HUD line to the console,
@@ -425,6 +446,9 @@ public sealed class Game : IDisposable
                 break;
             case Key.Number1: // debug: a shooting star across the view
                 SkyRenderer.LaunchShootingStar((float)_time, _player.LookDirection);
+                break;
+            case Key.F10:
+                NextMonitor();
                 break;
             case Key.F11:
             case Key.Enter when keyboard.IsKeyPressed(Key.AltLeft) || keyboard.IsKeyPressed(Key.AltRight):
