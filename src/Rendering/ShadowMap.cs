@@ -54,8 +54,8 @@ public sealed unsafe class ShadowMap : IDisposable
 
     public Matrix4x4 LightViewProjection { get; private set; }
 
-    private const float StepAngle = 0.0045f; // radians
-    private Vector3 _direction = Vector3.UnitY;
+    // The light view turns about a point near the player, snapped to a grid of this size.
+    private const float PivotCell = 32f;
 
     public ShadowMap(GL gl)
     {
@@ -94,11 +94,14 @@ public sealed unsafe class ShadowMap : IDisposable
     /// </summary>
     public void Render(Vector3 center, Vector3 lightDirection, float time, Action drawCasters)
     {
-        // The sun moves all the time: following it every frame would turn the shadow texel grid a
-        // little each frame and make every shadow edge crawl. Follow it in small steps instead
-        // (a quarter of a degree: a few centimetres at the tip of a tall tree's shadow).
-        if (Vector3.Dot(lightDirection, _direction) < MathF.Cos(StepAngle)) _direction = lightDirection;
-        var view = Matrix4x4.CreateLookAt(Vector3.Zero, -_direction, Vector3.UnitY);
+        // The sun moves all the time and the shadows follow it every frame, smoothly. Turning the
+        // light view makes the shadow texel grid slide over the world in proportion to the distance
+        // from the point it turns about: about the world origin, far from the player, the grid
+        // would race under the shadows and make their edges crawl. So it turns about a point near
+        // the player (snapped to a coarse grid, so walking does not move it), where the grid barely
+        // drifts: a few hundredths of a texel per frame.
+        var pivot = new Vector3(MathF.Round(center.X / PivotCell), MathF.Round(center.Y / PivotCell), MathF.Round(center.Z / PivotCell)) * PivotCell;
+        var view = Matrix4x4.CreateLookAt(pivot, pivot - lightDirection, Vector3.UnitY);
 
         // Snap the centre to whole shadow texels so the edges don't shimmer as the player moves.
         var c = Vector3.Transform(center, view);
