@@ -74,7 +74,7 @@ public sealed class Game : IDisposable
     {
         var options = WindowOptions.Default with
         {
-            Size = new Vector2D<int>(1280, 720),
+            Size = WindowedSize,
             Title = "Mine",
             VSync = Environment.GetEnvironmentVariable("MINE_NO_VSYNC") != "1",
             // 3.3 core + forward compatible also runs on macOS (which caps at 4.1).
@@ -150,11 +150,34 @@ public sealed class Game : IDisposable
         _gl.Enable(EnableCap.DepthTest);
         _gl.Enable(EnableCap.CullFace);
         OnFramebufferResize(_window.FramebufferSize);
+        SetFullscreen(Environment.GetEnvironmentVariable("MINE_WINDOWED") != "1");
+    }
+
+    private static readonly Vector2D<int> WindowedSize = new(1280, 720);
+
+    /// <summary>
+    /// Full screen at the monitor's own resolution (so the display mode does not change and
+    /// switching away is quick), or back to a centred window.
+    /// </summary>
+    private void SetFullscreen(bool fullscreen)
+    {
+        if (fullscreen)
+        {
+            if (_window.Monitor?.VideoMode.Resolution is { } resolution) _window.Size = resolution;
+            _window.WindowState = WindowState.Fullscreen;
+        }
+        else
+        {
+            _window.WindowState = WindowState.Normal;
+            _window.Size = WindowedSize;
+            if (_window.Monitor is { } monitor)
+                _window.Position = monitor.Bounds.Origin + (monitor.Bounds.Size - WindowedSize) / 2;
+        }
     }
 
     // Debugging aids, from environment variables: MINE_FPS_LOG=1 prints the HUD line to the console,
     // MINE_RAIN=1 starts with rain, MINE_TIME=0.45 sets the time of day, MINE_PITCH=0.2 the view
-    // pitch (radians), MINE_YAW=1.5 the view heading, MINE_POS=800,-300 spawns exactly there, MINE_GPU_PROFILE=1 prints the GPU time of each pass (GpuProfiler).
+    // pitch (radians), MINE_YAW=1.5 the view heading, MINE_POS=800,-300 spawns exactly there, MINE_WINDOWED=1 starts in a window, MINE_GPU_PROFILE=1 prints the GPU time of each pass (GpuProfiler).
     private static readonly string Skip = Environment.GetEnvironmentVariable("MINE_SKIP") ?? "";
     private static bool On(string pass) => !Skip.Contains(pass);
     // Where the game starts: a meadow by a lake. MINE_POS overrides it.
@@ -402,6 +425,9 @@ public sealed class Game : IDisposable
                 break;
             case Key.Number1: // debug: a shooting star across the view
                 SkyRenderer.LaunchShootingStar((float)_time, _player.LookDirection);
+                break;
+            case Key.F11:
+                SetFullscreen(_window.WindowState != WindowState.Fullscreen);
                 break;
             case Key.F:
                 _player.Flying = !_player.Flying;

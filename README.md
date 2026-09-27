@@ -65,6 +65,7 @@ portatili con due schede usa quella dedicata; la prima volta si riavvia da solo 
 | Click sinistro | Raccogli il cristallo che guardi |
 | Click destro | Piazza un cristallo sul terreno |
 | Q | Qualità alta / bassa (bassa: automatica sulle schede integrate) |
+| F11 | Schermo intero / finestra (il gioco parte a schermo intero) |
 | 1 | Fai partire una stella cadente davanti a te (debug) |
 | 2 | Fai iniziare o smettere la pioggia |
 | Esc | Libera il mouse (di nuovo Esc: esci) |
