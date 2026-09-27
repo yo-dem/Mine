@@ -124,7 +124,7 @@ public sealed class TerrainField
             var foot = IslandField.FallFoot(site, i);
             float ground = BaseHeight(foot.X, foot.Y);
             if (ground < WaterLevel + 1.5f) continue;
-            ponds.Add(new Pond(foot.X, foot.Y, 4f + site.FallWidths[i], Layer(ground) - 0.2f));
+            ponds.Add(new Pond(foot.X, foot.Y, 3f + 2f * site.FallWidths[i], Layer(ground) - 0.2f));
         }
         return ponds.ToArray();
     });

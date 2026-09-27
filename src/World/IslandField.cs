@@ -23,7 +23,7 @@ public readonly record struct IslandSite(float X, float Z, float Radius, float H
 /// <summary>
 /// Floating islands hanging in the sky: at most one per 420 m cell, 70–190 m above the land,
 /// with a gently domed grassy top, a rocky underside tapering to a point, a few trees on top, and
-/// on about half of them one or two waterfalls of glowing water pouring into a pond on the ground.
+/// on a few of them one or two thin rivulets of glowing silvery water pouring into a pond on the ground.
 /// The shape functions (<see cref="EdgeRadius"/>, <see cref="TopHeight"/>) are shared by the mesh
 /// and by <see cref="GroundBelow"/>, so the player can land on an island and walk on it.
 /// </summary>
@@ -33,10 +33,11 @@ public sealed class IslandField
     public const float Radius = 1700f;
     private const float Chance = 0.4f;
 
-    // Waterfalls: the share of islands with one (a few have two), how wide they are, and how far
-    // out from the edge the water lands once it has fallen (the curve is the same for every height).
-    private const float FallChance = 0.55f, TwoFallsChance = 0.3f;
-    private const float FallMinWidth = 2.5f, FallMaxWidth = 5.5f;
+    // Waterfalls, thin silvery rivulets: the share of islands with one (rare; a few of those have
+    // two), how wide they are, and how far out from the edge the water lands once it has fallen
+    // (the curve is the same for every height).
+    private const float FallChance = 0.15f, TwoFallsChance = 0.15f;
+    private const float FallMinWidth = 0.35f, FallMaxWidth = 0.8f;
     public const float FallReach = 6f;
 
     // Tree models that suit the sky: dreamy teal, lilac blossom, glowing orbs, fireflies.

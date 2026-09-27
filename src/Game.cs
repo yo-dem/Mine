@@ -330,7 +330,7 @@ public sealed class Game : IDisposable
 
         // The islands' waterfalls and their ponds: translucent and glowing, over everything opaque.
         _profiler.Section("cascate");
-        if (On("falls")) _waterfalls.Draw(view * projection, eye, atmosphere.Night, time);
+        if (On("falls")) _waterfalls.Draw(view * projection, eye, atmosphere.Night, time, 2f * MathF.Tan(FieldOfView / 2) / _post.SceneHeight);
 
         _profiler.Section("pulviscolo+pioggia");
         float heightAboveGround = eye.Y - _ground.Height(eye.X, eye.Z, eye.Y);

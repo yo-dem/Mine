@@ -5,17 +5,19 @@ using Silk.NET.OpenGL;
 namespace Mine.Rendering;
 
 /// <summary>
-/// The islands' waterfalls, of glowing water: a stream across the island's top, a sheet of water
-/// arcing over the edge and falling straight to the ground, foam and mist where it lands, and the
-/// pond it fills, lit by ripples spreading from the fall. All translucent and self-lit, blended
+/// The islands' waterfalls, thin rivulets of glowing silvery water: a trickle across the island's
+/// top, a few threads of water arcing over the edge and falling straight to the ground (drawn at
+/// least about a pixel wide however far away, so they never flicker out), a little spray where they
+/// land, and the pond they fill, lit by ripples spreading from the fall. All translucent and self-lit, blended
 /// with premultiplied alpha (so they can both darken what is behind, like water, and glow), drawn
 /// after the opaque scene and the sea without writing depth. The mesh is rebuilt on the CPU when
 /// the set of islands changes; it is small (a few falls at a time).
 /// </summary>
 public sealed unsafe class WaterfallRenderer : IDisposable
 {
-    // Vertex: position (3), u, v, kind, extra (see the fragment shader for what each kind uses them for).
-    private const int FloatsPerVertex = 7;
+    // Vertex: position (3), u, v, kind, extra (see the fragment shader for what each kind uses them
+    // for), then the centre of the thread's cross-section (3) and its half-width (0 = never widened).
+    private const int FloatsPerVertex = 11;
     private const float Stream = 0, Sheet = 1, PondSurface = 2, Mist = 3;
 
     private const string VertexSource = """
@@ -23,21 +25,35 @@ public sealed unsafe class WaterfallRenderer : IDisposable
         layout(location = 0) in vec3 aPos;
         layout(location = 1) in vec2 aUv;
         layout(location = 2) in vec2 aKind; // kind, extra
+        layout(location = 3) in vec4 aAxis; // centre of the cross-section, half-width
 
         uniform mat4 uViewProj;
+        uniform vec3 uCameraPos;
+        uniform float uPixelAngle; // radians per pixel
 
         out vec3 vWorldPos;
         out vec2 vUv;
         flat out int vKind;
         out float vExtra;
+        out float vThin; // 1, or less where a far thread was widened (and dimmed to match)
 
         void main()
         {
-            vWorldPos = aPos;
+            vec3 p = aPos;
+            vThin = 1.0;
+            if (aAxis.w > 0.0)
+            {
+                // Keep threads at least ~1.5 pixels wide: widen them far away, spreading their light.
+                float minHalf = length(aAxis.xyz - uCameraPos) * uPixelAngle * 0.75;
+                float s = max(1.0, minHalf / aAxis.w);
+                p = aAxis.xyz + (aPos - aAxis.xyz) * s;
+                vThin = 1.0 / s;
+            }
+            vWorldPos = p;
             vUv = aUv;
             vKind = int(aKind.x + 0.5);
             vExtra = aKind.y;
-            gl_Position = uViewProj * vec4(aPos, 1.0);
+            gl_Position = uViewProj * vec4(p, 1.0);
         }
         """;
 
@@ -46,6 +62,7 @@ public sealed unsafe class WaterfallRenderer : IDisposable
         in vec2 vUv;
         flat in int vKind;
         in float vExtra;
+        in float vThin;
 
         uniform vec3 uCameraPos;
         uniform float uTime;
@@ -63,9 +80,9 @@ public sealed unsafe class WaterfallRenderer : IDisposable
             return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
         }
 
-        const vec3 Cyan = vec3(0.25, 0.95, 1.0);
-        const vec3 Lilac = vec3(0.7, 0.55, 1.0);
-        const vec3 Deep = vec3(0.02, 0.10, 0.18);
+        const vec3 Silver = vec3(0.82, 0.9, 1.0);
+        const vec3 Cyan = vec3(0.45, 0.9, 1.0);
+        const vec3 Deep = vec3(0.03, 0.08, 0.14);
 
         void main()
         {
@@ -75,22 +92,22 @@ public sealed unsafe class WaterfallRenderer : IDisposable
             if (vKind == 0)
             {
                 // The stream on the island: u across (0..1), v metres downstream.
-                float flow = vnoise(vec2(vUv.x * 4.0, vUv.y * 0.5 - t * 1.8)) * 0.6 + vnoise(vec2(vUv.x * 9.0, vUv.y * 1.3 - t * 2.6)) * 0.4;
-                float banks = smoothstep(0.0, 0.25, vUv.x) * smoothstep(1.0, 0.75, vUv.x);
-                alpha = 0.75 * banks;
-                glow = mix(Cyan, vec3(1.0), flow * flow) * (0.15 + 0.7 * flow * flow) * banks;
+                float flow = vnoise(vec2(vUv.x * 3.0, vUv.y * 0.8 - t * 2.0)) * 0.6 + vnoise(vec2(vUv.x * 7.0, vUv.y * 2.0 - t * 3.0)) * 0.4;
+                float banks = smoothstep(0.0, 0.3, vUv.x) * smoothstep(1.0, 0.7, vUv.x);
+                alpha = 0.5 * banks;
+                glow = mix(Cyan, Silver, 0.6 + 0.4 * flow) * (0.5 + 1.3 * flow * flow) * banks;
             }
             else if (vKind == 1)
             {
-                // The falling sheet: u around it (0..1), v metres fallen, extra = the whole drop.
-                // Streaks stretched along the fall, racing down, brighter strands here and there.
-                float s1 = vnoise(vec2(vUv.x * 26.0, vUv.y * 0.05 - t * 1.6));
-                float s2 = vnoise(vec2(vUv.x * 70.0, vUv.y * 0.14 - t * 3.2));
-                float streak = s1 * 0.6 + s2 * 0.4;
-                float strands = smoothstep(0.6, 0.9, s2);
-                float ends = smoothstep(0.0, 2.0, vUv.y) * (0.6 + 0.4 * smoothstep(vExtra, vExtra - 25.0, vUv.y));
-                alpha = (0.3 + 0.45 * streak) * ends;
-                glow = (mix(Cyan, Lilac, s1 * 0.5) * (0.08 + 0.75 * streak * streak) + vec3(0.8, 1.0, 1.0) * strands * 0.45) * ends;
+                // A falling thread: u around it (0..1), v metres fallen, extra = the whole drop.
+                // Silvery, with brighter beads of light racing down it.
+                float s1 = vnoise(vec2(vUv.x * 6.0, vUv.y * 0.08 - t * 2.0));
+                float s2 = vnoise(vec2(vUv.x * 11.0, vUv.y * 0.35 - t * 4.0));
+                float beads = smoothstep(0.55, 0.9, s2);
+                float ends = smoothstep(0.0, 1.5, vUv.y) * (0.5 + 0.5 * smoothstep(vExtra, vExtra - 20.0, vUv.y));
+                alpha = 0.35 * ends;
+                // Softer up close, where the thread is wide on screen; far away it keeps shining as a line.
+                glow = (Silver * (0.3 + 0.4 * s1) + vec3(1.0) * beads * 0.6) * ends * mix(2.2, 1.0, vThin);
             }
             else if (vKind == 2)
             {
@@ -102,15 +119,15 @@ public sealed unsafe class WaterfallRenderer : IDisposable
                 float foam = smoothstep(2.5, 0.0, r) * (0.6 + 0.4 * vnoise(vUv * 3.0 + t * 2.0));
                 float shore = smoothstep(0.7, 1.0, rf) * (0.6 + 0.4 * sin(t * 1.3 + atan(vUv.y, vUv.x) * 5.0));
                 alpha = 0.85;
-                glow = Cyan * (0.3 + 1.1 * rings + 0.6 * veins * (1.0 - rf * 0.5) + 0.8 * shore) + vec3(0.9, 1.0, 1.0) * foam;
+                glow = mix(Cyan, Silver, 0.5) * (0.25 + 1.1 * rings + 0.5 * veins * (1.0 - rf * 0.5) + 0.7 * shore) + Silver * foam;
             }
             else
             {
                 // Mist and spray where the water lands: u around, v = 0 at the water up to 1.
                 float swirl = vnoise(vec2(vUv.x * 12.0 + t * 0.4, vUv.y * 3.0 - t * 0.9));
                 float fade = (1.0 - vUv.y) * (1.0 - vUv.y);
-                alpha = 0.3 * swirl * fade;
-                glow = mix(Cyan, vec3(1.0), 0.5) * swirl * fade * 0.45;
+                alpha = 0.2 * swirl * fade;
+                glow = Silver * swirl * fade * 0.4;
             }
 
             float dist = length(vWorldPos - uCameraPos);
@@ -145,6 +162,8 @@ public sealed unsafe class WaterfallRenderer : IDisposable
         gl.EnableVertexAttribArray(1);
         gl.VertexAttribPointer(2, 2, VertexAttribPointerType.Float, false, stride, (void*)(5 * sizeof(float)));
         gl.EnableVertexAttribArray(2);
+        gl.VertexAttribPointer(3, 4, VertexAttribPointerType.Float, false, stride, (void*)(7 * sizeof(float)));
+        gl.EnableVertexAttribArray(3);
         gl.BindVertexArray(0);
     }
 
@@ -180,17 +199,19 @@ public sealed unsafe class WaterfallRenderer : IDisposable
         {
             var foot = FootOf(fall);
             if (Vector3.DistanceSquared(foot, center) > radius * radius) continue;
-            _lights.Add(new PointLight(foot + new Vector3(0, 2f, 0), new Vector3(0.35f, 0.9f, 1.0f) * 2.2f, fall.PondRadius * 1.6f + 10f));
+            _lights.Add(new PointLight(foot + new Vector3(0, 1.5f, 0), new Vector3(0.6f, 0.85f, 1.0f) * 1.6f, fall.PondRadius * 1.5f + 6f));
         }
         return _lights;
     }
 
-    public void Draw(Matrix4x4 viewProjection, Vector3 camera, float night, float time)
+    /// <param name="pixelAngle">The angle one pixel of the scene covers, in radians.</param>
+    public void Draw(Matrix4x4 viewProjection, Vector3 camera, float night, float time, float pixelAngle)
     {
         if (_vertexCount == 0) return;
         _shader.Use();
         _shader.Set("uViewProj", viewProjection);
         _shader.Set("uCameraPos", camera);
+        _shader.Set("uPixelAngle", pixelAngle);
         _shader.Set("uTime", time);
         _shader.Set("uNight", night);
         _shader.Set("uFadeEnd", IslandField.Radius);
@@ -231,7 +252,7 @@ public sealed unsafe class WaterfallRenderer : IDisposable
             float f = 0.3f + 0.7f * k / Steps;
             var p = island.Center + fall.Direction * edge * f;
             p.Y = IslandField.TopHeight(island, f) + 0.15f;
-            width = fall.Width * (0.35f + 0.35f * f);
+            width = fall.Width * (0.8f + 0.6f * f);
             return p;
         }
         float v = 0;
@@ -241,32 +262,41 @@ public sealed unsafe class WaterfallRenderer : IDisposable
             var b = Point(k + 1, out float wb);
             float vb = v + Vector3.Distance(a, b);
             Quad(a - across * wa * 0.5f, a + across * wa * 0.5f, b + across * wb * 0.5f, b - across * wb * 0.5f,
-                new(0, v), new(1, v), new(1, vb), new(0, vb), Stream, 0);
+                new(0, v), new(1, v), new(1, vb), new(0, vb), Stream, 0, a, wa * 0.5f, b, wb * 0.5f);
             v = vb;
         }
     }
 
     private void BuildSheet(Waterfall fall)
     {
-        // A flattened tube (wide across, thin along the direction of the fall) following the arc.
-        const int Rings = 40, Sides = 12;
-        var across = new Vector3(-fall.Direction.Z, 0, fall.Direction.X);
+        // A main thread and two finer ones that part from it as they fall.
         float total = fall.Lip.Y - fall.Bottom;
         if (total <= 1f) return;
+        var across = new Vector3(-fall.Direction.Z, 0, fall.Direction.X);
+        BuildThread(fall, total, across, 0f, fall.Width * 0.5f);
+        BuildThread(fall, total, across, 1f, fall.Width * 0.25f);
+        BuildThread(fall, total, across, -0.7f, fall.Width * 0.2f);
+    }
+
+    /// <summary>One thin round thread following the arc, <paramref name="side"/> metres across at the lip, spreading out.</summary>
+    private void BuildThread(Waterfall fall, float total, Vector3 across, float side, float radius)
+    {
+        const int Rings = 40, Sides = 6;
         var rings = new Vector3[Rings + 1, Sides + 1];
+        var centers = new Vector3[Rings + 1];
         var drops = new float[Rings + 1];
         for (int k = 0; k <= Rings; k++)
         {
             // Rings crowd near the top, where the arc bends.
             float drop = total * MathF.Pow(k / (float)Rings, 1.8f);
             drops[k] = drop;
-            var center = fall.Lip + fall.Direction * Reach(drop) - new Vector3(0, drop, 0);
-            float half = fall.Width * 0.5f * (1f + drop * 0.003f);
-            float depth = fall.Width * 0.14f * MathF.Min(1f, 0.3f + drop / 6f);
+            float spread = side * fall.Width * (0.6f + MathF.Min(drop, 60f) * 0.02f);
+            var center = fall.Lip + fall.Direction * Reach(drop) + across * spread - new Vector3(0, drop, 0);
+            centers[k] = center;
             for (int s = 0; s <= Sides; s++)
             {
                 float a = s * MathF.Tau / Sides;
-                rings[k, s] = center + across * MathF.Cos(a) * half + fall.Direction * MathF.Sin(a) * depth;
+                rings[k, s] = center + (across * MathF.Cos(a) + fall.Direction * MathF.Sin(a)) * radius;
             }
         }
         for (int k = 0; k < Rings; k++)
@@ -274,7 +304,8 @@ public sealed unsafe class WaterfallRenderer : IDisposable
         {
             float u0 = s / (float)Sides, u1 = (s + 1) / (float)Sides;
             Quad(rings[k, s], rings[k, s + 1], rings[k + 1, s + 1], rings[k + 1, s],
-                new(u0, drops[k]), new(u1, drops[k]), new(u1, drops[k + 1]), new(u0, drops[k + 1]), Sheet, total);
+                new(u0, drops[k]), new(u1, drops[k]), new(u1, drops[k + 1]), new(u0, drops[k + 1]), Sheet, total,
+                centers[k], radius, centers[k + 1], radius);
         }
     }
 
@@ -300,7 +331,7 @@ public sealed unsafe class WaterfallRenderer : IDisposable
         // A wide, low column of spray round the foot of the fall.
         const int Sides = 16;
         var center = FootOf(fall) - new Vector3(0, 0.3f, 0);
-        float bottom = fall.Width * 0.9f, top = fall.Width * 1.6f, height = 5f + fall.Width;
+        float bottom = 0.6f + fall.Width, top = 1.2f + 2f * fall.Width, height = 2f + 3f * fall.Width;
         for (int s = 0; s < Sides; s++)
         {
             float a0 = s * MathF.Tau / Sides, a1 = (s + 1) * MathF.Tau / Sides;
@@ -312,17 +343,23 @@ public sealed unsafe class WaterfallRenderer : IDisposable
         }
     }
 
-    private void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector2 ua, Vector2 ub, Vector2 uc, Vector2 ud, float kind, float extra)
+    /// <summary>
+    /// Two triangles. For threads, a and b lie on the cross-section centred at <paramref name="axisAB"/>,
+    /// c and d on the one centred at <paramref name="axisCD"/> (half-widths given; 0 = never widened).
+    /// </summary>
+    private void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector2 ua, Vector2 ub, Vector2 uc, Vector2 ud, float kind, float extra,
+        Vector3 axisAB = default, float halfAB = 0, Vector3 axisCD = default, float halfCD = 0)
     {
-        Vertex(a, ua, kind, extra); Vertex(b, ub, kind, extra); Vertex(c, uc, kind, extra);
-        Vertex(a, ua, kind, extra); Vertex(c, uc, kind, extra); Vertex(d, ud, kind, extra);
+        Vertex(a, ua, kind, extra, axisAB, halfAB); Vertex(b, ub, kind, extra, axisAB, halfAB); Vertex(c, uc, kind, extra, axisCD, halfCD);
+        Vertex(a, ua, kind, extra, axisAB, halfAB); Vertex(c, uc, kind, extra, axisCD, halfCD); Vertex(d, ud, kind, extra, axisCD, halfCD);
     }
 
-    private void Vertex(Vector3 p, Vector2 uv, float kind, float extra)
+    private void Vertex(Vector3 p, Vector2 uv, float kind, float extra, Vector3 axis = default, float half = 0)
     {
         _mesh.Add(p.X); _mesh.Add(p.Y); _mesh.Add(p.Z);
         _mesh.Add(uv.X); _mesh.Add(uv.Y);
         _mesh.Add(kind); _mesh.Add(extra);
+        _mesh.Add(axis.X); _mesh.Add(axis.Y); _mesh.Add(axis.Z); _mesh.Add(half);
     }
 
     public void Dispose()
