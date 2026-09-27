@@ -225,6 +225,8 @@ public static class TerrainShaders
             // Sky light: surfaces pick up the colour of the sky they face; generous, so slopes
             // turned away from the sun stay readable and colourful.
             vec3 skyLight = skyColor(normalize(n + vec3(0.0, 0.6, 0.0)), false);
+            // By day, warm the sky's fill: the bright blue-violet overhead would cool everything down.
+            skyLight = mix(skyLight, dot(skyLight, vec3(0.3, 0.59, 0.11)) * vec3(1.15, 0.95, 0.8), 0.5 * (1.0 - uNight));
             vec3 ambient = mix(uAmbient, skyLight, 0.35) * (0.9 + 0.2 * n.y) * 1.25;
             vec3 direct = uLightColor * diffuse * shadowAt(pos, n) * cloudShadow(pos);
             return albedo * (ambient + direct + pointLighting(pos, n));

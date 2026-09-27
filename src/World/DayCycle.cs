@@ -45,9 +45,10 @@ public sealed class DayCycle
     private static readonly Keyframe Dawn = new(0, Rgb(30, 14, 72), Rgb(120, 48, 140), Rgb(255, 90, 130), Rgb(235, 95, 125), Rgb(88, 54, 128), 0.6f);
     private static readonly Keyframe Twilight = new(0, Rgb(48, 30, 116), Rgb(196, 92, 172), Rgb(255, 160, 95), Rgb(255, 176, 128), Rgb(126, 88, 156), 0.75f);
     // The bright hours around noon: warm light under a still violet sky, never a plain blue noon.
-    private static readonly Keyframe Day = new(0, Rgb(70, 62, 165), Rgb(214, 128, 176), Rgb(255, 190, 125), Rgb(255, 205, 160), Rgb(150, 116, 172), 0.5f);
-    // Noon, the sun high: clearer, bluer violet sky, whiter sunlight, thinner haze.
-    private static readonly Keyframe Noon = new(0, Rgb(88, 96, 205), Rgb(225, 165, 205), Rgb(255, 215, 170), Rgb(255, 238, 215), Rgb(170, 150, 195), 0.35f);
+    private static readonly Keyframe Day = new(0, Rgb(70, 62, 165), Rgb(214, 128, 176), Rgb(255, 190, 125), Rgb(255, 196, 135), Rgb(172, 122, 145), 0.5f);
+    // Noon, the sun high: clearer violet sky, thinner haze, and warm golden sunlight (a white sun
+    // with the blue sky's fill read as a cold, bluish light).
+    private static readonly Keyframe Noon = new(0, Rgb(88, 96, 205), Rgb(225, 165, 205), Rgb(255, 215, 170), Rgb(255, 214, 160), Rgb(192, 152, 142), 0.35f);
     private static readonly Keyframe Dusk = new(0, Rgb(34, 14, 78), Rgb(150, 50, 150), Rgb(255, 80, 115), Rgb(245, 90, 130), Rgb(96, 56, 134), 0.65f);
 
     private static readonly Keyframe[] Keyframes =
