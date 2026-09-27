@@ -67,9 +67,19 @@ public static class TerrainShaders
 
         // Biomes (indigo, pink and turquoise woods, desert), weights summing to 1; the desert's share alone.
         // Mirrored in C# by GroundMaterials.Biome/Desert: keep the two in sync.
+        // The world preset (WorldPreset): the desert noise range, and 1 in an archipelago.
+        uniform vec2 uDesertRange;
+        uniform float uIslands;
+        const float IslandCoast = 0.56, IslandSpan = 0.15;
+
         float desertWeight(vec2 xz)
         {
-            return smoothstep(0.70, 0.76, noise2(xz * 0.0008, 23.0) * 0.75 + noise2(xz * 0.003, 24.0) * 0.25);
+            if (uIslands > 0.5)
+            {
+                float land = noise2(xz * 0.0012, 31.0) * 0.7 + noise2(xz * 0.004, 32.0) * 0.3;
+                return 1.0 - smoothstep(0.25, 0.9, (land - IslandCoast) / IslandSpan);
+            }
+            return smoothstep(uDesertRange.x, uDesertRange.y, noise2(xz * 0.0008, 23.0) * 0.75 + noise2(xz * 0.003, 24.0) * 0.25);
         }
 
         vec4 biomeWeights(vec2 xz)

@@ -114,21 +114,12 @@ public sealed class Game : IDisposable
         _objectRenderer = new ObjectRenderer(_gl);
         _grassShader = new Shader(_gl, TerrainShaders.GrassVertex, TerrainShaders.GrassFragment);
         _treeShader = new Shader(_gl, TerrainShaders.TreeVertex, TerrainShaders.TreeFragment);
-        _trees = new TreeRenderer(_gl);
         _crosshair = new Crosshair(_gl);
         _sky = new SkyRenderer(_gl);
         _shadowMap = new ShadowMap(_gl);
-        _terrainField = new TerrainField(seed: 1337);
-        _terrain = new TerrainRenderer(_gl, _terrainField);
-        _objects = new WorldObjects(_terrainField, seed: 1337);
-        _grass = new GrassRenderer(_gl, _terrainField);
-        _treeField = new TreeField(_terrainField, seed: 1337);
-        _islands = new IslandField(_terrainField, seed: 1337);
-        _islandRenderer = new IslandRenderer(_gl);
-        _waterfalls = new WaterfallRenderer(_gl);
-        _seaFloor = new SeaFloorMap(_gl, _terrainField);
-        _ground = new Ground(_terrainField, _islands);
-        _creatures = new Creatures(_terrainField);
+        if (int.TryParse(Environment.GetEnvironmentVariable("MINE_WORLD"), out int world) && world >= 1 && world <= WorldPreset.All.Length)
+            WorldPreset.Current = WorldPreset.All[world - 1];
+        BuildWorld();
         _creatureRenderer = new CreatureRenderer(_gl);
         _creatureShader = new Shader(_gl, TerrainShaders.CreatureVertex, TerrainShaders.CreatureFragment);
         _cloudNoise = new CloudNoise(_gl);
@@ -206,7 +197,7 @@ public sealed class Game : IDisposable
     }
 
     // Debugging aids, from environment variables: MINE_FPS_LOG=1 prints the HUD line to the console,
-    // MINE_RAIN=1 starts with rain, MINE_SNOW=1 starts snowing with the snow already lying, MINE_STORM=1 / MINE_BLIZZARD=1 start a storm / a blizzard, MINE_TIME=0.45 sets the time of day, MINE_PITCH=0.2 the view
+    // MINE_RAIN=1 starts with rain, MINE_SNOW=1 starts snowing with the snow already lying, MINE_STORM=1 / MINE_BLIZZARD=1 start a storm / a blizzard, MINE_WORLD=2 starts in world preset 2 (Ctrl+2), MINE_TIME=0.45 sets the time of day, MINE_PITCH=0.2 the view
     // pitch (radians), MINE_YAW=1.5 the view heading, MINE_POS=800,-300 spawns exactly there, MINE_WINDOWED=1 starts in a window, MINE_GPU_PROFILE=1 prints the GPU time of each pass (GpuProfiler).
     private static readonly string Skip = Environment.GetEnvironmentVariable("MINE_SKIP") ?? "";
     private static bool On(string pass) => !Skip.Contains(pass);
@@ -224,9 +215,70 @@ public sealed class Game : IDisposable
 
     private void Respawn()
     {
-        var spawn = SpawnAt ?? Spawn;
+        var spawn = SpawnAt ?? (WorldPreset.Current == WorldPreset.Classic ? Spawn : FindSpawn());
         _player.Position = new Vector3(spawn.X, _terrainField.Height(spawn.X, spawn.Y), spawn.Y);
         _player.Velocity = Vector3.Zero;
+        _player.Flying = false;
+    }
+
+    /// <summary>
+    /// A place to start in a generated world: the dry, gentle ground nearest the origin, preferring
+    /// the world's own character: the sand of a desert world, the green heart of an island.
+    /// </summary>
+    private Vector2 FindSpawn()
+    {
+        Vector2? fallback = null;
+        for (float r = 0; r < 4000f; r += 24f)
+        {
+            int steps = Math.Max(1, (int)(r * MathF.Tau / 24f));
+            for (int k = 0; k < steps; k++)
+            {
+                float a = k * MathF.Tau / steps;
+                float x = MathF.Cos(a) * r, z = MathF.Sin(a) * r;
+                if (_terrainField.Height(x, z) < TerrainField.WaterLevel + 2f || _terrainField.Normal(x, z).Y < 0.9f) continue;
+                bool sandy = GroundMaterials.Desert(x, z) > 0.7f;
+                if (sandy == (WorldPreset.Current == WorldPreset.Desert)) return new Vector2(x, z);
+                fallback ??= new Vector2(x, z);
+            }
+            if (fallback is { } dry && r > 1500f) return dry;
+        }
+        return fallback ?? Vector2.Zero;
+    }
+
+    /// <summary>
+    /// Builds everything that depends on the shape of the world (terrain, grass, trees, islands,
+    /// objects, creatures) for <see cref="WorldPreset.Current"/>, disposing the previous world.
+    /// </summary>
+    private void BuildWorld()
+    {
+        _terrain?.Dispose();
+        _grass?.Dispose();
+        _trees?.Dispose();
+        _islandRenderer?.Dispose();
+        _waterfalls?.Dispose();
+        _seaFloor?.Dispose();
+
+        _terrainField = new TerrainField(seed: 1337);
+        _terrain = new TerrainRenderer(_gl, _terrainField);
+        _objects = new WorldObjects(_terrainField, seed: 1337);
+        _grass = new GrassRenderer(_gl, _terrainField);
+        _treeField = new TreeField(_terrainField, seed: 1337);
+        _trees = new TreeRenderer(_gl);
+        _islands = new IslandField(_terrainField, seed: 1337);
+        _islandRenderer = new IslandRenderer(_gl);
+        _waterfalls = new WaterfallRenderer(_gl);
+        _seaFloor = new SeaFloorMap(_gl, _terrainField);
+        _ground = new Ground(_terrainField, _islands);
+        _creatures = new Creatures(_terrainField);
+    }
+
+    /// <summary>Switches to another kind of world (Ctrl+1..3) and starts over in it.</summary>
+    private void SetWorld(WorldPreset preset)
+    {
+        if (preset == WorldPreset.Current) return;
+        WorldPreset.Current = preset;
+        BuildWorld();
+        Respawn();
     }
 
     private void OnUpdate(double deltaTime)
@@ -418,6 +470,9 @@ public sealed class Game : IDisposable
         SkyRenderer.SetUniforms(shader, atmosphere, time, (float)_dayCycle.Elapsed);
         shader.Set("uViewProj", viewProjection);
         shader.Set("uCameraPos", eye);
+        var preset = WorldPreset.Current;
+        shader.Set("uDesertRange", new Vector2(preset.DesertLow, preset.DesertHigh));
+        shader.Set("uIslands", preset.Islands ? 1f : 0f);
         shader.Set("uAmbient", atmosphere.Ambient + new Vector3(0.7f, 0.75f, 1f) * _weather.Lightning * 0.9f); // lightning lights the world
         shader.Set("uUnderwater", eye.Y < TerrainField.WaterLevel ? 1f : 0f);
         shader.Set("uLightColor", atmosphere.LightColor * (1f - 0.45f * MathF.Max(_weather.Rain, 0.8f * _weather.Snow))); // rain and snow veil the sun
@@ -447,6 +502,12 @@ public sealed class Game : IDisposable
 
     private void OnKeyDown(IKeyboard keyboard, Key key, int scancode)
     {
+        bool ctrl = keyboard.IsKeyPressed(Key.ControlLeft) || keyboard.IsKeyPressed(Key.ControlRight);
+        if (ctrl && key >= Key.Number1 && key < Key.Number1 + WorldPreset.All.Length)
+        {
+            SetWorld(WorldPreset.All[key - Key.Number1]); // Ctrl+1..3: another kind of world
+            return;
+        }
         switch (key)
         {
             case Key.Escape when _mouseCaptured:
@@ -554,7 +615,7 @@ public sealed class Game : IDisposable
         string hand = $"{WorldObjects.Defs[(int)_selected].Name} x{_inventory[(int)_selected]}";
         if (_sky.LowQuality) mode += " | qualità bassa";
         if (_weather.Raining) mode += " | pioggia";
-        _window.Title = $"Mine | {hand} | {mode} | ore {hours:00}:{minutes:00} | {fps} FPS | " +
+        _window.Title = $"Mine | mondo {WorldPreset.Current.Name} | {hand} | {mode} | ore {hours:00}:{minutes:00} | {fps} FPS | " +
                         $"{p.X:0} {p.Y:0} {p.Z:0}{hint}";
         if (LogHud) Console.WriteLine(_window.Title); // MINE_FPS_LOG=1: for measuring without a screen
         _titleTimer = 0;

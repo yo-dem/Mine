@@ -74,6 +74,7 @@ portatili con due schede usa quella dedicata; la prima volta si riavvia da solo 
 | 1 | Fai partire una stella cadente davanti a te (debug) |
 | 2 | Fai iniziare o smettere la pioggia (premuto due volte: temporale con fulmini) |
 | 3 | Fai iniziare o smettere la neve (premuto due volte: bufera) |
+| CTRL+1 / 2 / 3 | Cambia mondo: classico, desertico (rare foreste e laghi), arcipelago (isole con coste desertiche e cuore lussureggiante) |
 | Esc | Libera il mouse (di nuovo Esc: esci) |
 
 ## Struttura
@@ -94,6 +95,7 @@ src/
     Creatures.cs          farfalle, pesci e stormi di uccelli (simulazione)
     TreeField.cs          dove crescono alberi e fiori, per bioma (boschi, alberi isolati, deserti), collisione con i tronchi
     GroundMaterials.cs    biomi, colore e copertura dell'erba (copia in C# delle funzioni dello shader)
+    WorldPreset.cs        tipi di mondo (classico, desertico, arcipelago) scelti con CTRL+1/2/3
   Rendering/
     TerrainRenderer.cs    tessere del terreno con livelli di dettaglio, costruite in background
     TerrainShaders.cs     shader di terreno e oggetti: materiali, luce, ombre, luci, foschia

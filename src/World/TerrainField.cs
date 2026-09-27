@@ -25,11 +25,11 @@ public sealed class TerrainField
     // but a few metres out the water is deep enough to swim.
     private const float DepthScale = 3f;
 
-    // Lakes (see Lakes): at most one per cell of LakeCell, on low and middling land. Each has a
+    // Lakes (see Lakes): at most one per cell of LakeCell (a share WorldPreset.LakeChance of them),
+    // on low and middling land. Each has a
     // wobbly shore LakeRadius across, banks sloping gently down to it over LakeBank metres, and a
     // floor that sinks toward its middle (then DepthScale deepens it further, like all water).
     private const float LakeCell = 400f;
-    private const float LakeChance = 0.6f;
     private const float LakeMinRadius = 40f, LakeMaxRadius = 120f;
     private const float LakeBank = 130f;
     private const float LakeMinDepth = 2f, LakeMaxDepth = 11f;
@@ -160,6 +160,7 @@ public sealed class TerrainField
 
     private float BaseHeight(float x, float z)
     {
+        if (WorldPreset.Current.Islands) return IslandHeight(x, z);
         // Large, slow swells of the land.
         float continent = _continent.Fractal(x * 0.0006f, z * 0.0006f, 3);
 
@@ -180,6 +181,31 @@ public sealed class TerrainField
 
         h = Lakes(x, z, h);
 
+        h += _detail.Fractal(x * 0.05f, z * 0.05f, 2) * 0.4f;
+        if (h < WaterLevel) h = WaterLevel - (WaterLevel - h) * DepthScale;
+        return h + Spires(x, z);
+    }
+
+    /// <summary>
+    /// The archipelago: sea everywhere but where the island noise rises above the coast line; each
+    /// island has a shallow shelf, dune-rippled sandy shores, and rises gently to wooded hills.
+    /// </summary>
+    private float IslandHeight(float x, float z)
+    {
+        float inland = GroundMaterials.Inland(x, z);
+        float h;
+        if (inland < 0f)
+            h = WaterLevel - 0.6f + inland * 10f; // the shelf, then deep water (DepthScale below)
+        else
+        {
+            float wx = _warp.Fractal(x * 0.0025f, z * 0.0025f, 2) * 90f;
+            float wz = _warp.Fractal(x * 0.0025f + 31.7f, z * 0.0025f - 17.3f, 2) * 90f;
+            float hills = _hills.Fractal((x + wx) * 0.004f, (z + wz) * 0.004f, 5);
+            float duneNoise = _dunes.Fractal(x * 0.006f, z * 0.0025f, 3);
+            float dune = 1f - MathF.Sqrt(duneNoise * duneNoise + 0.02f);
+            float shore = 1f - Smooth(0.2f, 0.8f, inland);
+            h = WaterLevel - 0.6f + inland * 12f + (hills + 0.4f) * 22f * Smooth(0.2f, 1.2f, inland) + dune * dune * 5f * shore;
+        }
         h += _detail.Fractal(x * 0.05f, z * 0.05f, 2) * 0.4f;
         if (h < WaterLevel) h = WaterLevel - (WaterLevel - h) * DepthScale;
         return h + Spires(x, z);
@@ -235,7 +261,7 @@ public sealed class TerrainField
         for (int dx = -1; dx <= 1; dx++)
         {
             uint hash = Hash(cx + dx + 9001, cz + dz - 4507);
-            if ((hash & 0xFFFF) / 65536f > LakeChance) continue;
+            if ((hash & 0xFFFF) / 65536f > WorldPreset.Current.LakeChance) continue;
             float px = (cx + dx + 0.2f + 0.6f * ((hash >> 8) & 0xFF) / 255f) * LakeCell;
             float pz = (cz + dz + 0.2f + 0.6f * ((hash >> 16) & 0xFF) / 255f) * LakeCell;
             float radius = LakeMinRadius + (LakeMaxRadius - LakeMinRadius) * ((hash >> 24) & 0xF) / 15f;

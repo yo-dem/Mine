@@ -31,9 +31,23 @@ public static class GroundMaterials
         return new Vector4((1f - pink - teal) * wet, pink * wet, teal * wet, desert);
     }
 
-    /// <summary>The desert's share of the ground at (x, z): 0 outside, 1 in its heart.</summary>
-    public static float Desert(float x, float z) =>
-        SmoothStep(0.70f, 0.76f, Noise2(x * 0.0008f, z * 0.0008f, 23f) * 0.75f + Noise2(x * 0.003f, z * 0.003f, 24f) * 0.25f);
+    /// <summary>
+    /// The desert's share of the ground at (x, z): 0 outside, 1 in its heart. In an archipelago
+    /// the shores are desert, turning lush toward the middle of each island.
+    /// </summary>
+    public static float Desert(float x, float z)
+    {
+        var preset = WorldPreset.Current;
+        if (preset.Islands) return 1f - SmoothStep(0.25f, 0.9f, Inland(x, z));
+        return SmoothStep(preset.DesertLow, preset.DesertHigh, Noise2(x * 0.0008f, z * 0.0008f, 23f) * 0.75f + Noise2(x * 0.003f, z * 0.003f, 24f) * 0.25f);
+    }
+
+    /// <summary>The archipelago's land noise: land where it exceeds WorldPreset.IslandCoast.</summary>
+    public static float IslandLand(float x, float z) =>
+        Noise2(x * 0.0012f, z * 0.0012f, 31f) * 0.7f + Noise2(x * 0.004f, z * 0.004f, 32f) * 0.3f;
+
+    /// <summary>How far inland a point of the archipelago is: below 0 at sea, 0 at the coast, 1 well inland.</summary>
+    public static float Inland(float x, float z) => (IslandLand(x, z) - WorldPreset.IslandCoast) / WorldPreset.IslandSpan;
 
     public static Vector3 GrassColor(float x, float z)
     {

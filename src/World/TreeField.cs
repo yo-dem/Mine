@@ -38,7 +38,8 @@ public sealed class TreeField
     private const int DesertBiome = 3;
 
     // Forest noise above this: woods (the same threshold for the trees, their flowers and gardens).
-    private const float WoodsThreshold = 0.0f;
+    // Woods grow where the forest noise exceeds this (set by the world preset).
+    private static float WoodsThreshold => WorldPreset.Current.WoodsThreshold;
 
     private readonly TerrainField _terrain;
     private readonly PerlinNoise _forest;
@@ -172,7 +173,7 @@ public sealed class TreeField
             float z = TerrainField.InsideTile((cz + random.NextSingle()) * CellSize, 0.35f);
             float garden = _forest.Fractal(x * 0.012f + 300f, z * 0.012f - 200f, 2);
             // The same forest noise as the trees: the thicker the wood, the more flowers.
-            float woods = Math.Clamp((_forest.Fractal(x * 0.0025f, z * 0.0025f, 3) - WoodsThreshold) / 0.15f, 0f, 1f);
+            float woods = Math.Clamp((Forest(x, z) - WoodsThreshold) / 0.15f, 0f, 1f);
             float density = Math.Clamp(garden / 0.15f, 0f, 1f) * woods;
             if (random.NextSingle() >= density * 0.8f) continue;
             float y = _terrain.Height(x, z);
@@ -219,7 +220,7 @@ public sealed class TreeField
                 if (roll > 0.015f) continue;
                 kind = TreeModels.Decoration.Starflowers;
             }
-            else if (_forest.Fractal(x * 0.0025f, z * 0.0025f, 3) > WoodsThreshold)
+            else if (Forest(x, z) > WoodsThreshold)
             {
                 // Under the woods.
                 if (roll > 0.35f) continue;
@@ -357,10 +358,21 @@ public sealed class TreeField
         });
     }
 
+    /// <summary>
+    /// The forest noise at (x, z), which decides where the woods are. In an archipelago it rises
+    /// toward the middle of the islands, so their hearts are thickly wooded.
+    /// </summary>
+    private float Forest(float x, float z)
+    {
+        float forest = _forest.Fractal(x * 0.0025f, z * 0.0025f, 3);
+        if (WorldPreset.Current.Islands) forest += 0.4f * Math.Clamp((GroundMaterials.Inland(x, z) - 0.8f) / 1.2f, 0f, 1f);
+        return forest;
+    }
+
     private TreeInstance[] Generate(int cx, int cz)
     {
         float centerX = (cx + 0.5f) * CellSize, centerZ = (cz + 0.5f) * CellSize;
-        float forest = _forest.Fractal(centerX * 0.0025f, centerZ * 0.0025f, 3);
+        float forest = Forest(centerX, centerZ);
         var random = new Random((int)Hash(cx, cz));
         float desert = GroundMaterials.Desert(centerX, centerZ);
 
