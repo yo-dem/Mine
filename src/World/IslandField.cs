@@ -9,7 +9,7 @@ public sealed record Island(long Id, Vector3 Center, float Radius, float Depth, 
 /// <summary>
 /// A waterfall pouring off an island: a stream runs across the top along <see cref="Direction"/>
 /// to <see cref="Lip"/> on the edge, then the water arcs out and falls to <see cref="Bottom"/>,
-/// into a pond <see cref="PondRadius"/> wide (0 when it falls into the sea or a lake instead).
+/// into a basin <see cref="PondRadius"/> wide (there always is one: see IslandField.Generate).
 /// </summary>
 public readonly record struct Waterfall(Vector3 Lip, Vector3 Direction, float Width, float Bottom, float PondRadius);
 
@@ -162,17 +162,18 @@ public sealed class IslandField
         long id = ((long)cx << 32) ^ (uint)cz;
 
         var island = new Island(id, center, radius, depth, seed, [], []);
-        var falls = new Waterfall[site.FallAngles.Length];
-        for (int i = 0; i < falls.Length; i++)
+        // A waterfall always ends in a basin: where the land below cannot hold one (the sea, a lake,
+        // a steep slope), the island has no waterfall on that side.
+        var falls = new List<Waterfall>();
+        for (int i = 0; i < site.FallAngles.Length; i++)
         {
+            var foot = FallFoot(site, i);
+            if (!_terrain.PondAt(foot.X, foot.Y, out var p) || MathF.Abs(p.X - foot.X) + MathF.Abs(p.Z - foot.Y) > 0.1f) continue;
             float a = site.FallAngles[i];
             var dir = new Vector3(MathF.Cos(a), 0, MathF.Sin(a));
             var lip = center + dir * EdgeRadius(island, a);
             lip.Y = TopHeight(island, 1f);
-            var foot = FallFoot(site, i);
-            bool pond = _terrain.PondAt(foot.X, foot.Y, out var p) && MathF.Abs(p.X - foot.X) + MathF.Abs(p.Z - foot.Y) < 0.1f;
-            float bottom = pond ? p.Surface : MathF.Max(_terrain.Height(foot.X, foot.Y), TerrainField.WaterLevel);
-            falls[i] = new Waterfall(lip, dir, site.FallWidths[i], bottom, pond ? p.Radius : 0f);
+            falls.Add(new Waterfall(lip, dir, site.FallWidths[i], p.Surface, p.Radius));
         }
         int treeCount = 1 + (int)(radius / 12f) + random.Next(2);
         var trees = new List<TreeInstance>();
@@ -185,7 +186,7 @@ public sealed class IslandField
             p.Y = TopHeight(island, r) - 0.2f;
             trees.Add(new TreeInstance(p, random.NextSingle() * MathF.Tau, 0.7f + 0.4f * random.NextSingle(), SkyTrees[random.Next(SkyTrees.Length)]));
         }
-        return island with { Trees = trees.ToArray(), Falls = falls };
+        return island with { Trees = trees.ToArray(), Falls = falls.ToArray() };
     }
 
     private static float CellDistance(Vector3 p, int cx, int cz)

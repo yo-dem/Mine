@@ -36,7 +36,9 @@ public sealed class TerrainField
 
     // Ponds under the islands' waterfalls (see Ponds): a basin PondRadius-ish wide, ringed by a
     // bank at least half a layer above the water, then a slope back down to the land.
-    private const float PondBank = 2f, PondSlope = 4f;
+    private const float PondBank = 2f, PondSlope = 6f;
+    // A lot of water falls, so the basins are broad: this plus PondPerWidth times the fall's width.
+    private const float PondMinRadius = 8f, PondPerWidth = 5f;
 
     private const float SpireCell = 180f;      // at most one spire per cell of this size
     private const float SpireChance = 0.22f;
@@ -124,7 +126,18 @@ public sealed class TerrainField
             var foot = IslandField.FallFoot(site, i);
             float ground = BaseHeight(foot.X, foot.Y);
             if (ground < WaterLevel + 1.5f) continue;
-            ponds.Add(new Pond(foot.X, foot.Y, 3f + 2f * site.FallWidths[i], Layer(ground) - 0.2f));
+            float radius = PondMinRadius + PondPerWidth * site.FallWidths[i];
+            float surface = Layer(ground) - 0.2f;
+            // Only on land that can hold it: not by the water, and flat enough that the bank would
+            // not have to be a tall dam on the downhill side.
+            bool fits = true;
+            for (int k = 0; k < 12 && fits; k++)
+            {
+                float a = k * MathF.Tau / 12;
+                float h = BaseHeight(foot.X + MathF.Cos(a) * (radius + PondBank), foot.Y + MathF.Sin(a) * (radius + PondBank));
+                fits = h > WaterLevel + 1f && h > surface - 2.5f;
+            }
+            if (fits) ponds.Add(new Pond(foot.X, foot.Y, radius, surface));
         }
         return ponds.ToArray();
     });
@@ -137,7 +150,7 @@ public sealed class TerrainField
         if (d < p.Radius)
         {
             float f = d / p.Radius;
-            return MathF.Min(h, p.Surface - 0.5f - 1.2f * (1f - f * f));
+            return MathF.Min(h, p.Surface - 0.5f - 2.2f * (1f - f * f));
         }
         float bank = p.Surface + 0.45f;
         if (d < p.Radius + PondBank) return MathF.Max(h, bank);

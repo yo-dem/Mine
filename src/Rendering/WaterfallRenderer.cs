@@ -8,7 +8,8 @@ namespace Mine.Rendering;
 /// The islands' waterfalls, thin rivulets of glowing silvery water: a trickle across the island's
 /// top, a few threads of water arcing over the edge and falling straight to the ground (drawn at
 /// least about a pixel wide however far away, so they never flicker out), a little spray where they
-/// land, and the pond they fill, lit by ripples spreading from the fall. The water visibly runs:
+/// land, a veil of vapour drifting round the falling water, and the basin they fill, lit by ripples
+/// spreading from the fall. The water visibly runs:
 /// bright pulses race down the threads over darker water between them. Where the falls near the
 /// player land, splashes of droplets leap and fall back (point sprites with no vertex data, each
 /// deriving its arc from its index and the time, like the motes). All translucent and self-lit, blended
@@ -21,7 +22,7 @@ public sealed unsafe class WaterfallRenderer : IDisposable
     // Vertex: position (3), u, v, kind, extra (see the fragment shader for what each kind uses them
     // for), then the centre of the thread's cross-section (3) and its half-width (0 = never widened).
     private const int FloatsPerVertex = 11;
-    private const float Stream = 0, Sheet = 1, PondSurface = 2, Mist = 3;
+    private const float Stream = 0, Sheet = 1, PondSurface = 2, Vapour = 3;
 
     private const string VertexSource = """
         #version 330 core
@@ -44,7 +45,16 @@ public sealed unsafe class WaterfallRenderer : IDisposable
         {
             vec3 p = aPos;
             vThin = 1.0;
-            if (aAxis.w > 0.0)
+            if (aKind.x > 2.5)
+            {
+                // Vapour: a ribbon along the fall, always turned to face the camera (no edges to
+                // give it away); u = 0..1 across, aAxis = the fall's centre line and half-width.
+                vec3 toCamera = uCameraPos - aAxis.xyz;
+                vec3 side = cross(vec3(0.0, 1.0, 0.0), toCamera);
+                side = dot(side, side) > 1e-4 ? normalize(side) : vec3(1.0, 0.0, 0.0);
+                p = aAxis.xyz + side * (aUv.x * 2.0 - 1.0) * aAxis.w;
+            }
+            else if (aAxis.w > 0.0)
             {
                 // Keep threads at least ~1.5 pixels wide: widen them far away, spreading their light.
                 float minHalf = length(aAxis.xyz - uCameraPos) * uPixelAngle * 0.75;
@@ -92,6 +102,7 @@ public sealed unsafe class WaterfallRenderer : IDisposable
             float t = uTime;
             vec3 glow;
             float alpha;
+            vec3 body = Deep; // the colour the water itself covers the background with
             if (vKind == 0)
             {
                 // The stream on the island: u across (0..1), v metres downstream.
@@ -134,18 +145,27 @@ public sealed unsafe class WaterfallRenderer : IDisposable
             }
             else
             {
-                // Mist and spray where the water lands: u around, v = 0 at the water up to 1.
-                float swirl = vnoise(vec2(vUv.x * 12.0 + t * 0.4, vUv.y * 3.0 - t * 0.9));
-                float fade = (1.0 - vUv.y) * (1.0 - vUv.y);
-                alpha = 0.2 * swirl * fade;
-                glow = Silver * swirl * fade * 0.4;
+                // Vapour round the falling water: u across (0..1), v metres fallen, extra = the whole
+                // drop. Wisps drift slowly down and sideways, thicker toward the bottom where the
+                // spray rises, gone at the top and fading right at the water.
+                float across = abs(vUv.x * 2.0 - 1.0);
+                float f = vUv.y / vExtra;
+                float wisps = vnoise(vec2(vUv.x * 3.0 + t * 0.12, vUv.y * 0.07 - t * 0.3)) * 0.6
+                            + vnoise(vec2(vUv.x * 7.0 - t * 0.2, vUv.y * 0.2 - t * 0.55)) * 0.4;
+                float density = (1.0 - across) * (1.0 - across) * smoothstep(0.15, 0.7, wisps)
+                              * smoothstep(0.0, 0.2, f) * smoothstep(vExtra, vExtra - 2.0, vUv.y)
+                              * mix(0.45, 1.0, smoothstep(0.55, 1.0, f));
+                alpha = 0.6 * density;
+                // Paler than the sky behind it by day, softly glowing in the dark at night.
+                body = vec3(0.85, 0.9, 1.0) * mix(1.6, 0.3, uNight);
+                glow = Silver * density * mix(0.1, 0.5, uNight);
             }
 
             float dist = length(vWorldPos - uCameraPos);
             float fade = 1.0 - smoothstep(uFadeEnd * 0.6, uFadeEnd, dist);
             glow *= mix(0.9, 1.15, uNight);
             // Premultiplied: the water's own colour covers what is behind by alpha, the glow adds.
-            FragColor = vec4((Deep * alpha + glow) * fade, alpha * fade);
+            FragColor = vec4((body * alpha + glow) * fade, alpha * fade);
         }
         """;
 
@@ -257,8 +277,8 @@ public sealed unsafe class WaterfallRenderer : IDisposable
             _falls.Add(fall);
             BuildStream(island, fall);
             BuildSheet(fall);
-            if (fall.PondRadius > 0) BuildPond(fall);
-            BuildMist(fall);
+            BuildPond(fall);
+            BuildVapour(fall);
         }
 
         _vertexCount = _mesh.Count / FloatsPerVertex;
@@ -276,7 +296,7 @@ public sealed unsafe class WaterfallRenderer : IDisposable
         {
             var foot = FootOf(fall);
             if (Vector3.DistanceSquared(foot, center) > radius * radius) continue;
-            _lights.Add(new PointLight(foot + new Vector3(0, 1.5f, 0), new Vector3(0.6f, 0.85f, 1.0f) * 1.6f, fall.PondRadius * 1.5f + 6f));
+            _lights.Add(new PointLight(foot + new Vector3(0, 1.5f, 0), new Vector3(0.6f, 0.85f, 1.0f) * 2.0f, fall.PondRadius * 1.5f + 6f));
         }
         return _lights;
     }
@@ -441,21 +461,30 @@ public sealed unsafe class WaterfallRenderer : IDisposable
         }
     }
 
-    private void BuildMist(Waterfall fall)
+    private void BuildVapour(Waterfall fall)
     {
-        // A wide, low column of spray round the foot of the fall.
-        const int Sides = 16;
-        var center = FootOf(fall) - new Vector3(0, 0.3f, 0);
-        float bottom = 0.6f + fall.Width, top = 1.2f + 2f * fall.Width, height = 2f + 3f * fall.Width;
-        for (int s = 0; s < Sides; s++)
+        // A camera-facing ribbon down the fall (see the vertex shader), narrow at the top and
+        // billowing out over the last stretch, where the spray rises.
+        const int Rings = 30;
+        float total = fall.Lip.Y - fall.Bottom;
+        if (total <= 1f) return;
+        for (int k = 0; k < Rings; k++)
         {
-            float a0 = s * MathF.Tau / Sides, a1 = (s + 1) * MathF.Tau / Sides;
-            var d0 = new Vector3(MathF.Cos(a0), 0, MathF.Sin(a0));
-            var d1 = new Vector3(MathF.Cos(a1), 0, MathF.Sin(a1));
-            float u0 = s / (float)Sides, u1 = (s + 1) / (float)Sides;
-            Quad(center + d0 * bottom, center + d1 * bottom, center + d1 * top + new Vector3(0, height, 0), center + d0 * top + new Vector3(0, height, 0),
-                new(u0, 0), new(u1, 0), new(u1, 1), new(u0, 1), Mist, 0);
+            float d0 = total * MathF.Pow(k / (float)Rings, 1.5f), d1 = total * MathF.Pow((k + 1) / (float)Rings, 1.5f);
+            var c0 = fall.Lip + fall.Direction * Reach(d0) - new Vector3(0, d0, 0);
+            var c1 = fall.Lip + fall.Direction * Reach(d1) - new Vector3(0, d1, 0);
+            float h0 = VapourHalfWidth(fall, d0, total), h1 = VapourHalfWidth(fall, d1, total);
+            Quad(c0, c0, c1, c1, new(0, d0), new(1, d0), new(1, d1), new(0, d1), Vapour, total, c0, h0, c1, h1);
         }
+    }
+
+    private static float VapourHalfWidth(Waterfall fall, float drop, float total) =>
+        2f + 4f * fall.Width + MathF.Min(drop * 0.03f, 3f) + 8f * Smooth(total - 30f, total, drop);
+
+    private static float Smooth(float edge0, float edge1, float x)
+    {
+        float t = Math.Clamp((x - edge0) / (edge1 - edge0), 0f, 1f);
+        return t * t * (3 - 2 * t);
     }
 
     /// <summary>
