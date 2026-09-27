@@ -74,7 +74,7 @@ portatili con due schede usa quella dedicata; la prima volta si riavvia da solo 
 | 1 | Fai partire una stella cadente davanti a te (debug) |
 | 2 | Fai iniziare o smettere la pioggia (premuto due volte: temporale con fulmini) |
 | 3 | Fai iniziare o smettere la neve (premuto due volte: bufera) |
-| CTRL+1 / 2 / 3 / 4 | Cambia mondo: classico (con le isole volanti), desertico (foreste rare, laghi rarissimi), arcipelago (isolotti con coste desertiche e cuore lussureggiante), piatto (pianure dolci e sobrie: poca erba e pochi alberi, un solo tono di colore, poche nuvole, di notte solo stelle e l'ombra del pianeta) |
+| CTRL+1 / 2 / 3 / 4 / 5 | Cambia mondo: classico (con le isole volanti), desertico (foreste rare, laghi rarissimi), arcipelago (isolotti con coste desertiche e cuore lussureggiante), piatto (pianure dolci e sobrie: poca erba e pochi alberi, un solo tono di colore, poche nuvole, di notte solo stelle e l'ombra del pianeta), base (come il piatto ma con biomi riconoscibili, vegetazione a gruppi della stessa specie, e il pianeta come ombra dal bordo luminoso) |
 | Esc | Libera il mouse (di nuovo Esc: esci) |
 
 ## Struttura
@@ -95,7 +95,7 @@ src/
     Creatures.cs          farfalle, pesci e stormi di uccelli (simulazione)
     TreeField.cs          dove crescono alberi e fiori, per bioma (boschi, alberi isolati, deserti), collisione con i tronchi
     GroundMaterials.cs    biomi, colore e copertura dell'erba (copia in C# delle funzioni dello shader)
-    WorldPreset.cs        tipi di mondo (classico, desertico, arcipelago, piatto) scelti con CTRL+1..4
+    WorldPreset.cs        tipi di mondo (classico, desertico, arcipelago, piatto, base) scelti con CTRL+1..5
   Rendering/
     TerrainRenderer.cs    tessere del terreno con livelli di dettaglio, costruite in background
     TerrainShaders.cs     shader di terreno e oggetti: materiali, luce, ombre, luci, foschia

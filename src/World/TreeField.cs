@@ -250,16 +250,19 @@ public sealed class TreeField
     private void AddPalmGroves(List<TreeInstance> list, int cx, int cz, Random random)
     {
         const float water = TerrainField.WaterLevel;
+        // Where lone trees are rare, palms grow only in the hearts of their groves, close together.
+        float lone = WorldPreset.Current.LoneTrees;
+        float start = 0.05f + 0.15f * (1f - lone), ramp = 0.2f - 0.12f * (1f - lone);
         for (int i = 0; i < 30; i++)
         {
             float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.5f);
             float z = TerrainField.InsideTile((cz + random.NextSingle()) * CellSize, 0.5f);
             float grove = _forest.Fractal(x * 0.011f - 510f, z * 0.011f + 330f, 2);
-            if (grove < 0.05f) continue;
+            if (grove < start) continue;
             float y = _terrain.Height(x, z);
             if (y < water + 0.8f) continue;
             float shore = Math.Clamp((water + 12f - y) / 9f, 0f, 1f); // 1 up to 3 m above the water, 0 from 12 m
-            float density = Math.Clamp((grove - 0.05f) / 0.2f, 0f, 1f) * (0.08f + 0.92f * shore);
+            float density = Math.Clamp((grove - start) / ramp, 0f, 1f) * (0.08f * lone + (1f - 0.08f * lone) * shore);
             if (random.NextSingle() >= density * 0.5f * WorldPreset.Current.TreeDensity || _terrain.Normal(x, z, 1f).Y < 0.8f) continue;
             list.Add(RandomPalm(x, y, z, random.NextSingle() * MathF.Tau, random));
         }
@@ -378,8 +381,8 @@ public sealed class TreeField
 
         // Thick woods where the forest noise is high, the odd lone tree elsewhere; in the deserts,
         // sparse groves of dry trees. Under the canopy, shrubs and saplings.
-        int count = forest > WoodsThreshold ? 8 + (int)((forest - WoodsThreshold) * 55) : random.NextSingle() < 0.3f ? 1 + random.Next(2) : 0;
-        count = (int)MathF.Round(float.Lerp(count, forest > WoodsThreshold ? 1 + forest * 10 : random.NextSingle() < 0.25f ? 1 : 0, desert));
+        int count = forest > WoodsThreshold ? 8 + (int)((forest - WoodsThreshold) * 55) : random.NextSingle() < 0.3f * WorldPreset.Current.LoneTrees ? 1 + random.Next(2) : 0;
+        count = (int)MathF.Round(float.Lerp(count, forest > WoodsThreshold ? 1 + forest * 10 : random.NextSingle() < 0.25f * WorldPreset.Current.LoneTrees ? 1 : 0, desert));
         count = (int)MathF.Round(count * WorldPreset.Current.TreeDensity);
         int undergrowth = forest > WoodsThreshold ? count / 2 : 0;
 

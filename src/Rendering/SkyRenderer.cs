@@ -39,7 +39,8 @@ public sealed class SkyRenderer : IDisposable
         uniform float uSnow;      // 0 = clear .. 1 = full snowfall: overcast and cold
         uniform float uSnowCover; // snow lying on the world: 0 = none .. 1 = everything white
         uniform float uClearSky;  // 0 = the usual clouds .. 1 = hardly any (WorldPreset.ClearSky)
-        uniform float uPlainNight; // 1: the planet only as a shadow, no auroras, galaxy or nebulae
+        uniform float uPlainNight;
+        uniform float uPlanetRim; // 1: the planet's shadow keeps a glowing rim (WorldPreset.PlanetRim) // 1: the planet only as a shadow, no auroras, galaxy or nebulae
         uniform float uMagic;     // 1 = the full magical night and bioluminescence, lower = more modest (WorldPreset.Magic)
         uniform float uStorm;     // 0..1: how much of the rain is a storm
         uniform float uBlizzard;  // 0..1: how much of the snow is a blizzard
@@ -419,8 +420,9 @@ public sealed class SkyRenderer : IDisposable
             if (moonAlpha > 0.0) c += moonHalo(d, mq) * moonAlpha * (1.0 - moon) * mix(0.3, 1.0, uMagic) * (1.0 - uPlainNight);
             if (moon > 0.0 && uPlainNight > 0.5)
             {
-                // Only its shadow: a dark disk hiding the stars.
-                c = mix(c, c * 0.25, moon);
+                // Only its shadow: a dark disk hiding the stars (with a softly glowing rim, if asked).
+                float limb = pow(clamp(dot(mq, mq), 0.0, 1.0), 6.0);
+                c = mix(c, c * 0.25 + vec3(0.55, 0.4, 0.9) * limb * 0.45 * uPlanetRim, moon);
             }
             else if (moon > 0.0)
             {
@@ -641,6 +643,7 @@ public sealed class SkyRenderer : IDisposable
         shader.Set("uMagic", WorldPreset.Current.Magic);
         shader.Set("uClearSky", WorldPreset.Current.ClearSky);
         shader.Set("uPlainNight", WorldPreset.Current.PlainNight ? 1f : 0f);
+        shader.Set("uPlanetRim", WorldPreset.Current.PlanetRim ? 1f : 0f);
         shader.Set("uStorm", Storm);
         shader.Set("uBlizzard", Blizzard);
         shader.Set("uLightning", Lightning);

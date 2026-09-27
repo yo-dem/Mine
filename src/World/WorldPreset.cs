@@ -33,7 +33,11 @@ public sealed record WorldPreset(
     // halo or small moons), no auroras, no galaxy or nebulae.
     bool PlainNight = false,
     // How varied the grass colours are: 1 = patches of every hue, 0 = one muted tone.
-    float ColorVariety = 1f)
+    float ColorVariety = 1f,
+    // Share of the usual lone trees scattered outside the woods (low: vegetation grows in groups).
+    float LoneTrees = 1f,
+    // With PlainNight: the planet's dark disk keeps a glowing rim.
+    bool PlanetRim = false)
 {
     /// <summary>The world as it was built: woods, meadows, lakes, a few deserts.</summary>
     public static readonly WorldPreset Classic = new("classico", 0.70f, 0.76f, 0.0f, 0.6f, false);
@@ -48,7 +52,16 @@ public sealed record WorldPreset(
     public static readonly WorldPreset Flat = new("piatto", 0.72f, 0.78f, 0.25f, 0.35f, false, LandLift: 1.5f, Relief: 0.3f, Magic: 0.3f,
         GrassDensity: 0.35f, TreeDensity: 0.35f, Saturation: 0.8f, ClearSky: 0.7f, PlainNight: true, ColorVariety: 0.25f);
 
-    public static readonly WorldPreset[] All = [Classic, Desert, Archipelago, Flat];
+    /// <summary>
+    /// The base world, built from the flat one: gentle plains, readable biomes, vegetation in groves
+    /// of one kind with hardly a lone tree, a sober night where the giant planet shows as a dark
+    /// disk with a glowing rim.
+    /// </summary>
+    public static readonly WorldPreset Base = new("base", 0.72f, 0.78f, 0.15f, 0.35f, false, LandLift: 1.5f, Relief: 0.3f, Magic: 0.35f,
+        GrassDensity: 0.5f, TreeDensity: 0.75f, Saturation: 0.95f, ClearSky: 0.6f, PlainNight: true, ColorVariety: 0.6f,
+        LoneTrees: 0.08f, PlanetRim: true);
+
+    public static readonly WorldPreset[] All = [Classic, Desert, Archipelago, Flat, Base];
 
     public static WorldPreset Current { get; set; } = Classic;
 
