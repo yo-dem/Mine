@@ -98,6 +98,7 @@ public sealed class IslandField
     /// <summary>The island of a cell, if it has one (see <see cref="IslandSite"/>).</summary>
     public static IslandSite? Site(int seed, int cx, int cz)
     {
+        if (WorldPreset.Current != WorldPreset.Classic) return null; // floating islands belong to the classic world
         var random = new Random((int)Hash(seed, cx, cz));
         if (random.NextSingle() > Chance) return null;
         float x = (cx + 0.2f + 0.6f * random.NextSingle()) * CellSize;

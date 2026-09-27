@@ -70,13 +70,13 @@ public static class TerrainShaders
         // The world preset (WorldPreset): the desert noise range, and 1 in an archipelago.
         uniform vec2 uDesertRange;
         uniform float uIslands;
-        const float IslandCoast = 0.56, IslandSpan = 0.15;
+        const float IslandCoast = 0.6, IslandSpan = 0.12;
 
         float desertWeight(vec2 xz)
         {
             if (uIslands > 0.5)
             {
-                float land = noise2(xz * 0.0012, 31.0) * 0.7 + noise2(xz * 0.004, 32.0) * 0.3;
+                float land = noise2(xz * 0.0065, 31.0) * 0.7 + noise2(xz * 0.02, 32.0) * 0.3;
                 return 1.0 - smoothstep(0.25, 0.9, (land - IslandCoast) / IslandSpan);
             }
             return smoothstep(uDesertRange.x, uDesertRange.y, noise2(xz * 0.0008, 23.0) * 0.75 + noise2(xz * 0.003, 24.0) * 0.25);

@@ -15,13 +15,15 @@ public sealed record WorldPreset(
     // Share of lake cells that hold a lake.
     float LakeChance,
     // An archipelago: sea everywhere but islands, sandy desert shores, lush woods inland.
-    bool Islands)
+    bool Islands,
+    // Metres the whole land is raised by (a dry world keeps water only in its deepest hollows).
+    float LandLift = 0f)
 {
     /// <summary>The world as it was built: woods, meadows, lakes, a few deserts.</summary>
     public static readonly WorldPreset Classic = new("classico", 0.70f, 0.76f, 0.0f, 0.6f, false);
 
     /// <summary>Mostly desert, with rare woods and lakes.</summary>
-    public static readonly WorldPreset Desert = new("deserto", 0.30f, 0.38f, 0.3f, 0.1f, false);
+    public static readonly WorldPreset Desert = new("deserto", 0.30f, 0.38f, 0.3f, 0.01f, false, LandLift: 9f);
 
     /// <summary>Islands in the sea: desert on the coasts, lush toward the middle.</summary>
     public static readonly WorldPreset Archipelago = new("arcipelago", 0.70f, 0.76f, 0.0f, 0.0f, true);
@@ -32,5 +34,5 @@ public sealed record WorldPreset(
 
     // Archipelago shape (see GroundMaterials.IslandLand): the coast is where the land noise crosses
     // IslandCoast; `inland` counts IslandSpan steps of it from there (0 at the coast, 1 well inland).
-    public const float IslandCoast = 0.56f, IslandSpan = 0.15f;
+    public const float IslandCoast = 0.6f, IslandSpan = 0.12f;
 }

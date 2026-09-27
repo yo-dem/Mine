@@ -179,6 +179,7 @@ public sealed class TerrainField
 
         float h = 20f + continent * 35f + hills * 30f * (1f - 0.4f * desert) + dune * dune * (9f + 6f * desert) * lowland;
 
+        h += WorldPreset.Current.LandLift;
         h = Lakes(x, z, h);
 
         h += _detail.Fractal(x * 0.05f, z * 0.05f, 2) * 0.4f;
@@ -195,7 +196,7 @@ public sealed class TerrainField
         float inland = GroundMaterials.Inland(x, z);
         float h;
         if (inland < 0f)
-            h = WaterLevel - 0.6f + inland * 10f; // the shelf, then deep water (DepthScale below)
+            h = WaterLevel - 0.6f + inland * 4f; // the shelf, then deep water (DepthScale below)
         else
         {
             float wx = _warp.Fractal(x * 0.0025f, z * 0.0025f, 2) * 90f;
@@ -204,7 +205,7 @@ public sealed class TerrainField
             float duneNoise = _dunes.Fractal(x * 0.006f, z * 0.0025f, 3);
             float dune = 1f - MathF.Sqrt(duneNoise * duneNoise + 0.02f);
             float shore = 1f - Smooth(0.2f, 0.8f, inland);
-            h = WaterLevel - 0.6f + inland * 12f + (hills + 0.4f) * 22f * Smooth(0.2f, 1.2f, inland) + dune * dune * 5f * shore;
+            h = WaterLevel - 0.6f + inland * 3.5f + (hills + 0.4f) * 7f * Smooth(0.2f, 1.2f, inland) + dune * dune * 2.5f * shore;
         }
         h += _detail.Fractal(x * 0.05f, z * 0.05f, 2) * 0.4f;
         if (h < WaterLevel) h = WaterLevel - (WaterLevel - h) * DepthScale;

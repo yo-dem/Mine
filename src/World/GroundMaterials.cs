@@ -44,7 +44,7 @@ public static class GroundMaterials
 
     /// <summary>The archipelago's land noise: land where it exceeds WorldPreset.IslandCoast.</summary>
     public static float IslandLand(float x, float z) =>
-        Noise2(x * 0.0012f, z * 0.0012f, 31f) * 0.7f + Noise2(x * 0.004f, z * 0.004f, 32f) * 0.3f;
+        Noise2(x * 0.0065f, z * 0.0065f, 31f) * 0.7f + Noise2(x * 0.02f, z * 0.02f, 32f) * 0.3f;
 
     /// <summary>How far inland a point of the archipelago is: below 0 at sea, 0 at the coast, 1 well inland.</summary>
     public static float Inland(float x, float z) => (IslandLand(x, z) - WorldPreset.IslandCoast) / WorldPreset.IslandSpan;

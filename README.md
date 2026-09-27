@@ -74,7 +74,7 @@ portatili con due schede usa quella dedicata; la prima volta si riavvia da solo 
 | 1 | Fai partire una stella cadente davanti a te (debug) |
 | 2 | Fai iniziare o smettere la pioggia (premuto due volte: temporale con fulmini) |
 | 3 | Fai iniziare o smettere la neve (premuto due volte: bufera) |
-| CTRL+1 / 2 / 3 | Cambia mondo: classico, desertico (rare foreste e laghi), arcipelago (isole con coste desertiche e cuore lussureggiante) |
+| CTRL+1 / 2 / 3 | Cambia mondo: classico (con le isole volanti), desertico (foreste rare, laghi rarissimi), arcipelago (isolotti con coste desertiche e cuore lussureggiante) |
 | Esc | Libera il mouse (di nuovo Esc: esci) |
 
 ## Struttura

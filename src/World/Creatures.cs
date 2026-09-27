@@ -152,7 +152,9 @@ public sealed class Creatures
             if (!b.Active || HorizontalDistance(b.Position, player) > ButterflyRange)
             {
                 if (i >= butterflies) { b.Active = false; continue; }
-                b.Active = TrySpawn(player, 6f, ButterflyRange * 0.8f, (x, z, h) => h > water + 0.3f && !_terrain.InPond(x, z, 1f), out var p);
+                // Only over grass (where the flowers are too): in deserts butterflies are rare.
+                b.Active = TrySpawn(player, 6f, ButterflyRange * 0.8f, (x, z, h) => h > water + 0.3f && !_terrain.InPond(x, z, 1f)
+                    && GroundMaterials.GrassWeight(new Vector3(x, h, z), _terrain.Normal(x, z).Y) > 0.5f, out var p);
                 if (!b.Active) continue;
                 b.Position = p + new Vector3(0, 0.6f + 1.8f * _random.NextSingle(), 0);
                 b.Velocity = RandomHorizontal() * 1.2f;
