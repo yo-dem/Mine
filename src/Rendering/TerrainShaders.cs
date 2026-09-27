@@ -522,13 +522,41 @@ public static class TerrainShaders
             return a * 0.6 + b * 0.4;
         }
 
-        vec3 waterNormal(vec2 p, float dist)
+        // Rain rings: in each cell of a fine grid a drop lands now and then, and a ring spreads and
+        // fades. Returns the slope the rings add (xy) and how bright their crests glow (z).
+        vec3 rainRings(vec2 p)
+        {
+            // One layer of cells (a denser grid instead of two layers: a quarter of the work).
+            vec3 sum = vec3(0.0);
+            vec2 q = p * 2.2;
+            vec2 cell = floor(q);
+            for (int y = -1; y <= 1; y++)
+            for (int x = -1; x <= 1; x++)
+            {
+                vec2 id = cell + vec2(x, y);
+                float h = hash13(vec3(id, 31.0));
+                float age = fract(uTime * (0.7 + 0.5 * h) + h * 7.0);
+                vec2 center = id + vec2(fract(h * 17.31), fract(h * 91.7));
+                vec2 off = q - center;
+                float r = length(off);
+                float ringR = age * 0.6;
+                float k = (r - ringR) * 22.0; // (no pow of a negative base: NaN on some GPUs)
+                float wave = exp(-k * k) * (1.0 - age) * (1.0 - age);
+                sum.xy += off / max(r, 1e-3) * wave;
+                sum.z += wave;
+            }
+            return sum;
+        }
+
+        vec3 waterNormal(vec2 p, float dist, vec3 rings)
         {
             float e = 0.4 + dist * 0.01;
             float amplitude = 0.35 / (1.0 + dist * 0.015); // calmer far away, where ripples would only shimmer
             float sx = (waves(p + vec2(e, 0.0)) - waves(p - vec2(e, 0.0))) * amplitude / (2.0 * e);
             float sz = (waves(p + vec2(0.0, e)) - waves(p - vec2(0.0, e))) * amplitude / (2.0 * e);
-            return normalize(vec3(-sx * 6.0, 1.0, -sz * 6.0));
+            vec3 n = vec3(-sx * 6.0, 1.0, -sz * 6.0);
+            n.xz += rings.xy * 0.25 * uRain * smoothstep(60.0, 20.0, dist);
+            return normalize(n);
         }
 
         void main()
@@ -537,7 +565,9 @@ public static class TerrainShaders
             vec3 toFragment = vWorldPos - uCameraPos;
             float dist = length(toFragment);
             vec3 rd = toFragment / dist;
-            vec3 n = waterNormal(vWorldPos.xz, dist);
+            // Rain rings, computed once for both the ripples and their glow.
+            vec3 rings = uRain > 0.01 && dist < 60.0 ? rainRings(vWorldPos.xz) : vec3(0.0);
+            vec3 n = waterNormal(vWorldPos.xz, dist, rings);
 
             // How much water the view ray crosses before hitting the bottom, and how deep it is there.
             float surface = viewDepth(gl_FragCoord.z);
@@ -565,6 +595,11 @@ public static class TerrainShaders
                 vec3 up = skyColor(normalize(vec3(rd.x, abs(rd.y) * 1.5, rd.z)), true);
                 color = mix(vec3(0.08, 0.12, 0.3), min(up, vec3(1.5)) * 0.8, smoothstep(0.05, 0.4, abs(rd.y)));
             }
+
+            // Rain rings glow faintly, as if each drop woke the bioluminescence.
+            if (uRain > 0.01 && dist < 60.0)
+                color += mix(vec3(0.3, 0.8, 1.0), vec3(0.8, 0.45, 1.0), 0.5 + 0.5 * sin(vWorldPos.x * 0.3 + vWorldPos.z * 0.2))
+                    * rings.z * 0.12 * uRain * mix(0.6, 1.5, uNight) * smoothstep(60.0, 20.0, dist);
 
             // A glittering path toward the sun or the moon.
             float toLight = max(dot(r, uLightDir), 0.0);

@@ -30,7 +30,7 @@ Nel cielo galleggiano isole fluttuanti con alberi in cima e cristalli luminosi a
 ci puoi atterrare e camminarci sopra. Le nuvole sono volumetriche, si colorano all'alba e al tramonto
 e proiettano ombre in movimento sul paesaggio. Il bloom fa brillare sole, luci e cristalli,
 e l'aria è piena di particelle: granelli dorati di giorno,
-spore lilla al tramonto, lucciole di notte.
+spore lilla al tramonto, lucciole di notte. Col tasto 2 arriva la pioggia: il cielo si chiude in un indaco profondo, cade una pioggia fitta di fili sottilissimi e argentei, e sull'acqua si aprono cerchi luminosi.
 
 > Nato come clone di Minecraft: la versione a blocchi è sul branch `main`.
 > Questo branch (`terreno-realistico`) la sostituisce con un terreno continuo.
@@ -60,6 +60,7 @@ portatili con due schede usa quella dedicata; la prima volta si riavvia da solo 
 | Click destro | Piazza un cristallo sul terreno |
 | Q | Qualità alta / bassa (bassa: automatica sulle schede integrate) |
 | 1 | Fai partire una stella cadente davanti a te (debug) |
+| 2 | Fai iniziare o smettere la pioggia |
 | Esc | Libera il mouse (di nuovo Esc: esci) |
 
 ## Struttura
@@ -73,6 +74,7 @@ src/
     Noise.cs              Perlin noise 2D
     TerrainField.cs       forma del terreno: altezza in ogni punto
     DayCycle.cs           orologio e colori di cielo e luce per ogni ora
+    Weather.cs            pioggia: accesa/spenta col tasto 2, intensità che sale e scende piano
     WorldObjects.cs       cristalli da raccogliere e piazzare, e le loro luci
     IslandField.cs        isole fluttuanti: dove sono, forma, alberi in cima
     Ground.cs             dove si può camminare: terreno e cime delle isole
@@ -90,6 +92,7 @@ src/
     CloudNoise.cs         texture di rumore 3D per le nuvole
     PostProcess.cs        buffer HDR, bloom, color grading
     MoteRenderer.cs       particelle magiche: granelli, spore, lucciole
+    RainRenderer.cs       pioggia di luce (gocce generate nello shader)
     WaterRenderer.cs      mari e laghi (lo shader è in TerrainShaders)
     CreatureRenderer.cs   modelli e animazione delle creature
     IslandRenderer.cs     modelli delle isole fluttuanti

@@ -23,6 +23,7 @@ public sealed class MoteRenderer : IDisposable
         uniform float uDusk;           // 0..1, strongest around sunrise and sunset
         uniform float uHeightAboveGround;
         uniform float uPointScale;     // viewport height / (2 tan(fov / 2))
+        uniform float uRain;           // most motes hide from the rain
 
         out vec3 vColor;
 
@@ -52,7 +53,7 @@ public sealed class MoteRenderer : IDisposable
             vec3 spore = mix(vec3(0.85, 0.55, 1.0), vec3(1.0, 0.6, 0.75), seed.z) * 1.2;
             vec3 firefly = mix(vec3(0.8, 1.0, 0.35), vec3(1.0, 0.8, 0.3), seed.x) * blink * 3.5;
             vec3 dayColor = mix(sparkle, spore, uDusk);
-            vColor = mix(dayColor, firefly, uNight) * fade;
+            vColor = mix(dayColor, firefly, uNight) * fade * (1.0 - 0.75 * uRain);
 
             vec4 clip = uViewProj * vec4(pos, 1.0);
             gl_Position = clip;
@@ -99,6 +100,7 @@ public sealed class MoteRenderer : IDisposable
         _shader.Set("uDusk", Math.Clamp((atmosphere.Haze - 0.3f) / 0.5f, 0f, 1f));
         _shader.Set("uHeightAboveGround", heightAboveGround);
         _shader.Set("uPointScale", pointScale);
+        _shader.Set("uRain", SkyRenderer.Rain);
 
         _gl.Enable(EnableCap.ProgramPointSize);
         _gl.Enable(EnableCap.Blend);

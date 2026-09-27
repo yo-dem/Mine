@@ -45,6 +45,8 @@ public sealed class Game : IDisposable
     private Shader _creatureShader = null!;
     private CloudNoise _cloudNoise = null!;
     private MoteRenderer _motes = null!;
+    private RainRenderer _rain = null!;
+    private readonly Weather _weather = new();
     private PostProcess _post = null!;
     private Shader _waterShader = null!;
     private WaterRenderer _water = null!;
@@ -123,6 +125,7 @@ public sealed class Game : IDisposable
         _creatureShader = new Shader(_gl, TerrainShaders.CreatureVertex, TerrainShaders.CreatureFragment);
         _cloudNoise = new CloudNoise(_gl);
         _motes = new MoteRenderer(_gl);
+        _rain = new RainRenderer(_gl);
         _post = new PostProcess(_gl);
         _waterShader = new Shader(_gl, TerrainShaders.WaterVertex, TerrainShaders.WaterFragment);
         _water = new WaterRenderer(_gl);
@@ -132,11 +135,16 @@ public sealed class Game : IDisposable
                       || renderer.Contains("llvmpipe", StringComparison.OrdinalIgnoreCase));
 
         Respawn();
+        if (Environment.GetEnvironmentVariable("MINE_RAIN") == "1") _weather.Toggle();
 
         _gl.Enable(EnableCap.DepthTest);
         _gl.Enable(EnableCap.CullFace);
         OnFramebufferResize(_window.FramebufferSize);
     }
+
+    // Debugging aids, from environment variables: MINE_FPS_LOG=1 prints the HUD line to the console,
+    // MINE_RAIN=1 starts with rain.
+    private static readonly bool LogHud = Environment.GetEnvironmentVariable("MINE_FPS_LOG") == "1";
 
     private void Respawn()
     {
@@ -207,6 +215,8 @@ public sealed class Game : IDisposable
 
         bool fastTime = _mouseCaptured && _keyboard.IsKeyPressed(Key.T);
         _dayCycle.Update((float)deltaTime * (fastTime ? FastTimeScale : 1f));
+        _weather.Update(dt);
+        SkyRenderer.Rain = _weather.Rain;
 
         int islandVersion = _islands.Version;
         _islands.Update(_player.Position);
@@ -315,6 +325,7 @@ public sealed class Game : IDisposable
         float heightAboveGround = eye.Y - _ground.Height(eye.X, eye.Z, eye.Y);
         float pointScale = _post.SceneHeight / (2f * MathF.Tan(FieldOfView / 2));
         _motes.Draw(view * projection, eye, atmosphere, time, heightAboveGround, pointScale);
+        if (eye.Y > TerrainField.WaterLevel) _rain.Draw(view * projection, eye, time, _weather.Rain, atmosphere.Night, pointScale);
 
         _post.Finish(atmosphere.Night);
 
@@ -331,11 +342,11 @@ public sealed class Game : IDisposable
         shader.Set("uCameraPos", eye);
         shader.Set("uAmbient", atmosphere.Ambient);
         shader.Set("uUnderwater", eye.Y < TerrainField.WaterLevel ? 1f : 0f);
-        shader.Set("uLightColor", atmosphere.LightColor);
+        shader.Set("uLightColor", atmosphere.LightColor * (1f - 0.45f * _weather.Rain)); // the rain veils the sun
         shader.Set("uLightDir", atmosphere.LightDirection);
         shader.Set("uFogStart", fogEnd * 0.75f); // only the last stretch, to hide the world's edge
         shader.Set("uFogEnd", fogEnd);
-        shader.Set("uMistDensity", float.Lerp(0.0012f, 0.0025f, atmosphere.Haze)); // a bit more at dawn and dusk
+        shader.Set("uMistDensity", float.Lerp(0.0012f, 0.0025f, atmosphere.Haze) * (1f + 2.5f * _weather.Rain)); // more at dawn, dusk and in the rain
         shader.Set("uShadowMap", 0);
         shader.Set("uShadowTexel", 1f / ShadowMap.Size);
         shader.Set("uShadowBias", ShadowMap.DepthBias);
@@ -372,6 +383,9 @@ public sealed class Game : IDisposable
                 break;
             case Key.Q:
                 SetLowQuality(!_sky.LowQuality);
+                break;
+            case Key.Number2: // rain on / off
+                _weather.Toggle();
                 break;
             case Key.Number1: // debug: a shooting star across the view
                 SkyRenderer.LaunchShootingStar((float)_time, _player.LookDirection);
@@ -449,8 +463,10 @@ public sealed class Game : IDisposable
         var (hours, minutes) = _dayCycle.Clock;
         string hand = $"{WorldObjects.Defs[(int)_selected].Name} x{_inventory[(int)_selected]}";
         if (_sky.LowQuality) mode += " | qualità bassa";
+        if (_weather.Raining) mode += " | pioggia";
         _window.Title = $"Mine | {hand} | {mode} | ore {hours:00}:{minutes:00} | {fps} FPS | " +
                         $"{p.X:0} {p.Y:0} {p.Z:0}{hint}";
+        if (LogHud) Console.WriteLine(_window.Title); // MINE_FPS_LOG=1: for measuring without a screen
         _titleTimer = 0;
         _frames = 0;
     }
@@ -463,6 +479,7 @@ public sealed class Game : IDisposable
         _islandRenderer?.Dispose();
         _cloudNoise?.Dispose();
         _motes?.Dispose();
+        _rain?.Dispose();
         _post?.Dispose();
         _waterShader?.Dispose();
         _creatureShader?.Dispose();

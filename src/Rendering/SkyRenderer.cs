@@ -33,25 +33,40 @@ public sealed class SkyRenderer : IDisposable
     public const string Glsl = Hash + """
         uniform sampler3D uCloudNoise;
         uniform float uCloudTime; // game seconds, so clouds speed up with the clock
+        uniform float uRain;      // 0 = clear .. 1 = full rain: the clouds close in
         const float CloudBottom = 260.0;
         const float CloudTop = 760.0;
 
         // Cloud density at a point: broad shapes from low-frequency noise, rounded at the base and
         // thinning toward the top of the layer; detail erodes the edges into wisps. lod blurs the
         // noise (mip level), for long ray-march steps and soft cloud shadows.
-        float cloudDensity(vec3 p, bool detail, float lod)
+        vec3 cloudCoords(vec3 p) { return (p + vec3(1.0, 0.0, 0.35) * uCloudTime * 3.0) * 0.0011; }
+
+        // The coverage threshold at a point: a very broad noise opens clear skies between banks of
+        // big towering clouds, and rain lowers it until the sky is overcast. It changes over
+        // kilometres, so the ray march reads it once per step and reuses it for the light samples.
+        float cloudThreshold(vec3 p, float lod)
+        {
+            float macro = textureLod(uCloudNoise, cloudCoords(p) * 0.23 + 0.11, lod + 1.0).r;
+            return 0.6 + (0.5 - macro) * 0.32 - 0.3 * uRain;
+        }
+
+        // Density before clamping to 0..1 (negative: clear air, the more so the farther from a cloud).
+        float cloudDensityRaw(vec3 p, bool detail, float lod, float threshold)
         {
             float h = (p.y - CloudBottom) / (CloudTop - CloudBottom);
-            if (h < 0.0 || h > 1.0) return 0.0;
-            vec3 wind = vec3(1.0, 0.0, 0.35) * uCloudTime * 3.0;
-            vec3 q = (p + wind) * 0.0011;
+            if (h < 0.0 || h > 1.0) return -1.0;
+            vec3 q = cloudCoords(p);
             float shape = textureLod(uCloudNoise, q * vec3(1.0, 1.8, 1.0), lod).r * 0.7 + textureLod(uCloudNoise, q * 2.7 + 0.37, lod + 1.4).r * 0.3;
             float profile = smoothstep(0.0, 0.12, h) * smoothstep(1.0, 0.4, h);
-            // A very broad noise opens clear skies between banks of big towering clouds.
-            float macro = textureLod(uCloudNoise, q * 0.23 + 0.11, lod + 1.0).r;
-            float d = (shape * profile - (0.6 + (0.5 - macro) * 0.32)) * 4.2;
+            float d = (shape * profile - threshold) * 4.2;
             if (detail && d > 0.0) d -= (1.0 - textureLod(uCloudNoise, q * 5.0 + 0.71, lod + 2.3).r) * 0.2;
-            return clamp(d, 0.0, 1.0);
+            return d;
+        }
+
+        float cloudDensity(vec3 p, bool detail, float lod)
+        {
+            return clamp(cloudDensityRaw(p, detail, lod, cloudThreshold(p, lod)), 0.0, 1.0);
         }
 
         uniform vec3 uZenith;
@@ -139,7 +154,8 @@ public sealed class SkyRenderer : IDisposable
             float a = acos(clamp(dot(d, uMoonDir), -1.0, 1.0));
             float edge = max(a - 0.139, 0.0); // the disk's angular radius
             vec3 c = vec3(0.62, 0.66, 1.0) * (exp(-edge * 28.0) * 0.3 + exp(-edge * 7.0) * 0.2);
-            float ring = exp(-pow((a - 0.42) / 0.028, 2.0)) * 0.07;
+            float k = (a - 0.42) / 0.028; // (no pow of a negative base: NaN on some GPUs)
+            float ring = exp(-k * k) * 0.07;
             c += mix(vec3(1.0, 0.6, 0.8), vec3(0.5, 0.75, 1.0), smoothstep(0.39, 0.45, a)) * ring;
             return c;
         }
@@ -270,6 +286,8 @@ public sealed class SkyRenderer : IDisposable
             // with a faint pink belt just above it.
             float belt = smoothstep(0.04, 0.1, up) * smoothstep(0.32, 0.12, up);
             c += vec3(0.5, 0.28, 0.38) * belt * (1.0 - sunSide) * uHaze * 0.3;
+            // Rain dims the sky toward a deep, glowing indigo (never a dull grey).
+            c = mix(c, c * 0.55 + vec3(0.05, 0.035, 0.12), uRain * 0.6);
             // Below the horizon (distant fog) fade to a slightly darker horizon.
             c = mix(c, horizon * 0.85, clamp(-d.y * 4.0, 0.0, 1.0));
 
@@ -390,11 +408,17 @@ public sealed class SkyRenderer : IDisposable
 
             float transmittance = 1.0;
             vec3 light = vec3(0.0);
+            int skip = 0;
             for (int i = 0; i < 64; i++)
             {
                 if (i >= uCloudSteps) break;
+                // Well clear of any cloud at the last step: step over this one (empty sky costs half).
+                if (skip > 0) { skip = 0; t += stepLength; continue; }
                 vec3 p = ro + rd * t;
-                float density = cloudDensity(p, true, lod);
+                float threshold = cloudThreshold(p, lod);
+                float raw = cloudDensityRaw(p, true, lod, threshold);
+                float density = clamp(raw, 0.0, 1.0);
+                if (raw < -1.2) skip = 1;
                 if (density > 0.001)
                 {
                     float depth = 0.0;
@@ -402,7 +426,7 @@ public sealed class SkyRenderer : IDisposable
                     for (int j = 1; j <= 4; j++)
                     {
                         if (j > uCloudLightSteps) break;
-                        depth += cloudDensity(p + lightDir * (float(j) * lightStep), false, lod + 1.0) * lightStep;
+                        depth += clamp(cloudDensityRaw(p + lightDir * (float(j) * lightStep), false, lod + 1.0, threshold), 0.0, 1.0) * lightStep;
                     }
                     float toLight = exp(-depth * 0.04); // deep, dark cores; bright sunlit rims
                     float powder = 1.0 - exp(-density * 5.0);
@@ -469,10 +493,14 @@ public sealed class SkyRenderer : IDisposable
         shader.Set("uGalaxyDir", atmosphere.GalaxyDirection);
         shader.Set("uGalaxyGlow", atmosphere.GalaxyGlow);
         shader.Set("uTime", time);
+        shader.Set("uRain", Rain);
         shader.Set("uManualStar", _manualStar.Time);
         shader.Set("uManualSeed", _manualStar.Seed);
         shader.Set("uManualStart", _manualStar.Start);
     }
+
+    /// <summary>How hard it is raining (0..1, see <see cref="Weather"/>), sent with the sky uniforms.</summary>
+    public static float Rain { get; set; }
 
     private static (float Time, float Seed, Vector3 Start) _manualStar = (-1e4f, 0f, Vector3.UnitY);
 
@@ -495,7 +523,7 @@ public sealed class SkyRenderer : IDisposable
     public void Draw(Matrix4x4 inverseViewProjection, Vector3 cameraPosition, float cloudTime, in Atmosphere atmosphere, float time)
     {
         _shader.Use();
-        _shader.Set("uCloudSteps", LowQuality ? 16 : 40);
+        _shader.Set("uCloudSteps", LowQuality ? 16 : 32);
         _shader.Set("uCloudLightSteps", LowQuality ? 2 : 3);
         _shader.Set("uInvViewProj", inverseViewProjection);
         _shader.Set("uCameraPos", cameraPosition);
