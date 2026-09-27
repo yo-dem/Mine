@@ -473,6 +473,7 @@ public sealed class Game : IDisposable
         var preset = WorldPreset.Current;
         shader.Set("uDesertRange", new Vector2(preset.DesertLow, preset.DesertHigh));
         shader.Set("uIslands", preset.Islands ? 1f : 0f);
+        shader.Set("uColorVariety", preset.ColorVariety);
         shader.Set("uAmbient", atmosphere.Ambient + new Vector3(0.7f, 0.75f, 1f) * _weather.Lightning * 0.9f); // lightning lights the world
         shader.Set("uUnderwater", eye.Y < TerrainField.WaterLevel ? 1f : 0f);
         shader.Set("uLightColor", atmosphere.LightColor * (1f - 0.45f * MathF.Max(_weather.Rain, 0.8f * _weather.Snow))); // rain and snow veil the sun

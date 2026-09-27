@@ -112,7 +112,8 @@ public sealed unsafe class PostProcess : IDisposable
         uniform float uBloomStrength;
         uniform float uExposure;
         uniform float uNight;
-        uniform float uCold; // snow: 0 = none .. 1 = a cold, pale, blue-grey world
+        uniform float uCold;
+        uniform float uSaturation; // 1.25 = the usual rich grade (WorldPreset.Saturation) // snow: 0 = none .. 1 = a cold, pale, blue-grey world
         out vec4 FragColor;
 
         // Soft shoulder above 0.7: bright colours saturate instead of clipping to white.
@@ -133,7 +134,7 @@ public sealed unsafe class PostProcess : IDisposable
 
             // Dreamy grade: richer colour, shadows drifting to teal-violet, highlights to gold.
             float luma = dot(color, vec3(0.3, 0.59, 0.11));
-            color = mix(vec3(luma), color, 1.25);
+            color = mix(vec3(luma), color, uSaturation);
             vec3 shadowTint = mix(vec3(0.05, 0.02, 0.10), vec3(0.06, 0.02, 0.13), uNight);
             color += shadowTint * (1.0 - smoothstep(0.0, 0.45, luma));
             color *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), smoothstep(0.5, 1.0, luma));
@@ -310,6 +311,7 @@ public sealed unsafe class PostProcess : IDisposable
         _composite.Set("uBloomStrength", BloomStrength);
         _composite.Set("uExposure", Exposure);
         _composite.Set("uNight", night);
+        _composite.Set("uSaturation", Mine.World.WorldPreset.Current.Saturation);
         _composite.Set("uCold", cold);
         _gl.ActiveTexture(TextureUnit.Texture0);
         _gl.BindTexture(TextureTarget.Texture2D, _sceneColor);

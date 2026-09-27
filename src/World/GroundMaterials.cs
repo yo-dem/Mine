@@ -15,6 +15,8 @@ public static class GroundMaterials
     private static readonly Vector3 TealHue = new(0.10f, 0.44f, 0.48f);
     private static readonly Vector3 DesertHue = new(0.60f, 0.46f, 0.36f);
     private const float BiomeTint = 0.4f;
+    // The one tone grass drifts to in worlds with little colour variety (WorldPreset.ColorVariety).
+    private static readonly Vector3 MutedGrass = new(0.36f, 0.32f, 0.44f);
 
     /// <summary>
     /// How much each biome rules at (x, z), summing to 1: the indigo woods (pines, cypresses, giants),
@@ -60,6 +62,7 @@ public static class GroundMaterials
         c = Vector3.Lerp(c, new Vector3(0.16f, 0.32f, 0.58f), SmoothStep(0.68f, 0.74f, patch)); // sky blue
         var b = Biome(x, z);
         c = Vector3.Lerp(c, IndigoHue * b.X + PinkHue * b.Y + TealHue * b.Z + DesertHue * b.W, BiomeTint);
+        c = Vector3.Lerp(MutedGrass, c, WorldPreset.Current.ColorVariety);
         return c * (0.85f + 0.3f * shade);
     }
 

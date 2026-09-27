@@ -38,6 +38,8 @@ public sealed class SkyRenderer : IDisposable
         uniform float uRain;      // 0 = clear .. 1 = full rain: the clouds close in
         uniform float uSnow;      // 0 = clear .. 1 = full snowfall: overcast and cold
         uniform float uSnowCover; // snow lying on the world: 0 = none .. 1 = everything white
+        uniform float uClearSky;  // 0 = the usual clouds .. 1 = hardly any (WorldPreset.ClearSky)
+        uniform float uPlainNight; // 1: the planet only as a shadow, no auroras, galaxy or nebulae
         uniform float uMagic;     // 1 = the full magical night and bioluminescence, lower = more modest (WorldPreset.Magic)
         uniform float uStorm;     // 0..1: how much of the rain is a storm
         uniform float uBlizzard;  // 0..1: how much of the snow is a blizzard
@@ -70,7 +72,7 @@ public sealed class SkyRenderer : IDisposable
         float cloudThreshold(vec3 p, float lod)
         {
             float macro = textureLod(uCloudNoise, cloudCoords(p) * 0.23 + 0.11, lod + 1.0).r;
-            return 0.6 + (0.5 - macro) * 0.32 - 0.3 * max(uRain, uSnow * 0.85) - 0.1 * max(uStorm, uBlizzard);
+            return 0.6 + (0.5 - macro) * 0.32 + 0.22 * uClearSky - 0.3 * max(uRain, uSnow * 0.85) - 0.1 * max(uStorm, uBlizzard);
         }
 
         // Density before clamping to 0..1 (negative: clear air, the more so the farther from a cloud).
@@ -389,8 +391,8 @@ public sealed class SkyRenderer : IDisposable
             float moonAlpha = smoothstep(-0.02, 0.3, d.y) * uNight;
             float moon = diskMask(mq, d, uMoonDir, 0.02) * moonAlpha;
             float behind = aboveHorizon * (1.0 - moon);
-            c += nebula(s) * starVisibility * behind * uMagic;
-            c += galaxy(d) * behind * mix(0.2, 1.0, uMagic);
+            c += nebula(s) * starVisibility * behind * uMagic * (1.0 - uPlainNight);
+            c += galaxy(d) * behind * mix(0.2, 1.0, uMagic) * (1.0 - uPlainNight);
             if (starVisibility > 0.0)
             {
                 vec3 p = s * 220.0;
@@ -414,14 +416,19 @@ public sealed class SkyRenderer : IDisposable
             // A small square sun, and the round moon with its halo.
             vec2 sq = bodyCoords(d, uSunDir, 0.045, 0.3);
             c += vec3(5.0, 4.4, 3.6) * diskMask(sq, d, uSunDir, 0.0) * aboveHorizon * (1.0 - uNight);
-            if (moonAlpha > 0.0) c += moonHalo(d, mq) * moonAlpha * (1.0 - moon) * mix(0.3, 1.0, uMagic);
-            if (moon > 0.0)
+            if (moonAlpha > 0.0) c += moonHalo(d, mq) * moonAlpha * (1.0 - moon) * mix(0.3, 1.0, uMagic) * (1.0 - uPlainNight);
+            if (moon > 0.0 && uPlainNight > 0.5)
+            {
+                // Only its shadow: a dark disk hiding the stars.
+                c = mix(c, c * 0.25, moon);
+            }
+            else if (moon > 0.0)
             {
                 // A faint veil of the night air over the planet, tinged with the sky.
                 vec3 veiled = mix(planetSurface(mq), c * 0.8 + vec3(0.1, 0.08, 0.2), 0.15);
                 c = mix(c, c * 0.2 + veiled, moon);
             }
-            if (moonAlpha > 0.0 && dot(d, uMoonDir) > 0.5)
+            if (moonAlpha > 0.0 && dot(d, uMoonDir) > 0.5 && uPlainNight < 0.5)
             {
                 // Its two small moons, beside it.
                 for (int i = 0; i < 2; i++)
@@ -435,7 +442,7 @@ public sealed class SkyRenderer : IDisposable
                 }
             }
             // Auroras hang in the air, in front of everything in the sky.
-            c += aurora(d) * aboveHorizon * (1.0 - max(uStorm, uBlizzard)) * uMagic * uMagic;
+            c += aurora(d) * aboveHorizon * (1.0 - max(uStorm, uBlizzard)) * uMagic * uMagic * (1.0 - uPlainNight);
             if (uLightning > 0.01) c += lightningBolt(d);
             // Shooting stars burn up in the air, far nearer than anything in the sky: they cross
             // in front of the moon, the galaxy and the nebulae (the clouds still hide them).
@@ -632,6 +639,8 @@ public sealed class SkyRenderer : IDisposable
         shader.Set("uSnow", Snow);
         shader.Set("uSnowCover", SnowCover);
         shader.Set("uMagic", WorldPreset.Current.Magic);
+        shader.Set("uClearSky", WorldPreset.Current.ClearSky);
+        shader.Set("uPlainNight", WorldPreset.Current.PlainNight ? 1f : 0f);
         shader.Set("uStorm", Storm);
         shader.Set("uBlizzard", Blizzard);
         shader.Set("uLightning", Lightning);

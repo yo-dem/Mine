@@ -143,7 +143,7 @@ public sealed unsafe class GrassRenderer : IDisposable
         var random = new Random(tx * 73856093 ^ tz * 19349663);
         // Tall meadows are a little denser: more attempts everywhere, some dropped on ordinary ground.
         const float averageClump = 11f; // blades per clump on average: ~2 tufts of ~5.5 blades
-        int count = (int)(TileSize * TileSize * BladesPerSquareMetre * 1.6f / averageClump);
+        int count = (int)(TileSize * TileSize * BladesPerSquareMetre * WorldPreset.Current.GrassDensity * 1.6f / averageClump);
         var blades = new List<float>((int)(count * averageClump * 0.7f) * FloatsPerBlade);
         for (int b = 0; b < count; b++)
         {

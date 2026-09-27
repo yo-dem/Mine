@@ -70,6 +70,7 @@ public static class TerrainShaders
         // The world preset (WorldPreset): the desert noise range, and 1 in an archipelago.
         uniform vec2 uDesertRange;
         uniform float uIslands;
+        uniform float uColorVariety;
         const float IslandCoast = 0.6, IslandSpan = 0.12;
 
         float desertWeight(vec2 xz)
@@ -107,6 +108,7 @@ public static class TerrainShaders
             vec4 b = biomeWeights(xz);
             vec3 tint = vec3(0.20, 0.24, 0.56) * b.x + vec3(0.62, 0.24, 0.50) * b.y + vec3(0.10, 0.44, 0.48) * b.z + vec3(0.60, 0.46, 0.36) * b.w;
             c = mix(c, tint, 0.4);
+            c = mix(vec3(0.36, 0.32, 0.44), c, uColorVariety); // WorldPreset.ColorVariety (GroundMaterials.MutedGrass)
             return c * (0.85 + 0.3 * shade);
         }
 

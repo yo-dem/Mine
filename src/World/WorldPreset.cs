@@ -22,7 +22,18 @@ public sealed record WorldPreset(
     float Relief = 1f,
     // How magical the light is: 1 = full bioluminescence and a blazing night sky; lower dims the
     // water's glow, the glitter, the galaxy, nebulae, stars, auroras and the planet's halo.
-    float Magic = 1f)
+    float Magic = 1f,
+    // Shares of the usual grass blades and trees.
+    float GrassDensity = 1f, float TreeDensity = 1f,
+    // Colour saturation of the final image (1.25 is the usual rich grade; 1 = neutral).
+    float Saturation = 1.25f,
+    // Clears the sky: 0 = the usual clouds, 1 = hardly any.
+    float ClearSky = 0f,
+    // A sober night: the planet only as a dark shadow against the stars (no lit crescent, rim,
+    // halo or small moons), no auroras, no galaxy or nebulae.
+    bool PlainNight = false,
+    // How varied the grass colours are: 1 = patches of every hue, 0 = one muted tone.
+    float ColorVariety = 1f)
 {
     /// <summary>The world as it was built: woods, meadows, lakes, a few deserts.</summary>
     public static readonly WorldPreset Classic = new("classico", 0.70f, 0.76f, 0.0f, 0.6f, false);
@@ -34,7 +45,8 @@ public sealed record WorldPreset(
     public static readonly WorldPreset Archipelago = new("arcipelago", 0.70f, 0.76f, 0.0f, 0.0f, true);
 
     /// <summary>A quiet, flat world: gentle plains, moderate woods, calmer water and a modest night sky.</summary>
-    public static readonly WorldPreset Flat = new("piatto", 0.72f, 0.78f, 0.12f, 0.35f, false, LandLift: 1.5f, Relief: 0.3f, Magic: 0.3f);
+    public static readonly WorldPreset Flat = new("piatto", 0.72f, 0.78f, 0.25f, 0.35f, false, LandLift: 1.5f, Relief: 0.3f, Magic: 0.3f,
+        GrassDensity: 0.35f, TreeDensity: 0.35f, Saturation: 0.8f, ClearSky: 0.7f, PlainNight: true, ColorVariety: 0.25f);
 
     public static readonly WorldPreset[] All = [Classic, Desert, Archipelago, Flat];
 

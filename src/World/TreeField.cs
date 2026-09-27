@@ -260,7 +260,7 @@ public sealed class TreeField
             if (y < water + 0.8f) continue;
             float shore = Math.Clamp((water + 12f - y) / 9f, 0f, 1f); // 1 up to 3 m above the water, 0 from 12 m
             float density = Math.Clamp((grove - 0.05f) / 0.2f, 0f, 1f) * (0.08f + 0.92f * shore);
-            if (random.NextSingle() >= density * 0.5f || _terrain.Normal(x, z, 1f).Y < 0.8f) continue;
+            if (random.NextSingle() >= density * 0.5f * WorldPreset.Current.TreeDensity || _terrain.Normal(x, z, 1f).Y < 0.8f) continue;
             list.Add(RandomPalm(x, y, z, random.NextSingle() * MathF.Tau, random));
         }
     }
@@ -380,6 +380,7 @@ public sealed class TreeField
         // sparse groves of dry trees. Under the canopy, shrubs and saplings.
         int count = forest > WoodsThreshold ? 8 + (int)((forest - WoodsThreshold) * 55) : random.NextSingle() < 0.3f ? 1 + random.Next(2) : 0;
         count = (int)MathF.Round(float.Lerp(count, forest > WoodsThreshold ? 1 + forest * 10 : random.NextSingle() < 0.25f ? 1 : 0, desert));
+        count = (int)MathF.Round(count * WorldPreset.Current.TreeDensity);
         int undergrowth = forest > WoodsThreshold ? count / 2 : 0;
 
         var trees = new List<TreeInstance>(count + undergrowth);
