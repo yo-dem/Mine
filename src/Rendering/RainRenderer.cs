@@ -14,13 +14,14 @@ namespace Mine.Rendering;
 /// </summary>
 public sealed class RainRenderer : IDisposable
 {
-    private const int Count = 20000;
+    private const int Count = 36000; // in a storm; about 20000 in plain rain
 
     private const string VertexSource = "#version 330 core\n" + SkyRenderer.Hash + """
         uniform mat4 uViewProj;
         uniform vec3 uCameraPos;
         uniform float uTime;
         uniform float uRain;
+        uniform float uStorm;
         uniform float uNight;
         uniform float uPixelScale; // viewport height / (2 tan(fov / 2)): pixels per metre at 1 m
 
@@ -40,8 +41,9 @@ public sealed class RainRenderer : IDisposable
             // Drops appear gradually as the rain thickens: each has its own threshold.
             float present = smoothstep(kind * 0.9, kind * 0.9 + 0.1, uRain);
 
-            vec3 fall = normalize(vec3(0.22, -1.0, 0.1));
-            float speed = 9.0 + 5.0 * seed.y;
+            // A storm drives the rain harder and slants it in the wind.
+            vec3 fall = normalize(vec3(0.22 + 0.4 * uStorm, -1.0, 0.1 + 0.12 * uStorm));
+            float speed = (9.0 + 5.0 * seed.y) * (1.0 + 0.5 * uStorm);
             vec3 home = seed * Box + fall * speed * uTime;
             vec3 center = uCameraPos + vec3(0.0, 4.0, 0.0);
             vec3 rel = mod(home - center, Box) - Box * 0.5;
@@ -98,14 +100,16 @@ public sealed class RainRenderer : IDisposable
     }
 
     /// <summary>Draws the rain into the HDR scene (after everything that can hide it).</summary>
-    public void Draw(Matrix4x4 viewProjection, Vector3 camera, float time, float rain, float night, float pixelScale)
+    public void Draw(Matrix4x4 viewProjection, Vector3 camera, float time, float rain, float storm, float night, float pixelScale)
     {
         if (rain <= 0.001f) return;
+        int drops = (int)(Count * (0.56f + 0.44f * storm));
         _shader.Use();
         _shader.Set("uViewProj", viewProjection);
         _shader.Set("uCameraPos", camera);
         _shader.Set("uTime", time);
         _shader.Set("uRain", rain);
+        _shader.Set("uStorm", storm);
         _shader.Set("uNight", night);
         _shader.Set("uPixelScale", pixelScale);
 
@@ -114,7 +118,7 @@ public sealed class RainRenderer : IDisposable
         _gl.DepthMask(false);
         _gl.Disable(EnableCap.CullFace);
         _gl.BindVertexArray(_vao);
-        _gl.DrawArrays(PrimitiveType.Triangles, 0, Count * 6);
+        _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)(drops * 6));
         _gl.Enable(EnableCap.CullFace);
         _gl.DepthMask(true);
         _gl.Disable(EnableCap.Blend);

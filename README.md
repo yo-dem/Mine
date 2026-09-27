@@ -38,7 +38,9 @@ e ricadono. Lungo i rivoli si vede l'acqua scorrere, a impulsi di luce che scend
 e proiettano ombre in movimento sul paesaggio. Il bloom fa brillare sole, luci e cristalli,
 e l'aria è piena di particelle: granelli dorati di giorno,
 spore lilla al tramonto, lucciole di notte. Col tasto 2 arriva la pioggia: il cielo si chiude in un indaco profondo, cade una pioggia fitta di fili sottilissimi e argentei, e sull'acqua si aprono cerchi luminosi. Col tasto 3 nevica: il cielo diventa grigio-azzurro, i colori si fanno freddi, cadono fiocchi
-lenti e la neve si posa, prima sulle cime e poi sempre più in basso, fino a coprire prati, alberi e colline; quando smette si scioglie piano.
+lenti e la neve si posa, prima sulle cime e poi sempre più in basso, fino a coprire prati, alberi e colline; quando smette si scioglie piano. Premendo due volte di seguito il 2 arriva un temporale: pioggia fitta
+spinta dal vento e fulmini che squarciano il cielo e illuminano tutto; premendo due volte il 3 una bufera di neve, con fiocchi
+fitti portati dal vento e una foschia bianca che cancella l'orizzonte.
 
 > Nato come clone di Minecraft: la versione a blocchi è sul branch `main`.
 > Questo branch (`terreno-realistico`) la sostituisce con un terreno continuo.
@@ -70,8 +72,8 @@ portatili con due schede usa quella dedicata; la prima volta si riavvia da solo 
 | F11 o Alt+Invio | Schermo intero / finestra (il gioco parte a schermo intero) |
 | F10 | Sposta il gioco sul monitor successivo |
 | 1 | Fai partire una stella cadente davanti a te (debug) |
-| 2 | Fai iniziare o smettere la pioggia |
-| 3 | Fai iniziare o smettere la neve |
+| 2 | Fai iniziare o smettere la pioggia (premuto due volte: temporale con fulmini) |
+| 3 | Fai iniziare o smettere la neve (premuto due volte: bufera) |
 | Esc | Libera il mouse (di nuovo Esc: esci) |
 
 ## Struttura

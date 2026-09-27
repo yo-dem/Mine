@@ -252,6 +252,13 @@ public static class TerrainShaders
             float edge = smoothstep(uFogStart, uFogEnd, dist) * cutThrough;
             color = mix(color, sky, edge);
 
+            // A blizzard: blowing snow whites out the distance within a few tens of metres.
+            if (uBlizzard > 0.001)
+            {
+                vec3 whiteout = vec3(0.74, 0.78, 0.86) * mix(1.0, 0.18, uNight);
+                color = mix(color, whiteout, (1.0 - exp(-dist * 0.018 * uBlizzard)) * (0.4 + 0.6 * cutThrough));
+            }
+
             // Under water: a deep indigo murk that thickens quickly with distance, lit faintly
             // from above; glowing things still shine through it.
             if (uUnderwater > 0.5)

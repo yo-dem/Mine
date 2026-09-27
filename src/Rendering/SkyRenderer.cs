@@ -38,6 +38,10 @@ public sealed class SkyRenderer : IDisposable
         uniform float uRain;      // 0 = clear .. 1 = full rain: the clouds close in
         uniform float uSnow;      // 0 = clear .. 1 = full snowfall: overcast and cold
         uniform float uSnowCover; // snow lying on the world: 0 = none .. 1 = everything white
+        uniform float uStorm;     // 0..1: how much of the rain is a storm
+        uniform float uBlizzard;  // 0..1: how much of the snow is a blizzard
+        uniform float uLightning; // brightness of the current lightning flash
+        uniform vec2 uLightningBolt; // azimuth of the bolt (radians), seed of its shape
 
         const vec3 SnowColor = vec3(0.9, 0.93, 1.0);
 
@@ -65,7 +69,7 @@ public sealed class SkyRenderer : IDisposable
         float cloudThreshold(vec3 p, float lod)
         {
             float macro = textureLod(uCloudNoise, cloudCoords(p) * 0.23 + 0.11, lod + 1.0).r;
-            return 0.6 + (0.5 - macro) * 0.32 - 0.3 * max(uRain, uSnow * 0.85);
+            return 0.6 + (0.5 - macro) * 0.32 - 0.3 * max(uRain, uSnow * 0.85) - 0.1 * max(uStorm, uBlizzard);
         }
 
         // Density before clamping to 0..1 (negative: clear air, the more so the farther from a cloud).
@@ -180,6 +184,26 @@ public sealed class SkyRenderer : IDisposable
             float side = 0.5 + 0.5 * dot(normalize(q + vec2(1e-4)), normalize(PlanetLight.xy));
             return mix(vec3(0.5, 0.4, 1.0), vec3(0.95, 0.4, 0.95), side)
                  * (exp(-edge * 22.0) * (0.15 + 0.35 * side) + exp(-edge * 5.0) * 0.12);
+        }
+
+        // A lightning bolt from the clouds down to the horizon at uLightningBolt.x: a jagged path
+        // (zigzags at four scales, from the seed) with a blazing core and a soft glow.
+        vec3 lightningBolt(vec3 d)
+        {
+            float da = atan(d.z, d.x) - uLightningBolt.x;
+            da = mod(da + 3.14159, 6.28318) - 3.14159;
+            if (abs(da) > 0.4 || d.y < 0.0 || d.y > 0.5) return vec3(0.0);
+            float path = 0.0, amp = 0.05;
+            for (int i = 0; i < 4; i++)
+            {
+                float k = d.y * 12.0 * exp2(float(i));
+                float a0 = hash13(vec3(floor(k), uLightningBolt.y, float(i))) - 0.5;
+                float a1 = hash13(vec3(floor(k) + 1.0, uLightningBolt.y, float(i))) - 0.5;
+                path += mix(a0, a1, fract(k)) * amp;
+                amp *= 0.5;
+            }
+            float w = abs(da - path);
+            return vec3(0.85, 0.85, 1.0) * (exp(-w * 700.0) * 5.0 + exp(-w * 50.0) * 0.35) * uLightning * smoothstep(0.5, 0.38, d.y);
         }
 
         // Auroras: curtains of light hanging over a few stretches of the horizon at night, their
@@ -336,6 +360,11 @@ public sealed class SkyRenderer : IDisposable
             c = mix(c, c * 0.55 + vec3(0.05, 0.035, 0.12), uRain * 0.6);
             // Snow turns the sky a cold, pale blue-grey (a deep slate at night).
             c = mix(c, vec3(0.58, 0.63, 0.75) * mix(1.0, 0.16, uNight) + c * 0.15, uSnow * 0.6);
+            // A storm darkens it further; a blizzard fills it with blowing white.
+            c *= 1.0 - 0.3 * uStorm;
+            c = mix(c, vec3(0.74, 0.78, 0.86) * mix(1.0, 0.18, uNight), uBlizzard * 0.7);
+            // Lightning lights up the whole sky.
+            c += vec3(0.75, 0.8, 1.0) * uLightning * (0.3 + 0.4 * up);
             // Below the horizon (distant fog) fade to a slightly darker horizon.
             c = mix(c, horizon * 0.85, clamp(-d.y * 4.0, 0.0, 1.0));
 
@@ -405,7 +434,8 @@ public sealed class SkyRenderer : IDisposable
                 }
             }
             // Auroras hang in the air, in front of everything in the sky.
-            c += aurora(d) * aboveHorizon;
+            c += aurora(d) * aboveHorizon * (1.0 - max(uStorm, uBlizzard));
+            if (uLightning > 0.01) c += lightningBolt(d);
             // Shooting stars burn up in the air, far nearer than anything in the sky: they cross
             // in front of the moon, the galaxy and the nebulae (the clouds still hide them).
             c += shootingStar(d, starVisibility) * aboveHorizon;
@@ -499,6 +529,8 @@ public sealed class SkyRenderer : IDisposable
                     vec3 scattered = lightColor * toLight * phase * powder + ambient * (0.28 + 0.72 * height); // dark bellies
                     // The galaxy's glow tinges the cloud tops at night.
                     scattered += vec3(0.3, 0.18, 0.6) * uGalaxyGlow * uNight * 0.35 * height;
+                    // Lightning flashes inside the clouds.
+                    scattered += vec3(0.7, 0.75, 1.0) * uLightning * (0.6 + 0.8 * powder);
                     float stepTransmittance = exp(-density * 0.025 * stepLength);
                     light += transmittance * scattered * (1.0 - stepTransmittance);
                     transmittance *= stepTransmittance;
@@ -507,6 +539,8 @@ public sealed class SkyRenderer : IDisposable
                 t += stepLength;
             }
 
+            // A blizzard hides the clouds in pale blowing snow.
+            light = mix(light, vec3(0.74, 0.78, 0.86) * mix(1.0, 0.18, uNight) * (1.0 - transmittance), uBlizzard * 0.7);
             // Far clouds melt into the sky.
             float fade = exp(-t0 * 0.00016);
             return vec4(light * fade, mix(1.0, transmittance, fade));
@@ -596,6 +630,10 @@ public sealed class SkyRenderer : IDisposable
         shader.Set("uRain", Rain);
         shader.Set("uSnow", Snow);
         shader.Set("uSnowCover", SnowCover);
+        shader.Set("uStorm", Storm);
+        shader.Set("uBlizzard", Blizzard);
+        shader.Set("uLightning", Lightning);
+        shader.Set("uLightningBolt", LightningBolt);
         shader.Set("uManualStar", _manualStar.Time);
         shader.Set("uManualSeed", _manualStar.Seed);
         shader.Set("uManualStart", _manualStar.Start);
@@ -608,6 +646,15 @@ public sealed class SkyRenderer : IDisposable
     public static float Snow { get; set; }
 
     public static float SnowCover { get; set; }
+
+    /// <summary>Storm and blizzard strength, the lightning flash and its bolt (azimuth, seed), see <see cref="Weather"/>.</summary>
+    public static float Storm { get; set; }
+
+    public static float Blizzard { get; set; }
+
+    public static float Lightning { get; set; }
+
+    public static Vector2 LightningBolt { get; set; }
 
     private static (float Time, float Seed, Vector3 Start) _manualStar = (-1e4f, 0f, Vector3.UnitY);
 

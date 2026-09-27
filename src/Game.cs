@@ -70,6 +70,8 @@ public sealed class Game : IDisposable
     private int _frames;
     private double _time;
     private double _lastForwardTap = double.NegativeInfinity;
+    private const double WeatherDoubleTap = 0.4; // seconds between two presses of 2 or 3 for a storm or a blizzard
+    private double _lastRainTap = double.NegativeInfinity, _lastSnowTap = double.NegativeInfinity;
     private bool _sprinting; // latched by double-tapping W, lasts until W is released
 
     public Game()
@@ -145,6 +147,8 @@ public sealed class Game : IDisposable
         Respawn();
         if (Environment.GetEnvironmentVariable("MINE_RAIN") == "1") _weather.Toggle();
         if (Environment.GetEnvironmentVariable("MINE_SNOW") == "1") _weather.StartSnowed();
+        if (Environment.GetEnvironmentVariable("MINE_STORM") == "1") _weather.StartStorm();
+        if (Environment.GetEnvironmentVariable("MINE_BLIZZARD") == "1") _weather.StartSnowed(blizzard: true);
         if (float.TryParse(Environment.GetEnvironmentVariable("MINE_TIME"), System.Globalization.CultureInfo.InvariantCulture, out float timeOfDay))
             _dayCycle.TimeOfDay = timeOfDay;
         if (float.TryParse(Environment.GetEnvironmentVariable("MINE_PITCH"), System.Globalization.CultureInfo.InvariantCulture, out float pitch))
@@ -202,7 +206,7 @@ public sealed class Game : IDisposable
     }
 
     // Debugging aids, from environment variables: MINE_FPS_LOG=1 prints the HUD line to the console,
-    // MINE_RAIN=1 starts with rain, MINE_SNOW=1 starts snowing with the snow already lying, MINE_TIME=0.45 sets the time of day, MINE_PITCH=0.2 the view
+    // MINE_RAIN=1 starts with rain, MINE_SNOW=1 starts snowing with the snow already lying, MINE_STORM=1 / MINE_BLIZZARD=1 start a storm / a blizzard, MINE_TIME=0.45 sets the time of day, MINE_PITCH=0.2 the view
     // pitch (radians), MINE_YAW=1.5 the view heading, MINE_POS=800,-300 spawns exactly there, MINE_WINDOWED=1 starts in a window, MINE_GPU_PROFILE=1 prints the GPU time of each pass (GpuProfiler).
     private static readonly string Skip = Environment.GetEnvironmentVariable("MINE_SKIP") ?? "";
     private static bool On(string pass) => !Skip.Contains(pass);
@@ -253,6 +257,10 @@ public sealed class Game : IDisposable
         SkyRenderer.Rain = _weather.Rain;
         SkyRenderer.Snow = _weather.Snow;
         SkyRenderer.SnowCover = _weather.SnowCover;
+        SkyRenderer.Storm = _weather.Storm;
+        SkyRenderer.Blizzard = _weather.Blizzard;
+        SkyRenderer.Lightning = _weather.Lightning;
+        SkyRenderer.LightningBolt = new Vector2(_weather.LightningAzimuth, _weather.LightningSeed);
 
         int islandVersion = _islands.Version;
         _islands.Update(_player.Position);
@@ -392,11 +400,11 @@ public sealed class Game : IDisposable
         float heightAboveGround = eye.Y - _ground.Height(eye.X, eye.Z, eye.Y);
         float pointScale = _post.SceneHeight / (2f * MathF.Tan(FieldOfView / 2));
         _motes.Draw(view * projection, eye, atmosphere, time, heightAboveGround, pointScale);
-        if (eye.Y > TerrainField.WaterLevel) _rain.Draw(view * projection, eye, time, _weather.Rain, atmosphere.Night, pointScale);
-        if (eye.Y > TerrainField.WaterLevel) _snow.Draw(view * projection, eye, time, _weather.Snow, atmosphere.Night, pointScale);
+        if (eye.Y > TerrainField.WaterLevel) _rain.Draw(view * projection, eye, time, _weather.Rain, _weather.Storm, atmosphere.Night, pointScale);
+        if (eye.Y > TerrainField.WaterLevel) _snow.Draw(view * projection, eye, time, _weather.Snow, _weather.Blizzard, atmosphere.Night, pointScale);
 
         _profiler.Section("post");
-        if (On("post")) _post.Finish(atmosphere.Night, MathF.Max(_weather.Snow, _weather.SnowCover * 0.6f));
+        if (On("post")) _post.Finish(atmosphere.Night, MathF.Min(MathF.Max(_weather.Snow, _weather.SnowCover * 0.6f) + 0.2f * _weather.Blizzard, 1f));
 
         _crosshair.Draw();
         _profiler.EndFrame();
@@ -410,13 +418,13 @@ public sealed class Game : IDisposable
         SkyRenderer.SetUniforms(shader, atmosphere, time, (float)_dayCycle.Elapsed);
         shader.Set("uViewProj", viewProjection);
         shader.Set("uCameraPos", eye);
-        shader.Set("uAmbient", atmosphere.Ambient);
+        shader.Set("uAmbient", atmosphere.Ambient + new Vector3(0.7f, 0.75f, 1f) * _weather.Lightning * 0.9f); // lightning lights the world
         shader.Set("uUnderwater", eye.Y < TerrainField.WaterLevel ? 1f : 0f);
         shader.Set("uLightColor", atmosphere.LightColor * (1f - 0.45f * MathF.Max(_weather.Rain, 0.8f * _weather.Snow))); // rain and snow veil the sun
         shader.Set("uLightDir", atmosphere.LightDirection);
         shader.Set("uFogStart", fogEnd * 0.75f); // only the last stretch, to hide the world's edge
         shader.Set("uFogEnd", fogEnd);
-        shader.Set("uMistDensity", float.Lerp(0.0012f, 0.0025f, atmosphere.Haze) * (1f + 2.5f * MathF.Max(_weather.Rain, _weather.Snow))); // more at dawn, dusk, in rain and snow
+        shader.Set("uMistDensity", float.Lerp(0.0012f, 0.0025f, atmosphere.Haze) * (1f + 2.5f * MathF.Max(_weather.Rain, _weather.Snow) + 6f * _weather.Blizzard + _weather.Storm)); // more at dawn, dusk, in rain and snow
         shader.Set("uShadowMap", 0);
         shader.Set("uShadowTexel", 1f / ShadowMap.Size);
         shader.Set("uShadowBias", ShadowMap.DepthBias);
@@ -454,11 +462,13 @@ public sealed class Game : IDisposable
             case Key.Q:
                 SetLowQuality(!_sky.LowQuality);
                 break;
-            case Key.Number2: // rain on / off
-                _weather.Toggle();
+            case Key.Number2: // rain on / off; pressed twice quickly: a storm with lightning
+                if (_time - _lastRainTap <= WeatherDoubleTap) _weather.StartStorm(); else _weather.Toggle();
+                _lastRainTap = _time;
                 break;
-            case Key.Number3: // snow on / off
-                _weather.ToggleSnow();
+            case Key.Number3: // snow on / off; pressed twice quickly: a blizzard
+                if (_time - _lastSnowTap <= WeatherDoubleTap) _weather.StartBlizzard(); else _weather.ToggleSnow();
+                _lastSnowTap = _time;
                 break;
             case Key.Number1: // debug: a shooting star across the view
                 SkyRenderer.LaunchShootingStar((float)_time, _player.LookDirection);
