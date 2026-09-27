@@ -11,8 +11,10 @@ namespace Mine;
 /// </summary>
 public sealed class Player
 {
-    public const float EyeHeight = 1.62f;
-    public const float SneakEyeHeight = 1.32f;
+    // Tall enough to look over ordinary grass (up to 1.45 m, see GrassRenderer): chest-deep in the
+    // tall meadows, and lost in their giant hearts.
+    public const float EyeHeight = 2.1f;
+    public const float SneakEyeHeight = 1.7f;
 
     private const float Gravity = 28f;
     private const float JumpSpeed = 8.4f;
@@ -49,7 +51,7 @@ public sealed class Player
     private const float SwimAccel = 1.8f;
     private const float SwimDrag = 1.2f;
     private const float SwimDepth = 1.0f;    // feet this far below the surface: swimming
-    private const float FloatDepth = 1.25f;  // where idle swimmers rest (eye ~0.4 m above water)
+    private const float FloatDepth = 1.7f;   // where idle swimmers rest (eye ~0.4 m above water)
     private const float SwimClimb = 1.6f;    // swimmers can pull themselves onto ledges this high
 
     public Vector3 Position; // feet
