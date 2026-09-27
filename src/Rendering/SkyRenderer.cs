@@ -36,6 +36,21 @@ public sealed class SkyRenderer : IDisposable
         uniform sampler3D uCloudNoise;
         uniform float uCloudTime; // game seconds, so clouds speed up with the clock
         uniform float uRain;      // 0 = clear .. 1 = full rain: the clouds close in
+        uniform float uSnow;      // 0 = clear .. 1 = full snowfall: overcast and cold
+        uniform float uSnowCover; // snow lying on the world: 0 = none .. 1 = everything white
+
+        const vec3 SnowColor = vec3(0.9, 0.93, 1.0);
+
+        // How much snow lies at a point on a surface facing up by `up` (its normal's y): it settles
+        // first on the heights and creeps down to the shores as the cover grows, only on surfaces
+        // that face up, in soft drifts.
+        float snowOn(vec3 pos, float up)
+        {
+            if (uSnowCover <= 0.001) return 0.0;
+            float line = mix(95.0, 12.0, pow(uSnowCover, 0.6));
+            float drift = texture(uCloudNoise, pos * 0.02).r;
+            return smoothstep(line, line + 8.0, pos.y + drift * 10.0) * smoothstep(0.45, 0.8, up) * smoothstep(0.0, 0.25, uSnowCover);
+        }
         const float CloudBottom = 260.0;
         const float CloudTop = 760.0;
 
@@ -50,7 +65,7 @@ public sealed class SkyRenderer : IDisposable
         float cloudThreshold(vec3 p, float lod)
         {
             float macro = textureLod(uCloudNoise, cloudCoords(p) * 0.23 + 0.11, lod + 1.0).r;
-            return 0.6 + (0.5 - macro) * 0.32 - 0.3 * uRain;
+            return 0.6 + (0.5 - macro) * 0.32 - 0.3 * max(uRain, uSnow * 0.85);
         }
 
         // Density before clamping to 0..1 (negative: clear air, the more so the farther from a cloud).
@@ -176,18 +191,19 @@ public sealed class SkyRenderer : IDisposable
             float az = atan(d.z, d.x);
             vec2 ring = vec2(cos(az), sin(az)); // noise sampled on a circle: no seam
             float t = uTime * 0.015;
-            float sector = smoothstep(0.45, 0.62, texture(uCloudNoise, vec3(ring * 0.6, 0.2 + t * 0.3)).r);
+            float sector = smoothstep(0.42, 0.6, texture(uCloudNoise, vec3(ring * 0.6, 0.2 + t * 0.3)).r);
             if (sector <= 0.0) return vec3(0.0);
             float hem = 0.02 + 0.1 * texture(uCloudNoise, vec3(ring * 1.5, 0.6 + t)).r;
             float top = hem + 0.25 + 0.4 * texture(uCloudNoise, vec3(ring * 2.5, 0.8 + t * 0.5)).r;
             float h = clamp((d.y - hem) / (top - hem), 0.0, 1.0);
             if (d.y < hem - 0.02) return vec3(0.0);
-            float rays = smoothstep(0.35, 0.8, texture(uCloudNoise, vec3(ring * 9.0, 0.4 + t * 2.0 + h * 0.15)).r)
-                       * (0.55 + 0.45 * texture(uCloudNoise, vec3(ring * 23.0, 0.1 + t * 4.0)).r);
-            float profile = smoothstep(-0.02, 0.06, h) * pow(1.0 - h, 1.4);
-            vec3 color = mix(vec3(0.2, 0.95, 1.0), vec3(0.3, 0.38, 1.0), smoothstep(0.1, 0.5, h));
-            color = mix(color, vec3(1.0, 0.35, 0.9), smoothstep(0.5, 0.95, h));
-            return color * rays * profile * sector * uNight * 1.1;
+            // Broad, soft bands (low frequency, blurred noise) with a gentler flicker over them.
+            float rays = smoothstep(0.2, 0.85, textureLod(uCloudNoise, vec3(ring * 4.0, 0.4 + t * 2.0 + h * 0.1), 1.0).r)
+                       * (0.7 + 0.3 * textureLod(uCloudNoise, vec3(ring * 10.0, 0.1 + t * 4.0), 1.0).r);
+            float profile = smoothstep(-0.05, 0.12, h) * pow(1.0 - h, 1.3);
+            vec3 color = mix(vec3(0.05, 1.0, 0.8), vec3(0.25, 0.35, 1.0), smoothstep(0.1, 0.5, h));
+            color = mix(color, vec3(1.0, 0.2, 0.85), smoothstep(0.5, 0.95, h));
+            return color * rays * profile * sector * uNight * 1.9;
         }
 
         // The galaxy: a huge spiral seen face-on, like a swirling planet. Five logarithmic arms,
@@ -318,6 +334,8 @@ public sealed class SkyRenderer : IDisposable
             c += vec3(0.5, 0.28, 0.38) * belt * (1.0 - sunSide) * uHaze * 0.3;
             // Rain dims the sky toward a deep, glowing indigo (never a dull grey).
             c = mix(c, c * 0.55 + vec3(0.05, 0.035, 0.12), uRain * 0.6);
+            // Snow turns the sky a cold, pale blue-grey (a deep slate at night).
+            c = mix(c, vec3(0.58, 0.63, 0.75) * mix(1.0, 0.16, uNight) + c * 0.15, uSnow * 0.6);
             // Below the horizon (distant fog) fade to a slightly darker horizon.
             c = mix(c, horizon * 0.85, clamp(-d.y * 4.0, 0.0, 1.0));
 
@@ -576,6 +594,8 @@ public sealed class SkyRenderer : IDisposable
         shader.Set("uGalaxyGlow", atmosphere.GalaxyGlow);
         shader.Set("uTime", time);
         shader.Set("uRain", Rain);
+        shader.Set("uSnow", Snow);
+        shader.Set("uSnowCover", SnowCover);
         shader.Set("uManualStar", _manualStar.Time);
         shader.Set("uManualSeed", _manualStar.Seed);
         shader.Set("uManualStart", _manualStar.Start);
@@ -583,6 +603,11 @@ public sealed class SkyRenderer : IDisposable
 
     /// <summary>How hard it is raining (0..1, see <see cref="Weather"/>), sent with the sky uniforms.</summary>
     public static float Rain { get; set; }
+
+    /// <summary>How hard it is snowing (0..1) and how much snow lies on the world (0..1), see <see cref="Weather"/>.</summary>
+    public static float Snow { get; set; }
+
+    public static float SnowCover { get; set; }
 
     private static (float Time, float Seed, Vector3 Start) _manualStar = (-1e4f, 0f, Vector3.UnitY);
 

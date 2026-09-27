@@ -118,21 +118,39 @@ public sealed unsafe class CreatureRenderer : IDisposable
             }
             case CreatureKind.Fish:
             {
-                // A slim diamond body seen from above and the side, and a forked tail that swings.
-                var c = Vector3.One;
-                Vector3 head = new(0.26f, 0, 0), tail = new(-0.3f, 0, 0);
-                Vector3 l = new(0.02f, 0, 0.08f), r = new(0.02f, 0, -0.08f), up = new(0.02f, 0.07f, 0), down = new(0.02f, -0.06f, 0);
-                float Swing(Vector3 p) => Math.Clamp((0.2f - p.X) / 0.65f, 0f, 1f);
+                // A slim silvery body with coloured fins in the manner of the deep fish: a tall
+                // sail of a dorsal fin, side fins that flutter, a keel fin beneath and a long forked
+                // tail. Colour channel: body (1, 0, 0), fin (0, 1, how far toward the fin's tip);
+                // the shader picks each fish's fin colour.
+                var body = new Vector3(1, 0, 0);
+                Vector3 head = new(0.28f, 0, 0), tail = new(-0.26f, 0, 0);
+                Vector3 l = new(0.03f, 0, 0.075f), r = new(0.03f, 0, -0.075f), up = new(0.03f, 0.085f, 0), down = new(0.03f, -0.07f, 0);
+                float Swing(Vector3 p) => Math.Clamp((0.2f - p.X) / 0.7f, 0f, 1f);
                 void T(Vector3 a, Vector3 b, Vector3 d, float e)
                 {
-                    V(a.X, a.Y, a.Z, c, e, Swing(a));
-                    V(b.X, b.Y, b.Z, c, e, Swing(b));
-                    V(d.X, d.Y, d.Z, c, e, Swing(d));
+                    V(a.X, a.Y, a.Z, body, e, Swing(a));
+                    V(b.X, b.Y, b.Z, body, e, Swing(b));
+                    V(d.X, d.Y, d.Z, body, e, Swing(d));
                 }
-                T(head, l, up, 0.8f); T(head, up, r, 0.8f); T(head, r, down, 0.8f); T(head, down, l, 0.8f);
-                T(tail, up, l, 0.6f); T(tail, r, up, 0.6f); T(tail, down, r, 0.6f); T(tail, l, down, 0.6f);
-                T(tail, new(-0.45f, 0.08f, 0), new(-0.42f, 0, 0), 1f);
-                T(tail, new(-0.42f, 0, 0), new(-0.45f, -0.08f, 0), 1f);
+                void F(Vector3 a, float ta, Vector3 b, float tb, Vector3 d, float td)
+                {
+                    V(a.X, a.Y, a.Z, new(0, 1, ta), 0.45f, Swing(a));
+                    V(b.X, b.Y, b.Z, new(0, 1, tb), 0.45f, Swing(b));
+                    V(d.X, d.Y, d.Z, new(0, 1, td), 0.45f, Swing(d));
+                }
+                T(head, l, up, 0.3f); T(head, up, r, 0.3f); T(head, r, down, 0.3f); T(head, down, l, 0.3f);
+                T(tail, up, l, 0.25f); T(tail, r, up, 0.25f); T(tail, down, r, 0.25f); T(tail, l, down, 0.25f);
+                // Dorsal sail.
+                F(new(0.14f, 0.075f, 0), 0, new(-0.02f, 0.24f, 0), 1, new(-0.16f, 0.2f, 0), 1);
+                F(new(0.14f, 0.075f, 0), 0, new(-0.16f, 0.2f, 0), 1, new(-0.18f, 0.05f, 0), 0);
+                // Side fins.
+                foreach (float side in new[] { 1f, -1f })
+                    F(new(0.13f, -0.02f, 0.06f * side), 0, new(-0.05f, -0.07f, 0.22f * side), 1, new(0.01f, -0.03f, 0.075f * side), 0.3f);
+                // Keel fin.
+                F(new(-0.02f, -0.06f, 0), 0, new(-0.2f, -0.17f, 0), 1, new(-0.2f, -0.04f, 0), 0);
+                // Long forked tail.
+                F(tail, 0, new(-0.6f, 0.2f, 0), 1, new(-0.46f, 0.02f, 0), 0.5f);
+                F(tail, 0, new(-0.46f, -0.02f, 0), 0.5f, new(-0.6f, -0.2f, 0), 1);
                 break;
             }
             case CreatureKind.DeepFish:

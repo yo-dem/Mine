@@ -112,6 +112,7 @@ public sealed unsafe class PostProcess : IDisposable
         uniform float uBloomStrength;
         uniform float uExposure;
         uniform float uNight;
+        uniform float uCold; // snow: 0 = none .. 1 = a cold, pale, blue-grey world
         out vec4 FragColor;
 
         // Soft shoulder above 0.7: bright colours saturate instead of clipping to white.
@@ -136,6 +137,9 @@ public sealed unsafe class PostProcess : IDisposable
             vec3 shadowTint = mix(vec3(0.05, 0.02, 0.10), vec3(0.06, 0.02, 0.13), uNight);
             color += shadowTint * (1.0 - smoothstep(0.0, 0.45, luma));
             color *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), smoothstep(0.5, 1.0, luma));
+            // Cold: colours drained toward a pale blue-grey.
+            float coldLuma = dot(color, vec3(0.3, 0.59, 0.11));
+            color = mix(color, coldLuma * vec3(0.9, 0.97, 1.1) + vec3(0.015, 0.025, 0.05), uCold * 0.5);
 
             // Vignette and a touch of dither.
             vec2 centered = vUv - 0.5;
@@ -255,7 +259,8 @@ public sealed unsafe class PostProcess : IDisposable
     /// <summary>
     /// Runs bloom and grading into the default framebuffer.
     /// </summary>
-    public void Finish(float night)
+    /// <param name="cold">0..1: how cold the snow makes the world look.</param>
+    public void Finish(float night, float cold = 0f)
     {
         _gl.Disable(EnableCap.DepthTest);
         _gl.DepthMask(false);
@@ -305,6 +310,7 @@ public sealed unsafe class PostProcess : IDisposable
         _composite.Set("uBloomStrength", BloomStrength);
         _composite.Set("uExposure", Exposure);
         _composite.Set("uNight", night);
+        _composite.Set("uCold", cold);
         _gl.ActiveTexture(TextureUnit.Texture0);
         _gl.BindTexture(TextureTarget.Texture2D, _sceneColor);
         _gl.ActiveTexture(TextureUnit.Texture1);

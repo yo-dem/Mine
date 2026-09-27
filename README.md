@@ -17,7 +17,7 @@ nell'acqua bassa e si rompono in creste di schiuma rosa e bianca luminosa, con u
 e sulla superficie brillano scintille come stelle cadute. Vicino alla riva si cammina nell'acqua; al largo è profonda e si **nuota**: ci si muove come in volo ma lentamente, Spazio per salire, Shift per immergersi, e da fermi si torna a galla.
 Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno; nell'acqua bassa galleggiano fiori di loto luminosi e tra l'erba spuntano fiori di ogni colore: campanule luminose, margherite pastello, tulipani, lupini dalle punte che brillano, piccoli fiori a stella luminosi e, raccolti in giardini sotto i boschi fitti, fiori nati dalla luce: steli chiari che brillano verso l'alto e si ramificano in grappoli di 3–4 fiori, foglie colorate con venature di luce, petali al neon, semi di luce che fluttuano sopra la corolla e una luce colorata che tinge l'erba intorno (iris viola dalle foglie a spada, papaveri magenta su rosette di foglie, gigli ciano dai petali ripiegati); stelle luminose, campanule e gigli crescono anche sotto i boschi.
 Sulle spiagge e lungo le rive dei laghi crescono boschetti di palme scure in controluce, alte e slanciate, medie o basse e tozze, mai uguali tra loro; farfalle
-luminose svolazzano sui prati (a sciami di notte), pesci che brillano nuotano nell'acqua più profonda e, tuffandosi, si incontrano banchi di grossi pesci luminosi che nuotano vicino al fondale e stormi di uccelli,
+luminose svolazzano sui prati (a sciami di notte), pesci argentati dalle pinne colorate (rosse, viola, gialle, arancioni, ciano, magenta) nuotano nell'acqua più profonda e, tuffandosi, si incontrano banchi di grossi pesci luminosi che nuotano vicino al fondale e stormi di uccelli,
 ogni volta diversi per numero e forma, mai regolari (V sbilenche con ritardatari, nuvole che si allungano e si stringono, gruppetti che si separano e si riuniscono, vortici), volteggiano in cielo: tanti di giorno, arrivano da lontano al mattino e se ne vanno al calare della sera, e di sera e di notte se ne vede solo qualcuno.
 
 Nel mondo si trovano piccoli cristalli luminosi da raccogliere, e puoi piazzarli dove vuoi: ognuno emette
@@ -37,7 +37,8 @@ con cerchi di luce che si allargano dal punto in cui cade l'acqua e schizzi di g
 e ricadono. Lungo i rivoli si vede l'acqua scorrere, a impulsi di luce che scendono veloci. Le nuvole sono volumetriche, si colorano all'alba e al tramonto
 e proiettano ombre in movimento sul paesaggio. Il bloom fa brillare sole, luci e cristalli,
 e l'aria è piena di particelle: granelli dorati di giorno,
-spore lilla al tramonto, lucciole di notte. Col tasto 2 arriva la pioggia: il cielo si chiude in un indaco profondo, cade una pioggia fitta di fili sottilissimi e argentei, e sull'acqua si aprono cerchi luminosi.
+spore lilla al tramonto, lucciole di notte. Col tasto 2 arriva la pioggia: il cielo si chiude in un indaco profondo, cade una pioggia fitta di fili sottilissimi e argentei, e sull'acqua si aprono cerchi luminosi. Col tasto 3 nevica: il cielo diventa grigio-azzurro, i colori si fanno freddi, cadono fiocchi
+lenti e la neve si posa, prima sulle cime e poi sempre più in basso, fino a coprire prati, alberi e colline; quando smette si scioglie piano.
 
 > Nato come clone di Minecraft: la versione a blocchi è sul branch `main`.
 > Questo branch (`terreno-realistico`) la sostituisce con un terreno continuo.
@@ -70,6 +71,7 @@ portatili con due schede usa quella dedicata; la prima volta si riavvia da solo 
 | F10 | Sposta il gioco sul monitor successivo |
 | 1 | Fai partire una stella cadente davanti a te (debug) |
 | 2 | Fai iniziare o smettere la pioggia |
+| 3 | Fai iniziare o smettere la neve |
 | Esc | Libera il mouse (di nuovo Esc: esci) |
 
 ## Struttura
@@ -83,7 +85,7 @@ src/
     Noise.cs              Perlin noise 2D
     TerrainField.cs       forma del terreno: altezza in ogni punto
     DayCycle.cs           orologio e colori di cielo e luce per ogni ora
-    Weather.cs            pioggia: accesa/spenta col tasto 2, intensità che sale e scende piano
+    Weather.cs            pioggia (tasto 2) e neve (tasto 3), intensità che sale e scende piano, neve che si accumula e si scioglie
     WorldObjects.cs       cristalli da raccogliere e piazzare, e le loro luci
     IslandField.cs        isole fluttuanti: dove sono, forma, alberi in cima
     Ground.cs             dove si può camminare: terreno e cime delle isole
@@ -102,6 +104,7 @@ src/
     PostProcess.cs        buffer HDR, bloom, color grading
     MoteRenderer.cs       particelle magiche: granelli, spore, lucciole
     RainRenderer.cs       pioggia di luce (gocce generate nello shader)
+    SnowRenderer.cs       fiocchi di neve (generati nello shader)
     WaterRenderer.cs      mari e laghi (lo shader è in TerrainShaders)
     CreatureRenderer.cs   modelli e animazione delle creature
     IslandRenderer.cs     modelli delle isole fluttuanti

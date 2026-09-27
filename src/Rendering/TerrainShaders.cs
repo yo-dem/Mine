@@ -353,7 +353,8 @@ public static class TerrainShaders
         {
             vec3 n = normalize(vNormal);
             float dist = length(vWorldPos - uCameraPos);
-            vec3 albedo = terrainAlbedo(vWorldPos, vSlope, dist) * vAo * tileEdges(vWorldPos, n, dist);
+            vec3 albedo = terrainAlbedo(vWorldPos, vSlope, dist);
+            albedo = mix(albedo, SnowColor, snowOn(vWorldPos, n.y)) * vAo * tileEdges(vWorldPos, n, dist);
             vec3 color = litColor(albedo, vWorldPos, n, 0.0) + glitter(vWorldPos, n, vSlope, dist);
             FragColor = finishColor(color, vWorldPos, 1.0);
         }
@@ -436,7 +437,8 @@ public static class TerrainShaders
             vec3 n = normalize(vNormal);
             // Blades are seen from both sides: turn the normal toward the camera, but keep it pointing up.
             if (dot(n.xz, toCamera.xz) < 0.0) n.xz = -n.xz;
-            vec3 color = litColor(vColor, vWorldPos, n, 0.6);
+            vec3 albedo = mix(vColor, SnowColor, snowOn(vWorldPos, 1.0) * 0.85);
+            vec3 color = litColor(albedo, vWorldPos, n, 0.6);
             // Sunlight shining through the blades when looking toward the sun.
             vec3 rd = normalize(-toCamera);
             float through = pow(max(dot(rd, uLightDir), 0.0), 3.0) * vTip;
@@ -492,7 +494,8 @@ public static class TerrainShaders
         {
             vec3 n = normalize(vNormal);
             vec3 rd = normalize(vWorldPos - uCameraPos);
-            vec3 color = litColor(vColor, vWorldPos, n, vFoliage * 0.5);
+            vec3 albedo = mix(vColor, SnowColor, snowOn(vWorldPos, n.y) * (1.0 - vEmissive));
+            vec3 color = litColor(albedo, vWorldPos, n, vFoliage * 0.5);
             // Foliage glows at the edges against the sun, and takes a soft rim of sky colour.
             color += vColor * uLightColor * pow(max(dot(rd, uLightDir), 0.0), 4.0) * 0.5 * vFoliage;
             color += skyColor(n, false) * pow(1.0 - max(dot(n, -rd), 0.0), 3.0) * 0.18 * vFoliage;
@@ -741,6 +744,8 @@ public static class TerrainShaders
             else if (uKind == 2)
             {
                 p.z += sin(t * 9.0 - p.x * 9.0) * 0.08 * aAnim;
+                // The side fins flutter (fins carry aColor.g = 1, and how far out toward the tip in b).
+                if (aColor.g > 0.5 && abs(aPos.z) > 0.06) p.y += sin(t * 14.0 + aPos.x * 20.0) * 0.025 * aColor.b;
             }
             else if (uKind == 3)
             {
@@ -762,6 +767,17 @@ public static class TerrainShaders
             {
                 vColor = mix(vec3(0.06, 0.04, 0.12), vec3(0.55, 0.75, 1.0), uNight);
                 vEmissive = aEmissive * uNight;
+            }
+            else if (uKind == 2)
+            {
+                // Surface fish: a silvery body with a touch of the glow hue, and fins of one colour
+                // per fish (red, violet, yellow, orange, cyan or magenta), paler toward their tips.
+                float k = fract(aExtra.y * 0.618);
+                vec3 fin = k < 0.17 ? vec3(1.0, 0.18, 0.22) : k < 0.33 ? vec3(0.6, 0.25, 1.0) : k < 0.5 ? vec3(1.0, 0.85, 0.2)
+                         : k < 0.67 ? vec3(1.0, 0.5, 0.12) : k < 0.83 ? vec3(0.2, 0.9, 1.0) : vec3(1.0, 0.3, 0.8);
+                vec3 body = mix(vec3(0.75, 0.85, 1.0), hue, 0.35);
+                vColor = mix(body, fin * (0.75 + 0.5 * aColor.b), aColor.g);
+                vEmissive = aEmissive;
             }
             else
             {
@@ -832,7 +848,8 @@ public static class TerrainShaders
         void main()
         {
             vec3 n = normalize(vNormal);
-            vec3 color = litColor(vColor, vWorldPos, n, 0.0);
+            vec3 albedo = mix(vColor, SnowColor, snowOn(vWorldPos, n.y) * (1.0 - vEmissive));
+            vec3 color = litColor(albedo, vWorldPos, n, 0.0);
             // Glowing parts shine with their own colour, brighter at night.
             color = mix(color, vColor * uGlow * mix(1.4, 2.2, uNight), vEmissive);
             color += vColor * 0.35 * uHighlight;
