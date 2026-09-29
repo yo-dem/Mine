@@ -354,10 +354,6 @@ public sealed class TreeField
         }
     }
 
-    // A cluster of boulders of a random size, on the tile's flat top.
-    private static TreeInstance Boulders(float x, float y, float z, float yaw, Random random) =>
-        new(new Vector3(x, y - 0.1f, z), yaw, 0.7f + 0.7f * random.NextSingle(), TreeModels.VariantOf(TreeModels.Decoration.Rocks));
-
     // A palm of a random build (mostly the middling one) and size.
     private static TreeInstance RandomPalm(float x, float y, float z, float yaw, Random random)
     {
@@ -508,8 +504,9 @@ public sealed class TreeField
         }
 
         AddDecorations(trees, cx, cz, random);
-        // Nothing grows in the ponds under the islands' waterfalls.
-        trees.RemoveAll(t => _terrain.InPond(t.Position.X, t.Position.Z, 1.5f));
+        // Nothing grows in the ponds under the islands' waterfalls, or in the rock of the spires.
+        trees.RemoveAll(t => _terrain.InPond(t.Position.X, t.Position.Z, 1.5f)
+            || _terrain.SpireHeight(t.Position.X, t.Position.Z) > 0f);
         // What the player broke is gone for good.
         if (!_gathered.IsEmpty) trees.RemoveAll(t => _gathered.ContainsKey(t.Position));
         // No flowers or reeds through the floors.
@@ -572,24 +569,15 @@ public sealed class TreeField
                 float normalY = _terrain.Normal(x, z, 1f).Y;
                 if (desert)
                 {
-                    // Crystal clusters rising from the desert sand, and boulders.
+                    // Crystal clusters rising from the desert sand.
                     if (roll < 0.02f)
                         list.Add(new TreeInstance(new Vector3(x, y - 0.3f, z), yaw, 0.7f + 1.6f * random.NextSingle(), crystals));
-                    else if (roll < 0.08f)
-                        list.Add(Boulders(x, y, z, yaw, random));
                 }
                 else if (normalY < 0.75f)
                 {
-                    // Rocky slopes: boulders, and the odd crystal cluster.
+                    // Rocky slopes: the odd crystal cluster.
                     if (roll < 0.012f)
                         list.Add(new TreeInstance(new Vector3(x, y - 0.3f, z), yaw, 0.6f + 1.2f * random.NextSingle(), crystals));
-                    else if (roll < 0.14f)
-                        list.Add(Boulders(x, y, z, yaw, random));
-                }
-                else if (roll < 0.035f)
-                {
-                    // Meadows and woods: a boulder here and there, so stone is never far.
-                    list.Add(Boulders(x, y, z, yaw, random));
                 }
                 else if (roll < 0.3f && _forest.Fractal(x * 0.02f + 40f, z * 0.02f, 2) > 0.0f)
                 {

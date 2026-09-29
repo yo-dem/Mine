@@ -151,11 +151,11 @@ public sealed class IslandField
         float x = site.X, z = site.Z, radius = site.Radius;
 
         // Float well clear of whatever lies below, spires included.
-        float ground = _terrain.Height(x, z);
+        float ground = _terrain.HeightWithSpires(x, z);
         for (int i = 0; i < 8; i++)
         {
             float a = i * MathF.Tau / 8;
-            ground = MathF.Max(ground, _terrain.Height(x + MathF.Cos(a) * radius * 1.5f, z + MathF.Sin(a) * radius * 1.5f));
+            ground = MathF.Max(ground, _terrain.HeightWithSpires(x + MathF.Cos(a) * radius * 1.5f, z + MathF.Sin(a) * radius * 1.5f));
         }
         var center = new Vector3(x, ground + 70f + 120f * site.HeightRoll, z);
         float depth = radius * (1.3f + 0.9f * site.DepthRoll);

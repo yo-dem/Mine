@@ -10,11 +10,14 @@ namespace Mine.Rendering;
 /// a block in or next to it changes, with only the faces not covered by a neighbour. Each face is a
 /// 4×4 grid of little squares shaded like the material cubes (<see cref="ItemMeshes"/>): bark with
 /// rings on the ends for wood, speckled lilac grey for stone, glowing violet glass for crystal.
+/// The natural stone of the rock spires is the terrain's sandstone with its strata, in a coarser
+/// 2×2 grid (spires are big: this keeps their meshes light).
 /// </summary>
 public sealed unsafe class BlockRenderer : IDisposable
 {
     private const int FloatsPerVertex = 10;
-    private const int Grid = 4; // squares per face side
+    private const int Grid = 4;        // squares per face side
+    private const int NaturalGrid = 2; // the same for the rock of the spires
 
     private readonly GL _gl;
     private readonly Dictionary<(int X, int Z), (uint Vao, uint Vbo, int Count)> _chunks = new();
@@ -28,7 +31,7 @@ public sealed unsafe class BlockRenderer : IDisposable
         {
             var m = new MeshBuilder();
             foreach (var (p, resource) in blocks.InChunk(chunk))
-                Block(m, p, resource, face => !Covered(blocks, p, face));
+                Block(m, p, resource, blocks.IsNatural(p), face => !Covered(blocks, p, face));
             if (!_chunks.TryGetValue(chunk, out var buffers))
             {
                 if (m.Vertices.Count == 0) continue;
@@ -49,15 +52,16 @@ public sealed unsafe class BlockRenderer : IDisposable
         }
     }
 
-    // A face is hidden when a block sits right against it (exactly level with it, for the sides).
+    // A face is hidden when a block sits right against it (exactly level with it, for the sides),
+    // or when it is buried: a bottom at or under the ground, a side under the neighbouring ground.
     private static bool Covered(Blocks blocks, BlockPos p, int face) => face switch
     {
-        0 => blocks.At(p with { X = p.X + 1 }) is not null,
-        1 => blocks.At(p with { X = p.X - 1 }) is not null,
+        0 => blocks.At(p with { X = p.X + 1 }) is not null || blocks.GroundAt(p.X + 1, p.Z) >= p.Top,
+        1 => blocks.At(p with { X = p.X - 1 }) is not null || blocks.GroundAt(p.X - 1, p.Z) >= p.Top,
         2 => blocks.At(p with { Y = p.Y + Blocks.Tall }) is not null,
-        3 => blocks.At(p with { Y = p.Y - Blocks.Tall }) is not null,
-        4 => blocks.At(p with { Z = p.Z + 1 }) is not null,
-        _ => blocks.At(p with { Z = p.Z - 1 }) is not null,
+        3 => blocks.At(p with { Y = p.Y - Blocks.Tall }) is not null || blocks.GroundAt(p.X, p.Z) >= p.Bottom,
+        4 => blocks.At(p with { Z = p.Z + 1 }) is not null || blocks.GroundAt(p.X, p.Z + 1) >= p.Top,
+        _ => blocks.At(p with { Z = p.Z - 1 }) is not null || blocks.GroundAt(p.X, p.Z - 1) >= p.Top,
     };
 
     // The six faces as (normal, u axis, v axis): +x, -x, +y, -y, +z, -z.
@@ -71,24 +75,31 @@ public sealed unsafe class BlockRenderer : IDisposable
     private static readonly Vector3 Bark = new(0.34f, 0.23f, 0.21f);
     private static readonly Vector3 WoodLight = new(0.70f, 0.52f, 0.38f), WoodDark = new(0.56f, 0.40f, 0.30f);
     private static readonly Vector3 Stone = new(0.54f, 0.50f, 0.58f);
+    // The terrain's rock (TerrainShaders: `rock`), dark and light strata.
+    private static readonly Vector3 RockDark = new(0.30f, 0.23f, 0.36f), RockLight = new(0.46f, 0.35f, 0.50f);
 
     /// <summary>A block's visible faces, each a grid of little shaded squares.</summary>
-    private static void Block(MeshBuilder m, BlockPos p, Resource resource, Func<int, bool> visible)
+    private static void Block(MeshBuilder m, BlockPos p, Resource resource, bool natural, Func<int, bool> visible)
     {
         var center = p.Center;
-        const float half = Blocks.Size / 2, cell = Blocks.Size / Grid;
+        const float half = Blocks.Size / 2;
+        int grid = natural ? NaturalGrid : Grid;
+        float size = Blocks.Size / grid;
+        // The spires' strata: bands a couple of metres tall, wavering around the spire.
+        float strata = 0.5f + 0.5f * MathF.Sin(p.Bottom * 0.45f + 0.6f * MathF.Sin(p.X * 0.11f) + 0.6f * MathF.Sin(p.Z * 0.13f));
         for (int f = 0; f < 6; f++)
         {
             if (!visible(f)) continue;
             var (n, u, v) = Faces[f];
             bool end = f is 2 or 3; // the top and bottom (the log's rings)
             var corner = center + n * half - u * half - v * half;
-            const float size = cell;
-            for (int j = 0; j < Grid; j++)
-            for (int i = 0; i < Grid; i++)
+            for (int j = 0; j < grid; j++)
+            for (int i = 0; i < grid; i++)
             {
                 float h = Hash(p.X * 7 + f * 131 + i * 17, p.Y * 13 + j * 29, p.Z * 11 + i * j);
-                var (color, emissive) = Shade(resource, end, i, j, h);
+                var (color, emissive) = natural
+                    ? (Vector3.Lerp(RockDark, RockLight, 0.3f + 0.45f * strata) * (0.86f + 0.22f * h) * (f == 2 ? 1.08f : 1f), 0f)
+                    : Shade(resource, end, i, j, h);
                 var a = corner + u * (i * size) + v * (j * size);
                 var b = a + u * size;
                 var c = b + v * size;

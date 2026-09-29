@@ -25,6 +25,9 @@ public sealed unsafe class TerrainRenderer : IDisposable
     // Block size (in terrain tiles) per detail level, and how far from the camera each level is used.
     private static readonly int[] LodSteps = [1, 2, 4, 8, 16];
     private static readonly float[] LodRanges = [110f, 220f, 420f, 800f, float.MaxValue];
+    // From this level of detail on (beyond 420 m) tiles include the rock spires, which nearer are
+    // blocks laid by Blocks (within Blocks.SpireRadius, well beyond: the two overlap in between).
+    private const int SpireLod = 3;
 
     private sealed class Tile
     {
@@ -164,7 +167,11 @@ public sealed unsafe class TerrainRenderer : IDisposable
         var smooth = new float[(n + 2) * (n + 2)];
         for (int j = -1; j <= n; j++)
         for (int i = -1; i <= n; i++)
-            smooth[(j + 1) * (n + 2) + (i + 1)] = _field.SmoothHeight(x0 + (i + 0.5f) * size, z0 + (j + 0.5f) * size);
+        {
+            float x = x0 + (i + 0.5f) * size, z = z0 + (j + 0.5f) * size;
+            // The rock spires are blocks near the player (Blocks.SpireRadius); far away the terrain draws them.
+            smooth[(j + 1) * (n + 2) + (i + 1)] = _field.SmoothHeight(x, z) + (lod >= SpireLod ? _field.SpireHeight(x, z) : 0f);
+        }
         float S(int i, int j) => smooth[(j + 1) * (n + 2) + (i + 1)];
         float H(int i, int j) => TerrainField.Layer(S(i, j));
 

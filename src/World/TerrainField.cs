@@ -8,9 +8,10 @@ namespace Mine.World;
 /// background threads. The land is made of layers: square tiles <see cref="TileSize"/> wide, each
 /// flat at a height that is a multiple of <see cref="LayerHeight"/>, with vertical walls between.
 /// <see cref="SmoothHeight"/> is the continuous surface they are cut from: slowly rolling ground,
-/// domain-warped hills, long dune ridges, deep basins under the water, and rare rock spires.
-/// Slopes are kept gentle enough that neighbouring tiles almost always differ by one layer at most
-/// (walkable); larger steps are rare, apart from the spires.
+/// domain-warped hills, long dune ridges and deep basins under the water. Slopes are kept gentle
+/// enough that neighbouring tiles almost always differ by one layer at most (walkable); larger steps
+/// are rare. The rare rock spires are not part of it: they are built of stone blocks that can be dug
+/// (see <see cref="SpireHeight"/> and Blocks.Update), and only far terrain meshes add them.
 /// </summary>
 public sealed class TerrainField
 {
@@ -187,7 +188,7 @@ public sealed class TerrainField
 
         h += _detail.Fractal(x * 0.05f, z * 0.05f, 2) * 0.4f;
         if (h < WaterLevel) h = WaterLevel - (WaterLevel - h) * DepthScale;
-        return WorldPreset.Current.Relief < 0.5f ? h : h + Spires(x, z);
+        return h;
     }
 
     /// <summary>
@@ -212,7 +213,7 @@ public sealed class TerrainField
         }
         h += _detail.Fractal(x * 0.05f, z * 0.05f, 2) * 0.4f;
         if (h < WaterLevel) h = WaterLevel - (WaterLevel - h) * DepthScale;
-        return WorldPreset.Current.Relief < 0.5f ? h : h + Spires(x, z);
+        return h;
     }
 
     /// <summary>
@@ -293,37 +294,74 @@ public sealed class TerrainField
         return h - floor;
     }
 
-    /// <summary>Rare tall rock needles with a steep flank and a rounded top.</summary>
-    private float Spires(float x, float z)
+    /// <summary>A rock spire: its centre, its reach (no rock beyond it) and the hash its shape comes from.</summary>
+    public readonly record struct Spire(float X, float Z, float Reach, uint Hash);
+
+    /// <summary>
+    /// How tall the rock spires stand over the land at (x, z) (0 away from them; none in flat worlds).
+    /// Pure and thread-safe.
+    /// </summary>
+    public float SpireHeight(float x, float z)
     {
+        if (WorldPreset.Current.Relief < 0.5f) return 0f;
         int cx = (int)MathF.Floor(x / SpireCell), cz = (int)MathF.Floor(z / SpireCell);
         float total = 0;
         // A spire can lean over the border of its cell, so check the neighbours too.
         for (int dz = -1; dz <= 1; dz++)
         for (int dx = -1; dx <= 1; dx++)
-        {
-            uint h = Hash(cx + dx, cz + dz);
-            if ((h & 0xFFFF) / 65536f > SpireChance) continue;
-
-            float px = (cx + dx + 0.2f + 0.6f * ((h >> 8) & 0xFF) / 255f) * SpireCell;
-            float pz = (cz + dz + 0.2f + 0.6f * ((h >> 16) & 0xFF) / 255f) * SpireCell;
-            float radius = 7f + 9f * ((h >> 24) & 0xF) / 15f;
-            float height = 35f + 55f * ((h >> 28) & 0xF) / 15f;
-
-            // A ragged outline: the radius wobbles around the spire (noise sampled on a circle,
-            // so it wraps seamlessly), and narrows toward the top.
-            float ox = x - px, oz = z - pz;
-            float r = MathF.Sqrt(ox * ox + oz * oz);
-            if (r >= radius * 1.4f) continue;
-            float cos = r > 1e-3f ? ox / r : 1f, sin = r > 1e-3f ? oz / r : 0f;
-            float seed = (h & 0xFF) * 0.37f;
-            float wobble = 1f + 0.35f * _detail.Noise(cos * 1.4f + seed, sin * 1.4f - seed);
-            float d = r / (radius * wobble);
-            if (d >= 1f) continue;
-            float profile = MathF.Pow(1f - d, 1.6f);
-            total = MathF.Max(total, height * profile * (1f - 0.35f * profile * profile));
-        }
+            if (SpireIn(cx + dx, cz + dz) is { } spire)
+                total = MathF.Max(total, SpireHeight(spire, x, z));
         return total;
+    }
+
+    /// <summary>The land with the spires on it (what used to be the terrain's height).</summary>
+    public float HeightWithSpires(float x, float z) => Height(x, z) + SpireHeight(x, z);
+
+    /// <summary>The spires whose rock comes within <paramref name="radius"/> of (x, z).</summary>
+    public IEnumerable<Spire> SpiresNear(float x, float z, float radius)
+    {
+        if (WorldPreset.Current.Relief < 0.5f) yield break;
+        int x0 = (int)MathF.Floor((x - radius) / SpireCell) - 1, x1 = (int)MathF.Floor((x + radius) / SpireCell) + 1;
+        int z0 = (int)MathF.Floor((z - radius) / SpireCell) - 1, z1 = (int)MathF.Floor((z + radius) / SpireCell) + 1;
+        for (int cz = z0; cz <= z1; cz++)
+        for (int cx = x0; cx <= x1; cx++)
+        {
+            if (SpireIn(cx, cz) is not { } spire) continue;
+            float dx = spire.X - x, dz = spire.Z - z, reach = radius + spire.Reach;
+            if (dx * dx + dz * dz < reach * reach) yield return spire;
+        }
+    }
+
+    // At most one spire per cell.
+    private Spire? SpireIn(int cx, int cz)
+    {
+        uint h = Hash(cx, cz);
+        if ((h & 0xFFFF) / 65536f > SpireChance) return null;
+        float px = (cx + 0.2f + 0.6f * ((h >> 8) & 0xFF) / 255f) * SpireCell;
+        float pz = (cz + 0.2f + 0.6f * ((h >> 16) & 0xFF) / 255f) * SpireCell;
+        float radius = 7f + 9f * ((h >> 24) & 0xF) / 15f;
+        return new Spire(px, pz, radius * 1.4f, h);
+    }
+
+    /// <summary>A tall rock needle with a steep flank and a rounded top.</summary>
+    private float SpireHeight(Spire spire, float x, float z)
+    {
+        uint h = spire.Hash;
+        float radius = 7f + 9f * ((h >> 24) & 0xF) / 15f;
+        float height = 35f + 55f * ((h >> 28) & 0xF) / 15f;
+
+        // A ragged outline: the radius wobbles around the spire (noise sampled on a circle,
+        // so it wraps seamlessly), and narrows toward the top.
+        float ox = x - spire.X, oz = z - spire.Z;
+        float r = MathF.Sqrt(ox * ox + oz * oz);
+        if (r >= spire.Reach) return 0f;
+        float cos = r > 1e-3f ? ox / r : 1f, sin = r > 1e-3f ? oz / r : 0f;
+        float seed = (h & 0xFF) * 0.37f;
+        float wobble = 1f + 0.35f * _detail.Noise(cos * 1.4f + seed, sin * 1.4f - seed);
+        float d = r / (radius * wobble);
+        if (d >= 1f) return 0f;
+        float profile = MathF.Pow(1f - d, 1.6f);
+        return height * profile * (1f - 0.35f * profile * profile);
     }
 
     private static float Smooth(float edge0, float edge1, float x)

@@ -11,10 +11,14 @@ namespace Mine;
 /// </summary>
 public sealed class Player
 {
-    // Tall enough to look over ordinary grass (up to 1.45 m, see GrassRenderer): chest-deep in the
-    // tall meadows, and lost in their giant hearts.
-    public const float EyeHeight = 2.1f;
-    public const float SneakEyeHeight = 1.7f;
+    // The body: 2 m tall (a passage two blocks high lets it through) and BodyRadius wide, for the
+    // blocks. The eyes are 0.2 m under the top of the head, so the view never reaches into a
+    // ceiling; they still look over ordinary grass (up to 1.45 m, see GrassRenderer): chest-deep in
+    // the tall meadows, and lost in their giant hearts.
+    public const float Height = 2f;
+    public const float BodyRadius = 0.35f;
+    public const float EyeHeight = 1.8f;
+    public const float SneakEyeHeight = 1.45f;
 
     private const float Gravity = 28f;
     private const float JumpSpeed = 8.4f;
@@ -151,13 +155,17 @@ public sealed class Player
             Velocity.Z = 0;
         }
 
+        float startY = Position.Y;
         Position.Y += delta.Y;
         float ground = surface.Height(Position.X, Position.Z, Position.Y + climb);
 
         OnGround = false;
         if (Position.Y <= ground)
         {
-            float rise = ground - Position.Y;
+            // A step is how far the ground rose over where the feet were, not over where this
+            // frame's fall took them: after a long frame (a garbage collection) gravity sinks the
+            // feet several centimetres into the ground, which must not ease the camera up like a step.
+            float rise = ground - startY;
             if (rise > 0.05f && !Flying) _stepOffset -= rise; // the camera eases up the step
             Position.Y = ground;
             if (Velocity.Y < 0) Velocity.Y = 0;

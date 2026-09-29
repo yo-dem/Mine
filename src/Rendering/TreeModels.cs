@@ -71,7 +71,6 @@ public static class TreeModels
         Lilies,      // arching strap leaves, leafy stems, glowing trumpets
         TallPalm,    // a very tall, slender palm with a deep curve
         ShortPalm,   // a short, stocky palm with a big crown
-        Rocks,       // a cluster of boulders, broken for stone
     }
 
     public static int TreeStyleCount => Styles.Length;
@@ -91,7 +90,6 @@ public static class TreeModels
         Decoration.Irises or Decoration.Lilies or Decoration.Poppies => 120f,
         Decoration.Reeds => 400f,
         Decoration.Palm or Decoration.TallPalm or Decoration.ShortPalm => float.MaxValue,
-        Decoration.Rocks => 500f,
         _ => 700f,
     };
 
@@ -119,7 +117,6 @@ public static class TreeModels
         Decoration.Palm => 0.24f,
         Decoration.TallPalm => 0.22f,
         Decoration.ShortPalm => 0.3f,
-        Decoration.Rocks => 0.9f,
         _ => 0f, // flowers do not block the way
     };
 
@@ -549,34 +546,6 @@ public static class TreeModels
                 }
                 break;
             }
-            case Decoration.Rocks:
-            {
-                // A few pale lilac-grey boulders huddled together, the biggest in the middle, with
-                // small crystal points glowing faintly in their cracks: something worth breaking.
-                int count = 3 + random.Next(2);
-                for (int i = 0; i < count; i++)
-                {
-                    float a = i * MathF.Tau / count + random.NextSingle();
-                    float r = i == 0 ? 0f : 0.55f + 0.3f * random.NextSingle();
-                    float size = i == 0 ? 0.75f : 0.35f + 0.25f * random.NextSingle();
-                    var center = new Vector3(MathF.Cos(a) * r, size * 0.35f, MathF.Sin(a) * r);
-                    var color = Vector3.Lerp(new Vector3(0.40f, 0.37f, 0.46f), new Vector3(0.56f, 0.52f, 0.60f), random.NextSingle());
-                    Rock(mesh, center, new Vector3(size * 1.15f, size * 0.8f, size), color, lod, random.NextSingle() * 10f, 0.1f);
-                }
-                if (lod < 3)
-                    for (int i = 0; i < 4; i++)
-                    {
-                        float a = random.NextSingle() * MathF.Tau;
-                        var outward = new Vector3(MathF.Cos(a), 0, MathF.Sin(a));
-                        // On the big middle boulder's flank (an ellipsoid of about 0.86 × 0.6 m), pointing out.
-                        float up = 0.25f + 0.5f * random.NextSingle();
-                        var axis = Vector3.Normalize(outward * 0.9f + Vector3.UnitY * (0.5f + up));
-                        var foot = new Vector3(0, 0.26f + 0.5f * up, 0) + outward * (0.8f - 0.35f * up);
-                        var tint = random.NextSingle() < 0.5f ? new Vector3(0.62f, 0.50f, 1.0f) : new Vector3(0.45f, 0.85f, 1.0f);
-                        Prism(mesh, foot, axis, 0.2f + 0.15f * random.NextSingle(), 0.045f, tint, 4);
-                    }
-                break;
-            }
         }
         return mesh.ToArray();
     }
@@ -587,12 +556,15 @@ public static class TreeModels
     /// </summary>
     public readonly record struct Yield(string Name, Amount Amount, float Seconds, float PickRadius, float PickHeight, Vector3 Chip, Vector3 Chip2);
 
-    private static readonly Vector3 RockChip = new(0.52f, 0.48f, 0.58f), RockChip2 = new(0.38f, 0.35f, 0.44f);
+    private static readonly Vector3 CrystalChip = new(0.75f, 0.55f, 1.0f), VioletChip = new(0.66f, 0.42f, 1.0f), CyanChip = new(0.45f, 0.85f, 1.0f);
+
+    /// <summary>A small glowing crystal (<see cref="ObjectKind.Crystal"/>): quick to break, it gives only a couple of cubes.</summary>
+    public static readonly Yield SmallCrystal = new("Cristallo", new Amount(Resource.Crystal, 2), 0.5f, 0.3f, 0.6f, CrystalChip, VioletChip);
 
     /// <summary>
     /// What breaking an instance of <paramref name="variant"/> at <paramref name="scale"/> gives
-    /// (bigger ones give more and take longer), or null if it cannot be broken: for now trees
-    /// (palms too) give wood and rocks give stone.
+    /// (bigger ones give more and take longer), or null if it cannot be broken: trees (palms too)
+    /// give wood and crystal clusters give crystal cubes (stone comes from digging the rock spires).
     /// </summary>
     public static Yield? YieldOf(int variant, float scale)
     {
@@ -610,7 +582,9 @@ public static class TreeModels
         {
             Decoration.Palm or Decoration.TallPalm or Decoration.ShortPalm => new Yield("Palma", new Amount(Resource.Wood, Round(4f * scale)),
                 1.6f * scale, 0.5f, 3f, new Vector3(0.30f, 0.22f, 0.26f), new Vector3(0.16f, 0.22f, 0.34f)),
-            Decoration.Rocks => new Yield("Roccia", new Amount(Resource.Stone, Round(6f * scale)), 2f * scale, 1.1f * scale, 1.2f * scale, RockChip, RockChip2),
+            // Crystal clusters (0.6 to 2.3 in scale) give 3 to 12 crystal cubes.
+            Decoration.VioletCrystals or Decoration.CyanCrystals => new Yield("Cristalli giganti", new Amount(Resource.Crystal, Round(5.2f * scale)),
+                1.2f * scale, 0.9f * scale, 2.6f * scale, CrystalChip, (Decoration)(variant - Styles.Length) == Decoration.CyanCrystals ? CyanChip : VioletChip),
             _ => null,
         };
     }

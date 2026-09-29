@@ -247,7 +247,7 @@ public sealed class Creatures
             var center = _flockAnchor + new Vector3(MathF.Cos(angle) * radius, 0, MathF.Sin(angle) * radius);
             // Follow the smooth land shape, eased, never the layered tiles: their half-metre steps
             // would make the whole flock jump.
-            float target = MathF.Max(_terrain.SmoothHeight(center.X, center.Z), water) + height;
+            float target = MathF.Max(_terrain.SmoothHeight(center.X, center.Z) + _terrain.SpireHeight(center.X, center.Z), water) + height;
             flock.Altitude = float.IsNaN(flock.Altitude) ? target : flock.Altitude + (target - flock.Altitude) * (1f - MathF.Exp(-0.3f * dt));
             center.Y = flock.Altitude;
             var heading = new Vector3(-MathF.Sin(angle), 0, MathF.Cos(angle)) * spin * radius;

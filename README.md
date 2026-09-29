@@ -45,13 +45,17 @@ fitti portati dal vento e una foschia bianca che cancella l'orizzonte.
 ## Raccogliere e costruire
 
 In giro per il mondo si raccolgono i materiali tenendo premuto il tasto sinistro su ciò che si guarda:
-gli alberi e le palme danno legno, le rocce (frequenti, con punte di cristallo che brillano appena)
-pietra. Mentre li colpisci ne schizzano via piccole schegge
-cubiche; poi si rompono per sempre, esplodendo in schegge e in cubetti di legno o di pietra che cadono
+gli alberi e le palme danno legno, i cristalli (giganti o piccoli) cubetti di cristallo: più grande il
+cristallo, più cubetti. Mentre li colpisci ne schizzano via piccole schegge
+cubiche; poi si rompono per sempre, esplodendo in schegge e in cubetti che cadono
 intorno e restano a fluttuare ruotando sul terreno finché non ti avvicini: allora volano verso di te e
 finiscono nell'inventario (vengono richiamati da qualche metro). In basso ci sono 10 caselle: ogni materiale si accumula nella sua, col suo
 contatore, e il cubetto dentro ruota. Quello nella casella scelta con la rotella si vede in mano. Per
-ora, per provare le costruzioni, il gioco parte sempre con almeno 1000 di legno, pietra e cristallo.
+ora, per provare le costruzioni, il gioco parte sempre con 100 di legno, pietra e cristallo.
+
+La pietra si scava dalle grandi guglie di roccia: vicino al giocatore (entro 600 m) sono fatte
+interamente di blocchi di pietra da 1 m, pieni fino al centro, e si scavano blocco per blocco come
+in Minecraft; ciò che si scava resta scavato. Più lontano il terreno le disegna ancora come roccia.
 
 Si costruisce con blocchi da 1 m, come in Minecraft, usando i cubetti raccolti: il tasto sinistro
 rompe, il destro posa. Il materiale scelto nell'inventario (legno, pietra, oppure cristallo, che fa
@@ -87,16 +91,17 @@ portatili con due schede usa quella dedicata; la prima volta si riavvia da solo 
 | Ctrl sinistro | Corri |
 | T (tenuto) | Fai scorrere il tempo più veloce |
 | F | Attiva/disattiva il volo |
-| Click sinistro | Tieni premuto per rompere alberi e palme (legno), rocce (pietra) e blocchi; click sui cristalli per raccoglierli |
+| Click sinistro | Tieni premuto per rompere alberi e palme (legno), cristalli (cubetti di cristallo), le guglie di roccia (pietra) e i blocchi |
 | Click destro | Posa un blocco del materiale in mano (uno per click) |
 | Rotella | Scegli la casella dell'inventario (il materiale in mano) |
-| Q | Qualità alta / bassa (bassa: automatica sulle schede integrate) |
-| F11 o Alt+Invio | Schermo intero / finestra (il gioco parte a schermo intero) |
+| F3 | Apre e chiude il pannello di info (FPS, mondo, posizione, ora e meteo, movimento, oggetto in mano) e opzioni; si chiude anche con Esc |
+| V / Q / H (solo col pannello F3 aperto) | Sincronizzazione verticale, qualità bassa (di default automatica sulle schede integrate), suggerimenti a schermo; le scelte vengono salvate |
+| F11 o Alt+Invio | Schermo intero / finestra (per ora il gioco parte in finestra, per il debug; `MINE_FULLSCREEN=1` lo avvia a schermo intero) |
 | F10 | Sposta il gioco sul monitor successivo |
 | 1 | Fai partire una stella cadente davanti a te (debug) |
 | 2 | Fai iniziare o smettere la pioggia (premuto due volte: temporale con fulmini) |
 | 3 | Fai iniziare o smettere la neve (premuto due volte: bufera) |
-| CTRL+1 / 2 / 3 / 4 / 5 | Cambia mondo: classico (con le isole volanti), desertico (foreste rare, laghi rarissimi), arcipelago (isolotti con coste desertiche e cuore lussureggiante), piatto (pianure dolci e sobrie: poca erba e pochi alberi, un solo tono di colore, poche nuvole, di notte solo stelle e l'ombra del pianeta), base (come il piatto ma con biomi riconoscibili, vegetazione a gruppi della stessa specie, e il pianeta come ombra dal bordo luminoso) |
+| CTRL+1 / 2 / 3 / 4 / 5 | Cambia mondo (il gioco parte nel desertico, il mondo principale): classico (con le isole volanti), desertico (foreste rare, laghi rarissimi), arcipelago (isolotti con coste desertiche e cuore lussureggiante), piatto (pianure dolci e sobrie: poca erba e pochi alberi, un solo tono di colore, poche nuvole, di notte solo stelle e l'ombra del pianeta), base (come il piatto ma con biomi riconoscibili, vegetazione a gruppi della stessa specie, e il pianeta come ombra dal bordo luminoso) |
 | Esc | Libera il mouse (di nuovo Esc: esci) |
 
 ## Struttura
@@ -115,7 +120,7 @@ src/
     IslandField.cs        isole fluttuanti: dove sono, forma, alberi in cima
     Ground.cs             dove si può camminare: terreno, cime delle isole, blocchi
     Creatures.cs          farfalle, pesci e stormi di uccelli (simulazione)
-    TreeField.cs          dove crescono alberi, fiori e rocce, per bioma; ciò che si rompe sparisce per sempre; collisione con i tronchi
+    TreeField.cs          dove crescono alberi, fiori e cristalli, per bioma; ciò che si rompe sparisce per sempre; collisione con i tronchi
     GroundMaterials.cs    biomi, colore e copertura dell'erba (copia in C# delle funzioni dello shader)
     WorldPreset.cs        tipi di mondo (classico, desertico, arcipelago, piatto, base) scelti con CTRL+1..5
     Inventory.cs          materiali (legno, pietra, cristallo) e inventario a 10 caselle

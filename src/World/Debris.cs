@@ -175,12 +175,25 @@ public sealed class Debris
         return collected;
     }
 
-    // Gravity, and bounces on the ground that sap the speed.
+    // Gravity, bounces off the blocks' sides and ceilings, and bounces on the ground that sap the speed.
     private static void Fall(ref Vector3 position, ref Vector3 velocity, float size, Ground ground, float dt, out bool landed)
     {
         velocity.Y -= Gravity * dt;
-        position += velocity * dt;
-        float floor = ground.Height(position.X, position.Z, position.Y + 0.3f) + size / 2;
+        // Sideways first: into a block's side, it bounces back off it.
+        var moved = position + new Vector3(velocity.X, 0, velocity.Z) * dt;
+        if (!ground.Solid(position) && ground.Solid(moved))
+        {
+            velocity.X *= -0.3f;
+            velocity.Z *= -0.3f;
+        }
+        else position = moved;
+        // Then up or down: rising into a block, it stops under it (falling, the ground catches it).
+        float y = position.Y + velocity.Y * dt;
+        if (velocity.Y > 0 && !ground.Solid(position) && ground.Solid(position with { Y = y + size / 2 })) velocity.Y = 0;
+        else position.Y = y;
+        // Only blocks under the cube hold it up (one whose bottom is above it is a wall or a ceiling:
+        // standing it on that block's top would lift it through the rock).
+        float floor = ground.Height(position.X, position.Z, position.Y, blockRadius: 0f) + size / 2;
         landed = position.Y <= floor;
         if (!landed) return;
         position.Y = floor;

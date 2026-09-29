@@ -7,13 +7,23 @@ public sealed class SaveData
 {
     /// <summary>The inventory's slots (null: empty); null for a new game.</summary>
     public List<SlotSave?>? Slots { get; set; }
+    public GameOptions Options { get; set; } = new();
     public Dictionary<string, WorldSave> Worlds { get; set; } = new();
+}
+
+/// <summary>The options switched in the F3 panel (null: not chosen yet, the default applies).</summary>
+public sealed class GameOptions
+{
+    public bool? VSync { get; set; }
+    public bool? LowQuality { get; set; }  // default: from the GPU (integrated ones: low)
+    public bool Hints { get; set; } = true; // the controls listed in the top left corner
 }
 
 /// <summary>What the player changed in one world (by <see cref="WorldPreset.Name"/>).</summary>
 public sealed class WorldSave
 {
     public List<BlockSave> Blocks { get; set; } = new();
+    public List<DugSave> Dug { get; set; } = new();
     public List<GatheredSave> Gathered { get; set; } = new();
     public List<long> TakenObjects { get; set; } = new();
     public List<PlacedSave> PlacedObjects { get; set; } = new();

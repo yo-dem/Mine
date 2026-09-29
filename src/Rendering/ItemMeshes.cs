@@ -6,7 +6,7 @@ namespace Mine.Rendering;
 /// <summary>
 /// Models of the materials as things you hold, see lying on the ground and in the inventory
 /// (object vertex layout, centred on the origin, about one unit across): a wood block with bark
-/// sides and rings on its ends, a speckled stone block, a crystal; and the plain cube of a chip,
+/// sides and rings on its ends, a speckled stone block, a glowing crystal block; and the plain cube of a chip,
 /// white, to be tinted.
 /// </summary>
 internal static class ItemMeshes
@@ -32,31 +32,34 @@ internal static class ItemMeshes
                 Voxels(m, (x, y, z, h) =>
                 {
                     bool side = x == 0 || x == 3 || z == 0 || z == 3;
-                    if (side) return bark * (0.8f + 0.35f * h) * (x % 2 == 0 ? 1f : 0.9f);
-                    return ((x + z) % 2 == 0 ? light : dark) * (0.92f + 0.12f * h); // the rings of the end grain
+                    if (side) return (bark * (0.8f + 0.35f * h) * (x % 2 == 0 ? 1f : 0.9f), 0f);
+                    return (((x + z) % 2 == 0 ? light : dark) * (0.92f + 0.12f * h), 0f); // the rings of the end grain
                 });
                 break;
             }
             case Resource.Stone:
             {
                 var stone = new Vector3(0.54f, 0.50f, 0.58f);
-                Voxels(m, (_, _, _, h) => stone * (h < 0.15f ? 0.7f : 0.82f + 0.3f * h));
+                Voxels(m, (_, _, _, h) => (stone * (h < 0.15f ? 0.7f : 0.82f + 0.3f * h), 0f));
                 break;
             }
             default:
             {
-                var violet = new Vector3(0.66f, 0.46f, 1.0f);
-                m.Octahedron(new(0, -0.5f, 0), 0.2f, 1f, violet, 0.75f, tilt: new(0.08f, 0, 0.03f));
-                m.Octahedron(new(0.17f, -0.5f, 0.07f), 0.12f, 0.57f, violet * 0.9f, 0.75f, tilt: new(0.25f, 0, 0.1f));
-                m.Octahedron(new(-0.13f, -0.5f, 0.13f), 0.1f, 0.43f, violet * 1.1f, 0.75f, tilt: new(-0.2f, 0, 0.22f));
+                // The crystal block as it is placed: violet glass glowing brighter toward the middle
+                // of each face (like BlockRenderer's crystal).
+                Voxels(m, (x, y, z, h) =>
+                {
+                    bool rim = (x == 0 || x == 3 ? 1 : 0) + (y == 0 || y == 3 ? 1 : 0) + (z == 0 || z == 3 ? 1 : 0) >= 2;
+                    return (Blocks.CrystalLight * (rim ? 0.75f : 1f) * (0.9f + 0.2f * h), rim ? 0.55f : 0.8f);
+                });
                 break;
             }
         }
         return m.Vertices;
     }
 
-    // The outer voxels of a 4×4×4 cube, each coloured by `color(x, y, z, random 0..1)`.
-    private static void Voxels(MeshBuilder m, Func<int, int, int, float, Vector3> color)
+    // The outer voxels of a 4×4×4 cube, each coloured by `shade(x, y, z, random 0..1)` (colour, emissive).
+    private static void Voxels(MeshBuilder m, Func<int, int, int, float, (Vector3 Color, float Emissive)> shade)
     {
         const int n = 4;
         const float size = 1f / n;
@@ -69,7 +72,8 @@ internal static class ItemMeshes
             float h = random.NextSingle();
             if (!outer) continue;
             var min = new Vector3(x, y, z) * size - new Vector3(0.5f);
-            m.Box(min, min + new Vector3(size), color(x, y, z, h));
+            var (color, emissive) = shade(x, y, z, h);
+            m.Box(min, min + new Vector3(size), color, emissive);
         }
     }
 }

@@ -15,7 +15,7 @@ public sealed class Game : IDisposable
     private const float ReachDistance = 6f;
     private const float BuildReach = 8f;
     private const double AutosaveSeconds = 20;
-    private const int TestStock = 1000;
+    private const int TestStock = 100;
     private const float ObjectDrawDistance = 350f;
     private const double DoubleTapWindow = 0.3; // seconds between two W presses to start sprinting
     private const float FastTimeScale = 60f;     // holding T speeds up the day
@@ -106,6 +106,13 @@ public sealed class Game : IDisposable
     private double _lastRainTap = double.NegativeInfinity, _lastSnowTap = double.NegativeInfinity;
     private bool _sprinting; // latched by double-tapping W, lasts until W is released
 
+    // The F3 panel: the game's state (what the window title shows) and the options, switched by
+    // their keys only while it is open.
+    private bool _panelOpen = Environment.GetEnvironmentVariable("MINE_F3") == "1"; // MINE_F3=1: open from the start
+    private string[] _info = [];
+    private static readonly (Key Key, string Name)[] OptionKeys =
+        [(Key.V, "Sincronizzazione verticale"), (Key.Q, "Qualita bassa"), (Key.H, "Suggerimenti a schermo")];
+
     public Game()
     {
         var options = WindowOptions.Default with
@@ -155,9 +162,13 @@ public sealed class Game : IDisposable
         // The saved game: the inventory now, each world's changes as it is built.
         if (SaveGame.Load() is { } save) _save = save;
         if (_save.Slots is { } slots) _inventory.Load(slots);
-        // For now, while building is being tried out: at least TestStock of everything at every start.
+        // For now, while building is being tried out: exactly TestStock of everything at every start.
         foreach (var resource in Enum.GetValues<Resource>())
-            _inventory.Add(resource, Math.Max(0, TestStock - _inventory.Count(resource)));
+        {
+            int have = _inventory.Count(resource);
+            if (have > TestStock) _inventory.Take(resource, have - TestStock);
+            else _inventory.Add(resource, TestStock - have);
+        }
         _sky = new SkyRenderer(_gl);
         _shadowMap = new ShadowMap(_gl);
         if (int.TryParse(Environment.GetEnvironmentVariable("MINE_WORLD"), out int world) && world >= 1 && world <= WorldPreset.All.Length)
@@ -175,8 +186,9 @@ public sealed class Game : IDisposable
         _water = new WaterRenderer(_gl);
         // Integrated GPUs get the lighter clouds and a lower render scale; Q switches at any time.
         string renderer = _gl.GetStringS(StringName.Renderer) ?? "";
-        SetLowQuality(renderer.Contains("Intel", StringComparison.OrdinalIgnoreCase)
-                      || renderer.Contains("llvmpipe", StringComparison.OrdinalIgnoreCase));
+        SetLowQuality(_save.Options.LowQuality ?? (renderer.Contains("Intel", StringComparison.OrdinalIgnoreCase)
+                      || renderer.Contains("llvmpipe", StringComparison.OrdinalIgnoreCase)));
+        if (_save.Options.VSync is { } vsync && Environment.GetEnvironmentVariable("MINE_NO_VSYNC") != "1") _window.VSync = vsync;
 
         Respawn();
         if (Environment.GetEnvironmentVariable("MINE_GIVE") == "1")
@@ -196,7 +208,7 @@ public sealed class Game : IDisposable
         _gl.Enable(EnableCap.DepthTest);
         _gl.Enable(EnableCap.CullFace);
         OnFramebufferResize(_window.FramebufferSize);
-        SetFullscreen(Environment.GetEnvironmentVariable("MINE_WINDOWED") != "1");
+        SetFullscreen(Environment.GetEnvironmentVariable("MINE_FULLSCREEN") == "1"); // windowed, for debugging
     }
 
     private static readonly Vector2D<int> WindowedSize = new(1280, 720);
@@ -244,7 +256,7 @@ public sealed class Game : IDisposable
 
     // Debugging aids, from environment variables: MINE_FPS_LOG=1 prints the HUD line to the console,
     // MINE_RAIN=1 starts with rain, MINE_SNOW=1 starts snowing with the snow already lying, MINE_STORM=1 / MINE_BLIZZARD=1 start a storm / a blizzard, MINE_WORLD=2 starts in world preset 2 (Ctrl+2), MINE_TIME=0.45 sets the time of day, MINE_PITCH=0.2 the view
-    // pitch (radians), MINE_YAW=1.5 the view heading, MINE_POS=800,-300 spawns exactly there, MINE_WINDOWED=1 starts in a window, MINE_GIVE=1 gives 99 of every material, MINE_DEMO=1 builds a small block house ahead, MINE_SHOT=file.png saves a frame and quits (Screenshot), MINE_BREAK=10 holds the left button from 10 s on, MINE_SAVE=path|none picks the save file, MINE_GPU_PROFILE=1 prints the GPU time of each pass (GpuProfiler).
+    // pitch (radians), MINE_YAW=1.5 the view heading, MINE_POS=800,-300 spawns exactly there, MINE_FULLSCREEN=1 starts full screen (windowed by default, for debugging), MINE_GIVE=1 gives 99 of every material, MINE_DEMO=1 builds a small block house ahead, MINE_SHOT=file.png saves a frame and quits (Screenshot), MINE_BREAK=10 holds the left button from 10 s on, MINE_SAVE=path|none picks the save file, MINE_GPU_PROFILE=1 prints the GPU time of each pass (GpuProfiler).
     private static readonly string Skip = Environment.GetEnvironmentVariable("MINE_SKIP") ?? "";
     private static bool On(string pass) => !Skip.Contains(pass);
     // Where the game starts: a meadow by a lake. MINE_POS overrides it.
@@ -284,7 +296,8 @@ public sealed class Game : IDisposable
             {
                 float a = k * MathF.Tau / steps;
                 float x = MathF.Cos(a) * r, z = MathF.Sin(a) * r;
-                if (_terrainField.Height(x, z) < TerrainField.WaterLevel + 2f || _terrainField.Normal(x, z).Y < 0.9f) continue;
+                if (_terrainField.Height(x, z) < TerrainField.WaterLevel + 2f || _terrainField.Normal(x, z).Y < 0.9f
+                    || _terrainField.SpireHeight(x, z) > 0f) continue;
                 bool sandy = GroundMaterials.Desert(x, z) > 0.7f;
                 if (sandy == (WorldPreset.Current == WorldPreset.Desert)) return new Vector2(x, z);
                 fallback ??= new Vector2(x, z);
@@ -345,6 +358,7 @@ public sealed class Game : IDisposable
     {
         if (!_save.Worlds.TryGetValue(WorldPreset.Current.Name, out var world)) return;
         _blocks.Load(world.Blocks);
+        _blocks.LoadDug(world.Dug);
         _treeField.LoadGathered(world.Gathered.Select(g => new Vector3(g.X, g.Y, g.Z)));
         _debris.Load(world.Drops);
         _objects.Load(world.TakenObjects, world.PlacedObjects);
@@ -386,6 +400,7 @@ public sealed class Game : IDisposable
         _save.Worlds[WorldPreset.Current.Name] = new WorldSave
         {
             Blocks = _blocks.Save(),
+            Dug = _blocks.SaveDug(),
             Gathered = _treeField.SaveGathered().Select(g => new GatheredSave(g.X, g.Y, g.Z)).ToList(),
             Drops = _debris.Save(),
             TakenObjects = _objects.SaveTaken(),
@@ -447,7 +462,7 @@ public sealed class Game : IDisposable
         _seaFloor.Update(_player.Eye);
         _treeField.Update(_player.Position);
         _treeField.ResolveCollision(ref _player.Position, 0.35f);
-        _blocks.ResolveCollision(ref _player.Position, ref _player.Velocity, 0.35f, 2.2f, 0.55f);
+        _blocks.ResolveCollision(ref _player.Position, ref _player.Velocity, Player.BodyRadius, Player.Height, 0.55f);
         _terrain.Update(_player.Eye);
         _trees.Update(_treeField, _player.Eye);
         _grass.Update(_player.Eye);
@@ -457,6 +472,7 @@ public sealed class Game : IDisposable
         Aim();
         Gather(dt);
         if (_debris.Update(dt, _ground, _player.Position, _inventory) > 0) _dirty = true;
+        _blocks.UpdateSpires(_player.Position);
         _blockRenderer.Update(_blocks);
         _blocks.Update();
         _indoor.Update(_blocks, _player.Eye);
@@ -483,7 +499,7 @@ public sealed class Game : IDisposable
         if (!_mouseCaptured) return;
         var eye = _player.Eye;
         var look = _player.LookDirection;
-        if (Held is not null) _plan = _blocks.Plan(eye, look, BuildReach, _treeField.TrunkIn, _player.Position, 0.35f, 2.2f);
+        if (Held is not null) _plan = _blocks.Plan(eye, look, BuildReach, _treeField.TrunkIn, _player.Position, Player.BodyRadius, Player.Height);
         float limit = ReachDistance;
         if (_terrainField.Raycast(eye, look, ReachDistance, out var ground)) limit = Vector3.Distance(eye, ground) + 0.3f;
         if (_blocks.Raycast(eye, look, limit) is { } block)
@@ -517,15 +533,15 @@ public sealed class Game : IDisposable
     private static (Vector3, Vector3) ChipsOf(Resource r) => r switch { Resource.Wood => WoodChips, Resource.Stone => StoneChips, _ => CrystalChips };
 
     /// <summary>
-    /// Holding the left button on a tree, a rock or a block hits it: chips fly off where the blow
+    /// Holding the left button on a tree, a rock, a crystal (a cluster or a small one) or a block hits it: chips fly off where the blow
     /// lands, and after a moment it breaks, bursting into chips and cubes of its material (a block
     /// gives itself back) that fall around and wait to be picked up (see <see cref="Debris"/>).
-    /// Trees and rocks never come back.
+    /// Trees, rocks and crystals never come back.
     /// </summary>
     private void Gather(float dt)
     {
         bool holding = _mouseCaptured && (_input.Mice.Any(m => m.IsButtonPressed(MouseButton.Left)) || _time > AutoBreakAt);
-        object? key = _gatherTarget?.Tree ?? (object?)_aimedBlock?.Block;
+        object? key = _gatherTarget?.Tree ?? _aimed ?? (object?)_aimedBlock?.Block;
         if (!holding || key is null)
         {
             _gathering = null;
@@ -546,6 +562,12 @@ public sealed class Game : IDisposable
         {
             (chip, chip2, seconds) = (target.Yield.Chip, target.Yield.Chip2, target.Yield.Seconds);
             hit = _player.Eye + look * MathF.Max(target.Distance - target.Yield.PickRadius * 0.3f, 0.3f);
+        }
+        else if (_aimed is { } small)
+        {
+            var yield = TreeModels.SmallCrystal;
+            (chip, chip2, seconds) = (yield.Chip, yield.Chip2, yield.Seconds);
+            hit = small.Position + new Vector3(0, yield.PickHeight * 0.5f, 0) - look * 0.1f;
         }
         else
         {
@@ -570,6 +592,15 @@ public sealed class Game : IDisposable
             _debris.Burst(tree.Position, yield.PickHeight * 1.5f, yield.PickRadius * 1.5f, 40 + 10 * Math.Min(yield.Amount.Count, 8), chip, chip2);
             _debris.Spill(yield.Amount.Resource, Math.Min(yield.Amount.Count, 32), tree.Position, MathF.Min(yield.PickHeight, 3f));
             _treeField.Gather(tree);
+        }
+        else if (_aimed is { } small)
+        {
+            // A small crystal shatters into a couple of crystal cubes.
+            var yield = TreeModels.SmallCrystal;
+            _debris.Burst(small.Position, yield.PickHeight, yield.PickRadius, 20, chip, chip2);
+            _debris.Spill(yield.Amount.Resource, yield.Amount.Count, small.Position, yield.PickHeight);
+            _objects.Remove(small);
+            _aimed = null;
         }
         else
         {
@@ -802,12 +833,13 @@ public sealed class Game : IDisposable
         if (Held is { } held) _hud.TextCentered(Inventory.Names[(int)held], centerX, lineY, s, white);
 
         // What is aimed at, and how far the blow has got.
-        if (_gatherTarget is not null || _aimedBlock is not null)
+        if (_gatherTarget is not null || _aimedBlock is not null || _aimed is not null)
         {
             float y = height / 2f + 12 * s;
             var blockMaterial = _aimedBlock is { } aimedBlock ? _blocks.At(aimedBlock.Block) ?? Resource.Wood : Resource.Wood;
-            string name = _gatherTarget?.Yield.Name ?? $"Blocco di {Inventory.Names[(int)blockMaterial].ToLowerInvariant()}";
-            float seconds = _gatherTarget?.Yield.Seconds ?? BreakSeconds(blockMaterial);
+            var yield = _gatherTarget?.Yield ?? (_aimed is not null ? TreeModels.SmallCrystal : (TreeModels.Yield?)null);
+            string name = yield?.Name ?? $"Blocco di {Inventory.Names[(int)blockMaterial].ToLowerInvariant()}";
+            float seconds = yield?.Seconds ?? BreakSeconds(blockMaterial);
             _hud.TextCentered(name, centerX, y, s, white);
             float barWidth = 50 * s;
             if (_gathering is not null)
@@ -818,8 +850,6 @@ public sealed class Game : IDisposable
             }
             else _hud.TextCentered("Tieni premuto il tasto sinistro", centerX, y + 9 * s, s, soft);
         }
-        else if (_aimed is not null)
-            _hud.TextCentered("Cristallo: clic sinistro per raccogliere", centerX, height / 2f + 12 * s, s, soft);
 
         // Messages, newest at the bottom, fading out.
         for (int i = 0; i < _toasts.Count; i++)
@@ -829,12 +859,49 @@ public sealed class Game : IDisposable
             _hud.TextCentered(text, centerX, height / 2f - (14 + 9 * (_toasts.Count - 1 - i)) * s, s, color with { W = color.W * fade });
         }
 
-        // Hints in the top left corner.
-        string[] hints = ["Tieni premuto clic sinistro: rompi", "Clic destro: posa un blocco", "Rotella: cambia oggetto"];
-        for (int i = 0; i < hints.Length; i++)
-            _hud.Text(hints[i], 8 * s, 8 * s + i * 10 * s, s, soft);
+        if (_panelOpen) DrawPanel(s, white, soft);
+        else if (_save.Options.Hints)
+        {
+            // Hints in the top left corner.
+            string[] hints = ["Tieni premuto clic sinistro: rompi", "Clic destro: posa un blocco", "Rotella: cambia oggetto", "F3: info e opzioni"];
+            for (int i = 0; i < hints.Length; i++)
+                _hud.Text(hints[i], 8 * s, 8 * s + i * 10 * s, s, soft);
+        }
 
         _hud.End();
+    }
+
+    /// <summary>The F3 panel in the top left corner: the game's state, then the options and their keys.</summary>
+    private void DrawPanel(int s, Vector4 white, Vector4 soft)
+    {
+        var on = new Vector4(0.55f, 1f, 0.8f, 1f);
+        var off = new Vector4(1f, 0.55f, 0.6f, 1f);
+        float line = 10 * s, x = 8 * s, y = 8 * s, pad = 6 * s;
+        var rows = new List<(string Text, Vector4 Color)> { ("Info", white) };
+        rows.AddRange(_info.Select(i => (i, soft)));
+        rows.Add(("", soft));
+        rows.Add(("Opzioni", white));
+        int optionsStart = rows.Count;
+        for (int i = 0; i < OptionKeys.Length; i++)
+            rows.Add(($"[{OptionKeys[i].Key}] {OptionKeys[i].Name}", soft));
+        rows.Add(("", soft));
+        rows.Add(("F3 o Esc: chiudi", soft));
+
+        const string stateOn = "SI", stateOff = "NO";
+        float width = rows.Max(r => Hud.TextWidth(r.Text, s));
+        width = MathF.Max(width, OptionKeys.Max(o => Hud.TextWidth($"[{o.Key}] {o.Name}", s)) + 8 * s + Hud.TextWidth(stateOff, s));
+        _hud.Rect(x - pad, y - pad, width + 2 * pad, rows.Count * line + 2 * pad - 2 * s, new Vector4(0.05f, 0.03f, 0.1f, 0.7f));
+        for (int i = 0; i < rows.Count; i++)
+        {
+            _hud.Text(rows[i].Text, x, y + i * line, s, rows[i].Color);
+            int option = i - optionsStart;
+            if (option >= 0 && option < OptionKeys.Length)
+            {
+                bool enabled = OptionOn(option);
+                string state = enabled ? stateOn : stateOff;
+                _hud.Text(state, x + width - Hud.TextWidth(state, s), y + i * line, s, enabled ? on : off);
+            }
+        }
     }
 
     /// <summary>Binds a world shader and sets everything it needs for this frame.</summary>
@@ -886,6 +953,16 @@ public sealed class Game : IDisposable
             SetWorld(WorldPreset.All[key - Key.Number1]); // Ctrl+1..3: another kind of world
             return;
         }
+        if (key == Key.F3 || (key == Key.Escape && _panelOpen))
+        {
+            _panelOpen = !_panelOpen && key == Key.F3;
+            return;
+        }
+        if (_panelOpen && Array.FindIndex(OptionKeys, o => o.Key == key) is var option and >= 0)
+        {
+            ToggleOption(option);
+            return;
+        }
         switch (key)
         {
             case Key.Escape when _mouseCaptured:
@@ -897,9 +974,6 @@ public sealed class Game : IDisposable
             case Key.W when _mouseCaptured:
                 if (_time - _lastForwardTap <= DoubleTapWindow) _sprinting = true;
                 _lastForwardTap = _time;
-                break;
-            case Key.Q:
-                SetLowQuality(!_sky.LowQuality);
                 break;
             case Key.Number2: // rain on / off; pressed twice quickly: a storm with lightning
                 if (_time - _lastRainTap <= WeatherDoubleTap) _weather.StartStorm(); else _weather.Toggle();
@@ -950,21 +1024,6 @@ public sealed class Game : IDisposable
             // One block of the material in hand on the face aimed at.
             if (_plan is { Valid: true } plan) PlaceBlock(plan);
             else if (Held is not null && _plan is { Problem: { } problem }) Toast(problem, new Vector4(1f, 0.6f, 0.6f, 1f));
-            return;
-        }
-        if (button != MouseButton.Left) return;
-
-        if (_aimed is { } obj)
-        {
-            // A small crystal is picked up at once.
-            if (!_inventory.Add(Resource.Crystal, 1))
-            {
-                Toast("Inventario pieno", new Vector4(1f, 0.6f, 0.6f, 1f));
-                return;
-            }
-            _objects.Remove(obj);
-            _aimed = null;
-            _dirty = true;
         }
     }
 
@@ -973,6 +1032,26 @@ public sealed class Game : IDisposable
         if (!_mouseCaptured || wheel.Y == 0) return;
         int step = wheel.Y > 0 ? -1 : 1;
         _slot = (_slot + step + Inventory.SlotCount) % Inventory.SlotCount;
+    }
+
+    private bool OptionOn(int option) => option switch
+    {
+        0 => _window.VSync,
+        1 => _sky.LowQuality,
+        _ => _save.Options.Hints,
+    };
+
+    /// <summary>Switches an option of the F3 panel, and saves the choice.</summary>
+    private void ToggleOption(int option)
+    {
+        bool on = !OptionOn(option);
+        switch (option)
+        {
+            case 0: _window.VSync = on; _save.Options.VSync = on; break;
+            case 1: SetLowQuality(on); _save.Options.LowQuality = on; break;
+            default: _save.Options.Hints = on; break;
+        }
+        SaveGame.Write(_save);
     }
 
     private void SetLowQuality(bool low)
@@ -999,13 +1078,21 @@ public sealed class Game : IDisposable
         string mode = _player.Flying ? "volo" : _player.Swimming ? "nuoto" : "a piedi";
         if (_sprinting) mode += " (corsa)";
         else if (_player.Sneaking) mode += " (furtivo)";
-        string hint = _mouseCaptured ? "" : " | clicca per giocare, Esc per uscire";
         var (hours, minutes) = _dayCycle.Clock;
         string hand = _inventory[_slot] is { } stack ? $"{Inventory.Names[(int)stack.Resource]} x{stack.Count}" : "mano vuota";
-        if (_sky.LowQuality) mode += " | qualità bassa";
-        if (_weather.Raining) mode += " | pioggia";
-        _window.Title = $"Mine | mondo {WorldPreset.Current.Name} | {hand} | {mode} | ore {hours:00}:{minutes:00} | {fps} FPS | " +
-                        $"{p.X:0} {p.Y:0} {p.Z:0}{hint}";
+        string weather = _weather.Storm > 0.5f ? "temporale" : _weather.Blizzard > 0.5f ? "bufera di neve"
+            : _weather.Raining ? "pioggia" : _weather.Snow > 0.5f ? "neve" : "sereno";
+        _info =
+        [
+            $"{fps} FPS",
+            $"Mondo: {WorldPreset.Current.Name}",
+            $"Posizione: {p.X:0} {p.Y:0} {p.Z:0}",
+            $"Ore {hours:00}:{minutes:00}, {weather}",
+            $"Movimento: {mode}",
+            $"In mano: {hand}",
+        ];
+        string hint = _mouseCaptured ? "" : " | clicca per giocare, Esc per uscire";
+        _window.Title = $"Mine | {string.Join(" | ", _info)}{hint}";
         if (LogHud) Console.WriteLine(_window.Title); // MINE_FPS_LOG=1: for measuring without a screen
         _titleTimer = 0;
         _frames = 0;

@@ -63,7 +63,8 @@ public sealed record WorldPreset(
 
     public static readonly WorldPreset[] All = [Classic, Desert, Archipelago, Flat, Base];
 
-    public static WorldPreset Current { get; set; } = Classic;
+    /// <summary>The desert world (Ctrl+2) is the main one: the game starts there.</summary>
+    public static WorldPreset Current { get; set; } = Desert;
 
     // Archipelago shape (see GroundMaterials.IslandLand): the coast is where the land noise crosses
     // IslandCoast; `inland` counts IslandSpan steps of it from there (0 at the coast, 1 well inland).

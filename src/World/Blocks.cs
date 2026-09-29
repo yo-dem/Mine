@@ -15,6 +15,9 @@ public readonly record struct BlockPos(int X, int Y, int Z)
 
 public readonly record struct BlockSave(Resource Resource, int X, int Y, int Z);
 
+/// <summary>A block of a rock spire the player dug out: it is not laid again.</summary>
+public readonly record struct DugSave(int X, int Y, int Z);
+
 /// <summary>Where the view ray meets a block: which, where, and the face's outward normal.</summary>
 public readonly record struct BlockHit(BlockPos Block, Vector3 Point, Vector3 Normal, float Distance);
 
@@ -31,6 +34,9 @@ public readonly record struct BlockPlan(BlockPos Position, Vector3 Normal, strin
 /// (<see cref="Raycast"/>), where the next block goes (<see cref="Plan"/>), where the grass has been
 /// cleared around the blocks and how far it has grown back (<see cref="GrassGrowth"/>), and what is
 /// under a roof, where nothing from outside gets (<see cref="Indoors"/>).
+/// The rock spires are natural stone blocks too (<see cref="UpdateSpires"/>): laid within
+/// <see cref="SpireRadius"/> of the player, solid through, all on one 1 m grid, and dug like any
+/// block; only the blocks dug out of them are saved.
 /// </summary>
 public sealed class Blocks
 {
@@ -39,11 +45,24 @@ public sealed class Blocks
     public const int Tall = 2;                          // a block is two steps tall
     public const int ChunkSize = 16;                     // columns per side of a mesh chunk
     public const float RegrowSeconds = 90f;              // how long the grass takes to grow back
+    public const float SpireRadius = 600f;               // rock spires are laid as blocks within this
+    private const float SpireForget = 700f;              // and taken away beyond this
 
     private readonly TerrainField _terrain;
     private readonly Dictionary<BlockPos, Resource> _blocks = new();
     private readonly Dictionary<(int X, int Z), List<int>> _columns = new(); // bottoms (in steps) of the blocks in each column
     private readonly HashSet<(int X, int Z)> _dirty = new();                 // chunks to remesh
+    private readonly HashSet<BlockPos> _crystals = new();                    // the crystal blocks (the lights)
+
+    // The rock spires: their natural blocks, those dug out of them (never laid again), the blocks
+    // each spire laid (by its centre), the ground under each column (cached: noise is slow), the
+    // columns holding blocks the player placed, and where the spires were last looked for.
+    private readonly HashSet<BlockPos> _natural = new();
+    private readonly HashSet<BlockPos> _dug = new();
+    private readonly Dictionary<(float X, float Z), List<BlockPos>> _spires = new();
+    private readonly Dictionary<(int X, int Z), float> _ground = new();
+    private readonly Dictionary<(int X, int Z), int> _placed = new();
+    private Vector2? _spiresCheckedAt;
 
     // Columns cleared of grass and flowers (under and around blocks near the ground), and those growing
     // back since when (ms). Read by the grass and flower builders on worker threads: replaced whole.
@@ -81,33 +100,131 @@ public sealed class Blocks
     public bool Add(BlockPos p, Resource resource)
     {
         if (Overlaps(p)) return false;
-        _blocks[p] = resource;
-        if (!_columns.TryGetValue((p.X, p.Z), out var list)) _columns[(p.X, p.Z)] = list = new List<int>();
-        list.Add(p.Y);
+        Insert(p, resource);
+        _placed[(p.X, p.Z)] = _placed.GetValueOrDefault((p.X, p.Z)) + 1;
         Changed(p);
         return true;
     }
 
+    /// <summary>Takes a block away (a natural one is remembered as dug).</summary>
     public Resource? Remove(BlockPos p)
     {
-        if (!_blocks.Remove(p, out var resource)) return null;
-        if (_columns.TryGetValue((p.X, p.Z), out var list))
+        if (Delete(p) is not { } resource) return null;
+        if (_natural.Remove(p)) _dug.Add(p);
+        else if (_placed.TryGetValue((p.X, p.Z), out int placed))
         {
-            list.Remove(p.Y);
-            if (list.Count == 0) _columns.Remove((p.X, p.Z));
+            if (placed <= 1) _placed.Remove((p.X, p.Z));
+            else _placed[(p.X, p.Z)] = placed - 1;
         }
         Changed(p);
         return resource;
     }
 
+    /// <summary>Whether a block belongs to a rock spire.</summary>
+    public bool IsNatural(BlockPos p) => _natural.Contains(p);
+
+    private void Insert(BlockPos p, Resource resource)
+    {
+        _blocks[p] = resource;
+        if (resource == Resource.Crystal) _crystals.Add(p);
+        if (!_columns.TryGetValue((p.X, p.Z), out var list)) _columns[(p.X, p.Z)] = list = new List<int>();
+        list.Add(p.Y);
+    }
+
+    private Resource? Delete(BlockPos p)
+    {
+        if (!_blocks.Remove(p, out var resource)) return null;
+        _crystals.Remove(p);
+        if (_columns.TryGetValue((p.X, p.Z), out var list))
+        {
+            list.Remove(p.Y);
+            if (list.Count == 0) _columns.Remove((p.X, p.Z));
+        }
+        return resource;
+    }
+
+    /// <summary>The ground (terrain tile top) under a column, cached. Main thread only.</summary>
+    public float GroundAt(int x, int z)
+    {
+        if (!_ground.TryGetValue((x, z), out float ground))
+            _ground[(x, z)] = ground = _terrain.Height(x + 0.5f, z + 0.5f);
+        return ground;
+    }
+
+    // ---- The rock spires -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Lays the rock spires near the camera as natural stone blocks, and takes away those left far
+    /// behind. Every column of a spire is a solid stack from the 1 m level at or just under its
+    /// ground up to the spire's height there, so all its blocks line up and hide each other's faces.
+    /// </summary>
+    public void UpdateSpires(Vector3 camera)
+    {
+        var at = new Vector2(camera.X, camera.Z);
+        if (_spiresCheckedAt is { } last && Vector2.Distance(last, at) < 16f) return;
+        _spiresCheckedAt = at;
+        bool changed = false;
+
+        foreach (var key in _spires.Keys.ToList())
+        {
+            if (Vector2.Distance(new Vector2(key.X, key.Z), at) < SpireForget) continue;
+            foreach (var p in _spires[key])
+                if (_natural.Remove(p) && Delete(p) is not null) MarkDirty(p);
+            _spires.Remove(key);
+            changed = true;
+        }
+
+        foreach (var spire in _terrain.SpiresNear(at.X, at.Y, SpireRadius))
+        {
+            if (_spires.ContainsKey((spire.X, spire.Z))) continue;
+            var laid = new List<BlockPos>();
+            for (int z = (int)MathF.Floor(spire.Z - spire.Reach); z <= (int)MathF.Ceiling(spire.Z + spire.Reach); z++)
+            for (int x = (int)MathF.Floor(spire.X - spire.Reach); x <= (int)MathF.Ceiling(spire.X + spire.Reach); x++)
+            {
+                float rise = _terrain.SpireHeight(x + 0.5f, z + 0.5f);
+                if (rise < Size / 2) continue;
+                float ground = GroundAt(x, z);
+                int bottom = (int)MathF.Floor(ground / Size);
+                int count = (int)MathF.Round(ground + rise - bottom * Size);
+                for (int k = 0; k < count; k++)
+                {
+                    var p = new BlockPos(x, (bottom + k) * Tall, z);
+                    if (_dug.Contains(p) || Overlaps(p)) continue;
+                    Insert(p, Resource.Stone);
+                    _natural.Add(p);
+                    laid.Add(p);
+                }
+            }
+            foreach (var p in laid) MarkDirty(p);
+            _spires[(spire.X, spire.Z)] = laid;
+            changed = true;
+        }
+        if (changed) Version++;
+    }
+
+    public List<DugSave> SaveDug() => _dug.Select(p => new DugSave(p.X, p.Y, p.Z)).ToList();
+
+    /// <summary>Restores what was dug out of the spires (before they are laid).</summary>
+    public void LoadDug(IEnumerable<DugSave> dug)
+    {
+        _dug.Clear();
+        foreach (var d in dug) _dug.Add(new BlockPos(d.X, d.Y, d.Z));
+    }
+
     private void Changed(BlockPos p)
     {
         Version++;
-        // The block's chunk, and its neighbours' (their faces against it appear or disappear).
-        for (int dz = -1; dz <= 1; dz++)
-        for (int dx = -1; dx <= 1; dx++)
-            _dirty.Add(ChunkOf(p.X + dx, p.Z + dz));
+        MarkDirty(p);
         UpdateCleared();
+    }
+
+    // The block's chunk, and its neighbours' (their faces against it appear or disappear).
+    private void MarkDirty(BlockPos p)
+    {
+        _dirty.Add(ChunkOf(p.X - 1, p.Z - 1));
+        _dirty.Add(ChunkOf(p.X + 1, p.Z - 1));
+        _dirty.Add(ChunkOf(p.X - 1, p.Z + 1));
+        _dirty.Add(ChunkOf(p.X + 1, p.Z + 1));
     }
 
     public static (int X, int Z) ChunkOf(int x, int z) => ((int)MathF.Floor(x / (float)ChunkSize), (int)MathF.Floor(z / (float)ChunkSize));
@@ -131,20 +248,22 @@ public sealed class Blocks
         }
     }
 
-    public List<BlockSave> Save() => _blocks.Select(b => new BlockSave(b.Value, b.Key.X, b.Key.Y, b.Key.Z)).ToList();
+    /// <summary>The blocks the player placed (the spires' are generated).</summary>
+    public List<BlockSave> Save() => _blocks.Where(b => !_natural.Contains(b.Key)).Select(b => new BlockSave(b.Value, b.Key.X, b.Key.Y, b.Key.Z)).ToList();
 
     /// <summary>Replaces every block (before the world around is generated: no events).</summary>
     public void Load(IEnumerable<BlockSave> blocks)
     {
         _blocks.Clear();
         _columns.Clear();
+        _crystals.Clear();
+        _placed.Clear();
         foreach (var b in blocks)
         {
             var p = new BlockPos(b.X, b.Y, b.Z);
             if (!Enum.IsDefined(b.Resource) || Overlaps(p)) continue;
-            _blocks[p] = b.Resource;
-            if (!_columns.TryGetValue((p.X, p.Z), out var list)) _columns[(p.X, p.Z)] = list = new List<int>();
-            list.Add(p.Y);
+            Insert(p, b.Resource);
+            _placed[(p.X, p.Z)] = _placed.GetValueOrDefault((p.X, p.Z)) + 1;
             _dirty.Add(ChunkOf(p.X, p.Z));
         }
         Version++;
@@ -156,6 +275,7 @@ public sealed class Blocks
     /// <summary>How grown the grass is at (x, z): 0 where blocks cleared it, up to 1 where it is untouched. Thread-safe.</summary>
     public float GrassGrowth(float x, float z)
     {
+        if (_terrain.SpireHeight(x, z) > 0f) return 0f; // nothing grows in the rock of the spires
         var column = ColumnOf(x, z);
         if (_cleared.Contains(column)) return 0f;
         if (_regrowing.TryGetValue(column, out long start)) return Math.Clamp((Environment.TickCount64 - start) / (RegrowSeconds * 1000f), 0f, 1f);
@@ -193,14 +313,15 @@ public sealed class Blocks
             GroundChanged?.Invoke(column.X + 0.5f, column.Z + 0.5f);
     }
 
-    // A block near the ground clears its column and the ring around it, so no blade pokes through it.
+    // A placed block near the ground clears its column and the ring around it, so no blade pokes
+    // through it (the spires keep their footprint bare by themselves: see GrassGrowth).
     private HashSet<(int X, int Z)> ComputeCleared()
     {
         var cleared = new HashSet<(int X, int Z)>();
-        foreach (var ((x, z), list) in _columns)
+        foreach (var (x, z) in _placed.Keys)
         {
-            float ground = _terrain.Height(x + 0.5f, z + 0.5f);
-            if (list.Min() * Step - ground > 1.5f) continue;
+            float ground = GroundAt(x, z);
+            if (_columns[(x, z)].Where(y => !_natural.Contains(new BlockPos(x, y, z))).Min() * Step - ground > 1.5f) continue;
             for (int dz = -1; dz <= 1; dz++)
             for (int dx = -1; dx <= 1; dx++)
                 cleared.Add((x + dx, z + dz));
@@ -222,9 +343,13 @@ public sealed class Blocks
 
     /// <summary>For each column with blocks: the ground under it, less a metre, and the bottom of its highest block (under which it is indoors).</summary>
     public IEnumerable<((int X, int Z) Column, float Floor, float Ceiling)> Ceilings() =>
-        _columns.Select(c => (c.Key, _terrain.Height(c.Key.X + 0.5f, c.Key.Z + 0.5f) - 1f, c.Value.Max() * Step));
+        _columns.Select(c => (c.Key, GroundAt(c.Key.X, c.Key.Z) - 1f, c.Value.Max() * Step));
 
     // ---- What the player meets ---------------------------------------------------------------
+
+    /// <summary>Whether a point is inside a block.</summary>
+    public bool Inside(Vector3 p) =>
+        _columns.TryGetValue(ColumnOf(p.X, p.Z), out var list) && list.Any(y => y * Step <= p.Y && p.Y < y * Step + Size);
 
     /// <summary>
     /// The highest block top under a disc of <paramref name="radius"/> around (x, z) among the blocks
@@ -403,11 +528,11 @@ public sealed class Blocks
     public static readonly Vector3 CrystalLight = new(0.66f, 0.46f, 1.0f);
 
     /// <summary>The nearest crystal blocks within <paramref name="radius"/> (at most <paramref name="max"/>), as point lights.</summary>
-    public IEnumerable<PointLight> Lights(Vector3 center, float radius, int max = 6) => _blocks
-        .Where(b => b.Value == Resource.Crystal && Vector3.DistanceSquared(b.Key.Center, center) < radius * radius)
-        .OrderBy(b => Vector3.DistanceSquared(b.Key.Center, center))
+    public IEnumerable<PointLight> Lights(Vector3 center, float radius, int max = 6) => _crystals
+        .Where(p => Vector3.DistanceSquared(p.Center, center) < radius * radius)
+        .OrderBy(p => Vector3.DistanceSquared(p.Center, center))
         .Take(max)
-        .Select(b => new PointLight(b.Key.Center, CrystalLight * 1.5f, 7f));
+        .Select(p => new PointLight(p.Center, CrystalLight * 1.5f, 7f));
 }
 
 /// <summary>An axis-aligned box in world space.</summary>
