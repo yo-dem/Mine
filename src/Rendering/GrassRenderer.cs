@@ -66,6 +66,9 @@ public sealed unsafe class GrassRenderer : IDisposable
     /// </summary>
     public Func<float, float, float>? Growth { get; set; }
 
+    /// <summary>Whether grass was planted at (x, z): it grows there whatever the ground (sand, bare earth).</summary>
+    public Func<float, float, bool>? Planted { get; set; }
+
     // Tiles being rebuilt (so a burst of requests for one tile builds it once).
     private readonly HashSet<(int X, int Z)> _rebuilding = new();
 
@@ -176,10 +179,10 @@ public sealed unsafe class GrassRenderer : IDisposable
             float normalY = 1f / MathF.Sqrt(1 + gx * gx + gz * gz);
             var center = new Vector3(x0 + lx, y - 0.02f, z0 + lz);
             const float water = TerrainField.WaterLevel; // shores and shallows hold reed clumps instead (TreeField)
-            if (normalY < 0.6f || y < water + 1f) continue; // certainly rock, sand or water: skip early
+            bool planted = Planted?.Invoke(center.X, center.Z) == true;
+            if (!planted && (normalY < 0.6f || y < water + 1f)) continue; // certainly rock, sand or water: skip early
             if (_terrain.InPond(center.X, center.Z, 0.5f)) continue; // under a waterfall's pond
-            float grass = GroundMaterials.GrassWeight(center, normalY);
-            if (grass < 0.35f) continue;
+            if (!planted && GroundMaterials.GrassWeight(center, normalY) < 0.35f) continue;
             var color = GroundMaterials.GrassColor(center.X, center.Z);
             color = Vector3.Lerp(color, new Vector3(0.55f, 0.38f, 0.62f), tall * 0.4f); // meadows turn lilac-gold
 
@@ -231,7 +234,9 @@ public sealed unsafe class GrassRenderer : IDisposable
                 // Where a building cleared the ground, no tuft; where the grass grows back, shorter
                 // tufts, fewer of them (the thinning key picks which come first). The tuft is changed
                 // after drawing its random numbers, so the rest of the tile stays exactly as it was.
-                float growth = Growth?.Invoke(root.X, root.Z) ?? 1f;
+                // (Planted grass: the clump's own place, so tufts spilling past the patch grow with it.)
+                var growAt = planted ? center : root;
+                float growth = Growth?.Invoke(growAt.X, growAt.Z) ?? 1f;
                 if (growth < 1f)
                 {
                     if (thinning > growth * 1.2f) blades.RemoveRange(tuftStart, blades.Count - tuftStart);

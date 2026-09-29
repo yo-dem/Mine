@@ -349,9 +349,12 @@ public sealed class Game : IDisposable
         // Nothing grows under and around the buildings (the grass grows back slowly when they go),
         // and nothing from outside gets into the spaces walls close in.
         _grass.Growth = _blocks.GrassGrowth;
+        _grass.Planted = _blocks.Planted;
         _treeField.Covered = (x, z) => _blocks.GrassGrowth(x, z) < 1f;
         _creatures.Indoors = _blocks.Indoors;
         _creatures.NearBlock = _blocks.Near;
+        _creatures.GrassFor = (x, z) => _blocks.Planted(x, z) ? _blocks.GrassGrowth(x, z) >= ButterflyGrass
+            : GrassAt(new Vector3(x, _terrainField.Height(x, z), z));
         _blocks.GroundChanged += (x, z) =>
         {
             _grass.Invalidate(x, z);
@@ -367,6 +370,7 @@ public sealed class Game : IDisposable
         if (!_save.Options.SaveWorld || !_save.Worlds.TryGetValue(WorldPreset.Current.Name, out var world)) return;
         _blocks.Load(world.Blocks);
         _blocks.LoadDug(world.Dug);
+        _blocks.LoadGrass(world.TornGrass, world.PlantedGrass);
         _treeField.LoadGathered(world.Gathered.Select(g => new Vector3(g.X, g.Y, g.Z)));
         _debris.Load(world.Drops);
         _objects.Load(world.TakenObjects, world.PlacedObjects);
@@ -418,6 +422,8 @@ public sealed class Game : IDisposable
         {
             Blocks = _blocks.Save(),
             Dug = _blocks.SaveDug(),
+            TornGrass = _blocks.SaveTorn(),
+            PlantedGrass = _blocks.SavePlanted(),
             Gathered = _treeField.SaveGathered().Select(g => new GatheredSave(g.X, g.Y, g.Z)).ToList(),
             Drops = _debris.Save(),
             TakenObjects = _objects.SaveTaken(),
@@ -489,6 +495,7 @@ public sealed class Game : IDisposable
         _creatureRenderer.Update(_creatures);
         Aim();
         Gather(dt);
+        Sow(dt);
         if (_debris.Update(dt, _ground, _player.Position, _inventory) > 0)
         {
             _dirty = true;
@@ -523,12 +530,14 @@ public sealed class Game : IDisposable
         _gatherTarget = null;
         _plan = null;
         _aimedBlock = null;
+        _mowTarget = null;
         if (!_mouseCaptured) return;
         var eye = _player.Eye;
         var look = _player.LookDirection;
-        if (Held is not null) _plan = _blocks.Plan(eye, look, BuildReach, _treeField.TrunkIn, _player.Position, Player.BodyRadius, Player.Height);
+        if (Held is { } material && material != Resource.Seeds) _plan = _blocks.Plan(eye, look, BuildReach, _treeField.TrunkIn, _player.Position, Player.BodyRadius, Player.Height);
         float limit = ReachDistance;
-        if (_terrainField.Raycast(eye, look, ReachDistance, out var ground)) limit = Vector3.Distance(eye, ground) + 0.3f;
+        bool groundHit = _terrainField.Raycast(eye, look, ReachDistance, out var ground);
+        if (groundHit) limit = Vector3.Distance(eye, ground) + 0.3f;
         if (_blocks.Raycast(eye, look, limit) is { } block)
         {
             limit = block.Distance;
@@ -538,6 +547,8 @@ public sealed class Game : IDisposable
         if (_aimed is not null) _aimedBlock = null;
         _gatherTarget = _treeField.Pick(eye, look, objectDistance);
         if (_gatherTarget is not null) (_aimed, _aimedBlock) = (null, null);
+        // Nothing else aimed at: the meadow under the crosshair can be mown.
+        if (_gatherTarget is null && _aimed is null && _aimedBlock is null && groundHit && GrassAt(ground)) _mowTarget = ground;
     }
 
     private void PlaceBlock(BlockPlan plan)
@@ -559,6 +570,84 @@ public sealed class Game : IDisposable
     private static float BreakSeconds(Resource r) => r switch { Resource.Wood => 0.45f, Resource.Stone => 0.6f, _ => 0.35f };
     private static (Vector3, Vector3) ChipsOf(Resource r) => r switch { Resource.Wood => WoodChips, Resource.Stone => StoneChips, _ => CrystalChips };
 
+    // Tearing up grass: the meadow aimed at is torn up almost at once, within MowRadius of the
+    // point aimed at, for good (Blocks.TearUp), giving a seed for every SeedColumns columns of
+    // grass (at most MaxSeeds). Sowing a seed (right button) greens PlantRadius round the point
+    // where it lands, SowFlight seconds after it is thrown; holding the button sows a strip, a seed
+    // every SowInterval seconds wherever the aim has moved on.
+    private const float MowSeconds = 0.12f, MowRadius = 2.4f, PlantRadius = 1.3f, SowFlight = 0.55f, SowInterval = 0.3f;
+    private const int SeedColumns = 6, MaxSeeds = 4;
+    private static readonly (Vector3, Vector3) SeedGlow = (new(0.45f, 1.0f, 0.85f), new(0.8f, 0.6f, 1.0f));
+    private readonly List<(Vector3 At, double LandsAt)> _sown = new(); // seeds in the air
+    private Vector3? _lastSown;
+    private double _nextSowAt;
+    private const float ButterflyGrass = 0.6f; // how grown planted grass must be for butterflies
+    private Vector3? _mowTarget; // the meadow ground under the crosshair, when nothing else is aimed at
+    private readonly record struct MowKey(int X, int Z); // what is being mown (for the progress of the blow)
+
+    /// <summary>Whether grass grows at a point of the ground (so it can be torn up): a meadow not torn up, or grass planted.</summary>
+    private bool GrassAt(Vector3 p)
+    {
+        if (_terrainField.InPond(p.X, p.Z, 1f)) return false;
+        if (_blocks.Planted(p.X, p.Z)) return _blocks.GrassGrowth(p.X, p.Z) > 0.2f;
+        return p.Y > TerrainField.WaterLevel + 1f && _blocks.GrassGrowth(p.X, p.Z) >= 1f
+            && GroundMaterials.GrassWeight(p, _terrainField.Normal(p.X, p.Z).Y) > 0.5f;
+    }
+
+    private bool GrassAt(int x, int z) => GrassAt(new Vector3(x + 0.5f, _terrainField.Height(x + 0.5f, z + 0.5f), z + 0.5f));
+
+    /// <summary>Whether grass can be planted in a column: bare ground above the water, not under blocks or rock.</summary>
+    private bool Plantable(int x, int z)
+    {
+        float cx = x + 0.5f, cz = z + 0.5f, y = _terrainField.Height(cx, cz);
+        return y > TerrainField.WaterLevel + 0.3f && !_terrainField.InPond(cx, cz, 1f) && _terrainField.SpireHeight(cx, cz) <= 0f
+            && !GrassAt(x, z);
+    }
+
+    /// <summary>
+    /// Throws a seed at the ground aimed at: a glowing handful arcs from the hand, and grass starts
+    /// growing where it lands (see <see cref="Sow(float)"/>). A click warns when nothing can grow
+    /// there; while the button is held, a seed goes only where the aim has moved on.
+    /// </summary>
+    private void Sow(bool click)
+    {
+        var eye = _player.Eye;
+        var look = _player.LookDirection;
+        if (!_terrainField.Raycast(eye, look, BuildReach, out var ground)) return;
+        if (_blocks.Raycast(eye, look, Vector3.Distance(eye, ground)) is not null) return; // a block is in the way
+        if (!click && _lastSown is { } last && Vector3.Distance(last, ground) < PlantRadius * 1.3f) return;
+        if (_sown.Any(s => Vector3.Distance(s.At, ground) < PlantRadius) || !_blocks.CanPlant(ground, PlantRadius, Plantable))
+        {
+            if (click) Toast("Qui non si puo seminare", new Vector4(1f, 0.6f, 0.6f, 1f));
+            return;
+        }
+        _inventory.Take(Resource.Seeds, 1);
+        _lastSown = ground;
+        var right = Vector3.Normalize(Vector3.Cross(look, Vector3.UnitY));
+        var hand = eye + look * 0.5f + right * 0.35f - Vector3.UnitY * 0.35f;
+        _debris.Throw(hand, ground, SowFlight, 16, SeedGlow.Item1, SeedGlow.Item2);
+        _sown.Add((ground, _time + SowFlight));
+    }
+
+    /// <summary>Keeps sowing while the right button is held, and plants the seeds that have landed.</summary>
+    private void Sow(float dt)
+    {
+        bool holding = _mouseCaptured && Held == Resource.Seeds && _input.Mice.Any(m => m.IsButtonPressed(MouseButton.Right));
+        if (!holding) _lastSown = null;
+        else if (_time >= _nextSowAt)
+        {
+            Sow(click: false);
+            _nextSowAt = _time + SowInterval;
+        }
+        for (int i = _sown.Count - 1; i >= 0; i--)
+        {
+            if (_sown[i].LandsAt > _time) continue;
+            var at = _sown[i].At;
+            _sown.RemoveAt(i);
+            if (_blocks.Plant(at, PlantRadius, Plantable) > 0) _dirty = true;
+        }
+    }
+
     /// <summary>
     /// Holding the left button on a tree, a rock, a crystal (a cluster or a small one) or a block hits it: chips fly off where the blow
     /// lands, and after a moment it breaks, bursting into chips and cubes of its material (a block
@@ -568,7 +657,8 @@ public sealed class Game : IDisposable
     private void Gather(float dt)
     {
         bool holding = _mouseCaptured && (_input.Mice.Any(m => m.IsButtonPressed(MouseButton.Left)) || _time > AutoBreakAt);
-        object? key = _gatherTarget?.Tree ?? _aimed ?? (object?)_aimedBlock?.Block;
+        object? key = _gatherTarget?.Tree ?? _aimed ?? (object?)_aimedBlock?.Block
+            ?? (_mowTarget is { } aimedGrass ? new MowKey((int)MathF.Floor(aimedGrass.X), (int)MathF.Floor(aimedGrass.Z)) : null);
         if (!holding || key is null)
         {
             _gathering = null;
@@ -596,13 +686,19 @@ public sealed class Game : IDisposable
             (chip, chip2, seconds) = (yield.Chip, yield.Chip2, yield.Seconds);
             hit = small.Position + new Vector3(0, yield.PickHeight * 0.5f, 0) - look * 0.1f;
         }
-        else
+        else if (_aimedBlock is { } block)
         {
-            var block = _aimedBlock!.Value;
             var material = _blocks.At(block.Block) ?? Resource.Wood;
             (chip, chip2) = ChipsOf(material);
             seconds = BreakSeconds(material);
             hit = block.Point - look * 0.05f;
+        }
+        else
+        {
+            var grass = _mowTarget!.Value;
+            var color = GroundMaterials.GrassColor(grass.X, grass.Z);
+            (chip, chip2, seconds) = (color, color * 0.6f, MowSeconds);
+            hit = grass + new Vector3(0, 0.4f, 0);
         }
 
         // Chips from the point hit, thrown back toward the player.
@@ -628,6 +724,18 @@ public sealed class Game : IDisposable
             _debris.Spill(yield.Amount.Resource, yield.Amount.Count, small.Position, yield.PickHeight);
             _objects.Remove(small);
             _aimed = null;
+        }
+        else if (_mowTarget is { } mown)
+        {
+            // The meadow bursts into bits of blades, torn up round the point aimed at for good,
+            // and leaves tufts to plant elsewhere.
+            int grassy = _blocks.TearUp(mown, MowRadius, GrassAt);
+            if (grassy > 0)
+            {
+                _debris.Burst(mown, 0.9f, MowRadius, 70, chip, chip2);
+                _debris.Spill(Resource.Seeds, Math.Clamp(grassy / SeedColumns, 1, MaxSeeds), mown, 0.4f);
+            }
+            _mowTarget = null;
         }
         else
         {
@@ -865,7 +973,11 @@ public sealed class Game : IDisposable
         _icons.Begin(width, height);
         for (int i = 0; i < Inventory.SlotCount; i++)
             if (_inventory[i] is { } stack)
-                _icons.Draw(stack.Resource, SlotX(i) + slotSize / 2f, SlotY(i) + slotSize / 2f - s, slotSize * 0.55f, (float)_time * 1.2f + i * 0.7f);
+            {
+                // The flat seeds only sway a little (turning round, they would show their edge).
+                float turn = stack.Resource == Resource.Seeds ? 0.25f * MathF.Sin((float)_time * 0.8f + i) : (float)_time * 1.2f + i * 0.7f;
+                _icons.Draw(stack.Resource, SlotX(i) + slotSize / 2f, SlotY(i) + slotSize / 2f - s, slotSize * 0.55f, turn);
+            }
         _icons.End();
         _hud.Begin(width, height);
         for (int i = 0; i < Inventory.SlotCount; i++)
@@ -878,7 +990,7 @@ public sealed class Game : IDisposable
 
         // How far the blow has got, while breaking something (nothing is named: the world speaks for itself).
         float centerX = width / 2f;
-        if (_gathering is not null && (_gatherTarget is not null || _aimedBlock is not null || _aimed is not null))
+        if (_gathering is not null && _gathering is not MowKey && (_gatherTarget is not null || _aimedBlock is not null || _aimed is not null))
         {
             var blockMaterial = _aimedBlock is { } aimedBlock ? _blocks.At(aimedBlock.Block) ?? Resource.Wood : Resource.Wood;
             var yield = _gatherTarget?.Yield ?? (_aimed is not null ? TreeModels.SmallCrystal : (TreeModels.Yield?)null);
@@ -1054,6 +1166,12 @@ public sealed class Game : IDisposable
             return;
         }
 
+        if (button == MouseButton.Right && Held == Resource.Seeds)
+        {
+            Sow(click: true);
+            _nextSowAt = _time + SowInterval;
+            return;
+        }
         if (button == MouseButton.Right)
         {
             // One block of the material in hand on the face aimed at.

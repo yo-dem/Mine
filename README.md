@@ -44,7 +44,11 @@ fitti portati dal vento e una foschia bianca che cancella l'orizzonte.
 
 In giro per il mondo si raccolgono i materiali tenendo premuto il tasto sinistro su ciò che si guarda:
 gli alberi e le palme danno legno, i cristalli giganti (rari) cubetti di cristallo: più grande il
-cristallo, più cubetti. Mentre li colpisci ne schizzano via piccole schegge
+cristallo, più cubetti. Sui prati si **estirpa l'erba**: tenendo premuto su un prato l'erba esplode quasi
+all'istante e sparisce per sempre in una zona ampia intorno al punto mirato, lasciando dei semi d'erba (un'icona piatta in pixel art).
+Con i semi in mano, il tasto destro li lancia in un arco sul terreno mirato senza erba (anche la sabbia),
+e tenendolo premuto mentre giri la visuale si semina una striscia: dove cadono l'erba nasce piccola e in
+un paio di minuti cresce, e quando è abbastanza alta ci vengono le farfalle. Mentre li colpisci ne schizzano via piccole schegge
 cubiche; poi si rompono per sempre, esplodendo in schegge e in cubetti che cadono
 intorno e restano a fluttuare ruotando sul terreno finché non ti avvicini: allora volano verso di te e
 finiscono nell'inventario (vengono richiamati da qualche metro). A sinistra, in colonna, ci sono 5 caselle (quella in mano ha un alone rosa; se non le usi escono dallo schermo a sinistra, e la rotella, o un cubetto che ti arriva in borsa, le fa rientrare): ogni materiale si accumula nella sua, col suo
@@ -89,8 +93,8 @@ portatili con due schede usa quella dedicata; la prima volta si riavvia da solo 
 | Ctrl sinistro | Corri |
 | T (tenuto) | Fai scorrere il tempo più veloce |
 | F | Attiva/disattiva il volo |
-| Click sinistro | Tieni premuto per rompere alberi e palme (legno), cristalli (cubetti di cristallo), le guglie di roccia (pietra) e i blocchi |
-| Click destro | Posa un blocco del materiale in mano (uno per click) |
+| Click sinistro | Tieni premuto per rompere alberi e palme (legno), cristalli (cubetti di cristallo), le guglie di roccia (pietra) e i blocchi, o per estirpare l'erba (semi d'erba) |
+| Click destro | Posa un blocco del materiale in mano (uno per click); con i semi d'erba in mano li semina (tenendo premuto si semina una striscia) |
 | Rotella | Scegli la casella dell'inventario (il materiale in mano) |
 | Esc | Apre e chiude il menu, in alto al centro: info (posizione, FPS, mondo, ora e meteo) e opzioni; col menu aperto si continua a giocare come se niente fosse |
 | V / M / X (solo col menu aperto) | Sincronizzazione verticale; salvataggio del mondo (se disattivato, a ogni avvio il mondo torna com'era stato generato); esci dal gioco. Le scelte vengono salvate |
@@ -120,7 +124,7 @@ src/
     TreeField.cs          dove crescono alberi, fiori e cristalli, per bioma; ciò che si rompe sparisce per sempre; collisione con i tronchi
     GroundMaterials.cs    biomi, colore e copertura dell'erba (copia in C# delle funzioni dello shader)
     WorldPreset.cs        tipi di mondo (classico, desertico, arcipelago, piatto, base) scelti con CTRL+1..5
-    Inventory.cs          materiali (legno, pietra, cristallo) e inventario a 5 caselle
+    Inventory.cs          materiali (legno, pietra, cristallo, semi d'erba) e inventario a 5 caselle
     Debris.cs             schegge e cubetti di materiale: volano, rimbalzano, vengono attirati e raccolti
     Blocks.cs             blocchi da costruzione: posa, collisioni, mira, erba tolta e ricresciuta, cosa sta sotto un tetto
     SaveGame.cs           salvataggio (inventario, costruzioni, cose rotte, cubetti a terra)
@@ -143,7 +147,7 @@ src/
     SeaFloorMap.cs        forma continua del fondale attorno al giocatore, per le onde
     WaterfallRenderer.cs  cascate luminose delle isole e i loro laghetti
     MeshBuilder.cs        costruzione di modelli (oggetti, isole, blocchi)
-    ItemMeshes.cs         modelli dei materiali: cubetto di legno, di pietra, cristallo, scheggia
+    ItemMeshes.cs         modelli dei materiali: cubetto di legno, di pietra, di cristallo, semi d'erba, scheggia
     CubeRenderer.cs       disegno di schegge e cubetti (instancing)
     IconRenderer.cs       i cubetti che ruotano nelle caselle dell'inventario
     BlockRenderer.cs      disegno dei blocchi (solo le facce visibili, a pezzi)

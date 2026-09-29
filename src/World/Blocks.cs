@@ -15,6 +15,9 @@ public readonly record struct BlockPos(int X, int Y, int Z)
 
 public readonly record struct BlockSave(Resource Resource, int X, int Y, int Z);
 
+/// <summary>A 1 m column of torn-up or planted grass (<see cref="At"/>: when it was planted, Unix ms).</summary>
+public readonly record struct ColumnSave(int X, int Z, long At);
+
 /// <summary>A block of a rock spire the player dug out: it is not laid again.</summary>
 public readonly record struct DugSave(int X, int Y, int Z);
 
@@ -69,6 +72,16 @@ public sealed class Blocks
     private volatile HashSet<(int X, int Z)> _cleared = new();
     private volatile Dictionary<(int X, int Z), long> _regrowing = new();
     private long _nextRegrowTick;
+
+    // The meadows the player tore up (no grass ever grows there again, unless planted) and the
+    // columns planted with tufts (when, in Unix ms: they keep growing while the game is closed).
+    // Read by the grass builders on worker threads: replaced whole.
+    private volatile HashSet<(int X, int Z)> _torn = new();
+    private volatile Dictionary<(int X, int Z), long> _planted = new();
+    private readonly HashSet<(int X, int Z)> _plantedGrowing = new(); // planted, not grown yet (main thread)
+    public const float PlantGrowSeconds = 120f; // a planted tuft grows from small to full in this long
+
+    private static long UnixNow => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     public Blocks(TerrainField terrain) => _terrain = terrain;
 
@@ -261,7 +274,7 @@ public sealed class Blocks
         foreach (var b in blocks)
         {
             var p = new BlockPos(b.X, b.Y, b.Z);
-            if (!Enum.IsDefined(b.Resource) || Overlaps(p)) continue;
+            if (!Enum.IsDefined(b.Resource) || b.Resource == Resource.Seeds || Overlaps(p)) continue;
             Insert(p, b.Resource);
             _placed[(p.X, p.Z)] = _placed.GetValueOrDefault((p.X, p.Z)) + 1;
             _dirty.Add(ChunkOf(p.X, p.Z));
@@ -278,8 +291,104 @@ public sealed class Blocks
         if (_terrain.SpireHeight(x, z) > 0f) return 0f; // nothing grows in the rock of the spires
         var column = ColumnOf(x, z);
         if (_cleared.Contains(column)) return 0f;
+        if (_planted.TryGetValue(column, out long planted)) return PlantedGrowth(planted);
+        if (_torn.Contains(column)) return 0f;
         if (_regrowing.TryGetValue(column, out long start)) return Math.Clamp((Environment.TickCount64 - start) / (RegrowSeconds * 1000f), 0f, 1f);
         return 1f;
+    }
+
+    // Small when just planted, full grown after PlantGrowSeconds.
+    private static float PlantedGrowth(long plantedAt) => Math.Clamp(0.08f + (UnixNow - plantedAt) / (PlantGrowSeconds * 1000f), 0f, 1f);
+
+    /// <summary>Whether grass was planted at (x, z). Thread-safe.</summary>
+    public bool Planted(float x, float z) => _planted.ContainsKey(ColumnOf(x, z));
+
+    /// <summary>Whether the grass at (x, z) was torn up (and not planted again).</summary>
+    public bool Torn(float x, float z) => _torn.Contains(ColumnOf(x, z)) && !Planted(x, z);
+
+    // The columns whose centre lies within `radius` of a point.
+    private static IEnumerable<(int X, int Z)> ColumnsWithin(Vector3 center, float radius)
+    {
+        for (int z = (int)MathF.Floor(center.Z - radius); z <= (int)MathF.Floor(center.Z + radius); z++)
+        for (int x = (int)MathF.Floor(center.X - radius); x <= (int)MathF.Floor(center.X + radius); x++)
+        {
+            float dx = x + 0.5f - center.X, dz = z + 0.5f - center.Z;
+            if (dx * dx + dz * dz <= radius * radius) yield return (x, z);
+        }
+    }
+
+    /// <summary>
+    /// Tears up the grass within <paramref name="radius"/> of a point, for good: nothing grows
+    /// there again unless planted. Returns how many of its columns held grass
+    /// (<paramref name="grassy"/>), for the tufts it gives.
+    /// </summary>
+    public int TearUp(Vector3 center, float radius, Func<int, int, bool> grassy)
+    {
+        var torn = new HashSet<(int X, int Z)>(_torn);
+        var planted = new Dictionary<(int X, int Z), long>(_planted);
+        var regrowing = new Dictionary<(int X, int Z), long>(_regrowing);
+        var changed = new List<(int X, int Z)>();
+        int withGrass = 0;
+        foreach (var column in ColumnsWithin(center, radius))
+        {
+            if (_cleared.Contains(column)) continue;
+            if (grassy(column.X, column.Z)) withGrass++;
+            torn.Add(column);
+            planted.Remove(column);
+            regrowing.Remove(column);
+            _plantedGrowing.Remove(column);
+            changed.Add(column);
+        }
+        if (withGrass == 0) return 0;
+        (_torn, _planted, _regrowing) = (torn, planted, regrowing);
+        RaiseGroundChanged(changed);
+        return withGrass;
+    }
+
+    /// <summary>Whether any column within <paramref name="radius"/> of a point could be planted (see <see cref="Plant"/>).</summary>
+    public bool CanPlant(Vector3 center, float radius, Func<int, int, bool> bare) =>
+        ColumnsWithin(center, radius).Any(c => !_cleared.Contains(c) && !_planted.ContainsKey(c) && bare(c.X, c.Z));
+
+    /// <summary>Plants grass within <paramref name="radius"/> of a point (where <paramref name="bare"/> says it has none): it starts small and grows.</summary>
+    public int Plant(Vector3 center, float radius, Func<int, int, bool> bare)
+    {
+        var planted = new Dictionary<(int X, int Z), long>(_planted);
+        var changed = new List<(int X, int Z)>();
+        long now = UnixNow;
+        foreach (var column in ColumnsWithin(center, radius))
+        {
+            if (_cleared.Contains(column) || planted.ContainsKey(column) || !bare(column.X, column.Z)) continue;
+            planted[column] = now;
+            _plantedGrowing.Add(column);
+            changed.Add(column);
+        }
+        if (changed.Count == 0) return 0;
+        _planted = planted;
+        _nextRegrowTick = 0;
+        RaiseGroundChanged(changed);
+        return changed.Count;
+    }
+
+    public List<ColumnSave> SaveTorn() => _torn.Select(c => new ColumnSave(c.X, c.Z, 0)).ToList();
+    public List<ColumnSave> SavePlanted() => _planted.Select(p => new ColumnSave(p.Key.X, p.Key.Z, p.Value)).ToList();
+
+    /// <summary>Restores the torn-up and planted grass (before the world around is generated).</summary>
+    public void LoadGrass(IEnumerable<ColumnSave> torn, IEnumerable<ColumnSave> planted)
+    {
+        _torn = torn.Select(c => (c.X, c.Z)).ToHashSet();
+        _planted = planted.ToDictionary(p => (p.X, p.Z), p => p.At);
+        _plantedGrowing.Clear();
+        foreach (var (column, at) in _planted)
+            if (PlantedGrowth(at) < 1f) _plantedGrowing.Add(column);
+    }
+
+    // One GroundChanged per 32 m cell (the size of the grass tiles and of the tree cells, which
+    // rebuild whole): a mown patch or a stretch of grass grown back spans only a few.
+    private void RaiseGroundChanged(IEnumerable<(int X, int Z)> columns)
+    {
+        const int cell = 32;
+        foreach (var column in columns.DistinctBy(c => (Math.Floor(c.X / (double)cell), Math.Floor(c.Z / (double)cell))))
+            GroundChanged?.Invoke(column.X + 0.5f, column.Z + 0.5f);
     }
 
     /// <summary>Lets the grass grow back: now and then the columns growing are announced, those grown fully released.</summary>
@@ -287,15 +396,24 @@ public sealed class Blocks
     {
         var regrowing = _regrowing;
         long now = Environment.TickCount64;
-        if (regrowing.Count == 0 || now < _nextRegrowTick) return;
+        if ((regrowing.Count == 0 && _plantedGrowing.Count == 0) || now < _nextRegrowTick) return;
         _nextRegrowTick = now + 2500;
+        if (_plantedGrowing.Count > 0)
+        {
+            // Planted grass growing: shown taller now and then, and let go of once grown.
+            var planted = _planted;
+            var grown = _plantedGrowing.Where(c => !planted.TryGetValue(c, out long at) || PlantedGrowth(at) >= 1f).ToList();
+            foreach (var column in grown) _plantedGrowing.Remove(column);
+            if (grown.Count > 0) RaiseGroundChanged(grown);
+            foreach (var column in _plantedGrowing) GrassGrowing?.Invoke(column.X + 0.5f, column.Z + 0.5f);
+        }
         var done = regrowing.Where(r => now - r.Value >= RegrowSeconds * 1000).Select(r => r.Key).ToList();
         if (done.Count > 0)
         {
             var next = new Dictionary<(int X, int Z), long>(regrowing);
             foreach (var column in done) next.Remove(column);
             _regrowing = next;
-            foreach (var column in done) GroundChanged?.Invoke(column.X + 0.5f, column.Z + 0.5f);
+            RaiseGroundChanged(done);
         }
         foreach (var column in _regrowing.Keys) GrassGrowing?.Invoke(column.X + 0.5f, column.Z + 0.5f);
     }

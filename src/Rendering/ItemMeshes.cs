@@ -6,7 +6,7 @@ namespace Mine.Rendering;
 /// <summary>
 /// Models of the materials as things you hold, see lying on the ground and in the inventory
 /// (object vertex layout, centred on the origin, about one unit across): a wood block with bark
-/// sides and rings on its ends, a speckled stone block, a glowing crystal block; and the plain cube of a chip,
+/// sides and rings on its ends, a speckled stone block, a glowing crystal block, flat pixel-art grass seeds; and the plain cube of a chip,
 /// white, to be tinted.
 /// </summary>
 internal static class ItemMeshes
@@ -43,6 +43,9 @@ internal static class ItemMeshes
                 Voxels(m, (_, _, _, h) => (stone * (h < 0.15f ? 0.7f : 0.82f + 0.3f * h), 0f));
                 break;
             }
+            case Resource.Seeds:
+                Seeds(m);
+                break;
             default:
             {
                 // The crystal block as it is placed: violet glass glowing brighter toward the middle
@@ -56,6 +59,51 @@ internal static class ItemMeshes
             }
         }
         return m.Vertices;
+    }
+
+    // Grass seeds, drawn flat like a pixel-art icon: four little lozenge grains on a 16×16 grid
+    // (outlined dark, teal or violet, with a pale glint), a card one unit across seen from both
+    // sides, glowing faintly.
+    private static void Seeds(MeshBuilder m)
+    {
+        const int n = 16;
+        const float pixel = 1f / n;
+        (float X, float Y, float Angle, bool Violet)[] grains =
+            [(4.5f, 10.5f, -0.7f, false), (11f, 11f, 0.9f, true), (6.5f, 4.5f, 0.35f, true), (12.5f, 4.5f, -1.2f, false)];
+        const float halfLength = 3.9f, halfWidth = 2.1f;
+        var outline = new Vector3(0.20f, 0.13f, 0.30f);
+        var teal = new Vector3(0.30f, 0.85f, 0.75f);
+        var violet = new Vector3(0.66f, 0.46f, 1.0f);
+        var glint = new Vector3(0.92f, 0.95f, 1.0f);
+        for (int py = 0; py < n; py++)
+        for (int px = 0; px < n; px++)
+        {
+            Vector3? color = null;
+            float emissive = 0f;
+            foreach (var g in grains)
+            {
+                float dx = px + 0.5f - g.X, dy = py + 0.5f - g.Y;
+                float u = dx * MathF.Cos(g.Angle) + dy * MathF.Sin(g.Angle), v = -dx * MathF.Sin(g.Angle) + dy * MathF.Cos(g.Angle);
+                float d = MathF.Abs(u) / halfLength + MathF.Abs(v) / halfWidth; // 1 on the lozenge's edge
+                if (d > 1f) continue;
+                if (d > 0.8f) color = outline;
+                else
+                {
+                    bool shine = u > 0.3f && u < 1.8f && v < 0f && v > -1.1f;
+                    color = shine ? glint : g.Violet ? violet : teal;
+                    emissive = shine ? 0.6f : 0.35f;
+                }
+                break;
+            }
+            if (color is not { } c) continue;
+            // Pixel (px, py), row 0 at the top.
+            var a = new Vector3(px * pixel - 0.5f, 0.5f - py * pixel, 0);
+            var b = a + new Vector3(pixel, 0, 0);
+            var d2 = a - new Vector3(0, pixel, 0);
+            var e = b - new Vector3(0, pixel, 0);
+            m.Triangle(a, d2, e, c, emissive); m.Triangle(a, e, b, c, emissive);
+            m.Triangle(a, e, d2, c, emissive); m.Triangle(a, b, e, c, emissive);
+        }
     }
 
     // The outer voxels of a 4×4×4 cube, each coloured by `shade(x, y, z, random 0..1)` (colour, emissive).

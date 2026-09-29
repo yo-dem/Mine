@@ -5,7 +5,8 @@ public enum Resource
 {
     Wood,    // cubes of wood, from trees and palms
     Stone,   // cubes of stone, from rocks
-    Crystal, // the small glowing crystals
+    Crystal, // cubes of crystal, from the giant crystal clusters
+    Seeds,   // grass seeds, from tearing up meadows: sown elsewhere, where grass springs up (not a block)
 }
 
 /// <summary>A quantity of one material: a line of a recipe or of a harvest.</summary>
@@ -20,7 +21,7 @@ public readonly record struct SlotSave(Resource Resource, int Count);
 /// </summary>
 public sealed class Inventory
 {
-    public static readonly string[] Names = ["Legno", "Pietra", "Cristallo"];
+    public static readonly string[] Names = ["Legno", "Pietra", "Cristallo", "Semi d'erba"];
     public const int SlotCount = 5;
 
     private readonly Amount?[] _slots = new Amount?[SlotCount];

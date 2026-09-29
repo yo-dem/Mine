@@ -23,6 +23,8 @@ public sealed class WorldSave
 {
     public List<BlockSave> Blocks { get; set; } = new();
     public List<DugSave> Dug { get; set; } = new();
+    public List<ColumnSave> TornGrass { get; set; } = new();
+    public List<ColumnSave> PlantedGrass { get; set; } = new();
     public List<GatheredSave> Gathered { get; set; } = new();
     public List<long> TakenObjects { get; set; } = new();
     public List<PlacedSave> PlacedObjects { get; set; } = new();

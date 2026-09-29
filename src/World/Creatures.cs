@@ -49,6 +49,9 @@ public sealed class Creatures
     /// <summary>Whether a point is inside a space closed in by walls: butterflies never go in.</summary>
     public Func<Vector3, bool>? Indoors { get; set; }
 
+    /// <summary>Whether grass grows at (x, z), tall enough for butterflies (torn-up meadows have none, planted grass once grown).</summary>
+    public Func<float, float, bool>? GrassFor { get; set; }
+
     /// <summary>Whether a point is within a margin of a block: butterflies never fly into one.</summary>
     public Func<Vector3, float, bool>? NearBlock { get; set; }
 
@@ -162,7 +165,7 @@ public sealed class Creatures
                 if (i >= butterflies) { b.Active = false; continue; }
                 // Only over grass (where the flowers are too): in deserts butterflies are rare.
                 b.Active = TrySpawn(player, 6f, ButterflyRange * 0.8f, (x, z, h) => h > water + 0.3f && !_terrain.InPond(x, z, 1f)
-                    && GroundMaterials.GrassWeight(new Vector3(x, h, z), _terrain.Normal(x, z).Y) > 0.5f, out var p);
+                    && (GrassFor?.Invoke(x, z) ?? GroundMaterials.GrassWeight(new Vector3(x, h, z), _terrain.Normal(x, z).Y) > 0.5f), out var p);
                 if (!b.Active) continue;
                 b.Position = p + new Vector3(0, 0.6f + 1.8f * _random.NextSingle(), 0);
                 b.Velocity = RandomHorizontal() * 1.2f;

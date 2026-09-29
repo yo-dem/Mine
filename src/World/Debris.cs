@@ -63,6 +63,22 @@ public sealed class Debris
         }
     }
 
+    /// <summary>
+    /// A handful of chips thrown from <paramref name="from"/> to land about <paramref name="to"/>
+    /// after <paramref name="seconds"/>, in an arc (sown seeds).
+    /// </summary>
+    public void Throw(Vector3 from, Vector3 to, float seconds, int count, Vector3 color, Vector3 color2)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            var landing = to + Horizontal() * 0.9f * MathF.Sqrt(_random.NextSingle());
+            float t = seconds * (0.85f + 0.3f * _random.NextSingle());
+            var velocity = (landing - from) / t + Vector3.UnitY * (0.5f * Gravity * t);
+            AddChip(from, velocity, 0.03f + 0.03f * _random.NextSingle(), t + 0.4f + 0.4f * _random.NextSingle(),
+                _random.NextSingle() < 0.5f ? color2 : color);
+        }
+    }
+
     /// <summary>The burst of a whole thing breaking: chips thrown out from its body (from the foot up to <paramref name="height"/>).</summary>
     public void Burst(Vector3 foot, float height, float radius, int count, Vector3 color, Vector3 color2)
     {
