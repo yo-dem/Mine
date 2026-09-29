@@ -1,0 +1,414 @@
+using System.Numerics;
+
+namespace Mine.World;
+
+/// <summary>
+/// A block's place: the 1 m column (X, Z) and the height of its bottom in steps of
+/// <see cref="Blocks.Step"/> (0.5 m, the terrain's layers), so a block set on the ground always sits on it.
+/// </summary>
+public readonly record struct BlockPos(int X, int Y, int Z)
+{
+    public float Bottom => Y * Blocks.Step;
+    public float Top => Bottom + Blocks.Size;
+    public Vector3 Center => new(X + 0.5f, Bottom + Blocks.Size / 2, Z + 0.5f);
+}
+
+public readonly record struct BlockSave(Resource Resource, int X, int Y, int Z);
+
+/// <summary>Where the view ray meets a block: which, where, and the face's outward normal.</summary>
+public readonly record struct BlockHit(BlockPos Block, Vector3 Point, Vector3 Normal, float Distance);
+
+/// <summary>Where the next block would go (on the face or the ground aimed at), and why it cannot, if it cannot.</summary>
+public readonly record struct BlockPlan(BlockPos Position, Vector3 Normal, string? Problem)
+{
+    public bool Valid => Problem is null;
+}
+
+/// <summary>
+/// What the player builds: 1 m blocks of wood, stone or crystal, placed like in Minecraft on the face
+/// aimed at. Answers what the player and the falling cubes stand on (<see cref="GroundBelow"/>), what
+/// stops the player sideways and overhead (<see cref="ResolveCollision"/>), what the view ray meets
+/// (<see cref="Raycast"/>), where the next block goes (<see cref="Plan"/>), where the grass has been
+/// cleared around the blocks and how far it has grown back (<see cref="GrassGrowth"/>), and what is
+/// under a roof, where nothing from outside gets (<see cref="Indoors"/>).
+/// </summary>
+public sealed class Blocks
+{
+    public const float Size = 1f;
+    public const float Step = TerrainField.LayerHeight; // 0.5 m
+    public const int Tall = 2;                          // a block is two steps tall
+    public const int ChunkSize = 16;                     // columns per side of a mesh chunk
+    public const float RegrowSeconds = 90f;              // how long the grass takes to grow back
+
+    private readonly TerrainField _terrain;
+    private readonly Dictionary<BlockPos, Resource> _blocks = new();
+    private readonly Dictionary<(int X, int Z), List<int>> _columns = new(); // bottoms (in steps) of the blocks in each column
+    private readonly HashSet<(int X, int Z)> _dirty = new();                 // chunks to remesh
+
+    // Columns cleared of grass and flowers (under and around blocks near the ground), and those growing
+    // back since when (ms). Read by the grass and flower builders on worker threads: replaced whole.
+    private volatile HashSet<(int X, int Z)> _cleared = new();
+    private volatile Dictionary<(int X, int Z), long> _regrowing = new();
+    private long _nextRegrowTick;
+
+    public Blocks(TerrainField terrain) => _terrain = terrain;
+
+    /// <summary>Changes whenever a block is added or removed.</summary>
+    public int Version { get; private set; }
+
+    public int Count => _blocks.Count;
+
+    public IEnumerable<KeyValuePair<BlockPos, Resource>> All => _blocks;
+
+    public Resource? At(BlockPos p) => _blocks.TryGetValue(p, out var r) ? r : null;
+
+    /// <summary>The bottoms (in steps) of the blocks in a column, or null.</summary>
+    public IReadOnlyList<int>? Column(int x, int z) => _columns.TryGetValue((x, z), out var list) ? list : null;
+
+    public static (int X, int Z) ColumnOf(float x, float z) => ((int)MathF.Floor(x), (int)MathF.Floor(z));
+
+    /// <summary>Raised with a column's centre when its ground gets cleared, or has grown back fully.</summary>
+    public event Action<float, float>? GroundChanged;
+
+    /// <summary>Raised now and then with the centre of each column whose grass is growing back.</summary>
+    public event Action<float, float>? GrassGrowing;
+
+    // ---- Adding and removing -----------------------------------------------------------------
+
+    /// <summary>Whether a block at <paramref name="p"/> would overlap one already there.</summary>
+    public bool Overlaps(BlockPos p) => _columns.TryGetValue((p.X, p.Z), out var list) && list.Any(y => Math.Abs(y - p.Y) < Tall);
+
+    public bool Add(BlockPos p, Resource resource)
+    {
+        if (Overlaps(p)) return false;
+        _blocks[p] = resource;
+        if (!_columns.TryGetValue((p.X, p.Z), out var list)) _columns[(p.X, p.Z)] = list = new List<int>();
+        list.Add(p.Y);
+        Changed(p);
+        return true;
+    }
+
+    public Resource? Remove(BlockPos p)
+    {
+        if (!_blocks.Remove(p, out var resource)) return null;
+        if (_columns.TryGetValue((p.X, p.Z), out var list))
+        {
+            list.Remove(p.Y);
+            if (list.Count == 0) _columns.Remove((p.X, p.Z));
+        }
+        Changed(p);
+        return resource;
+    }
+
+    private void Changed(BlockPos p)
+    {
+        Version++;
+        // The block's chunk, and its neighbours' (their faces against it appear or disappear).
+        for (int dz = -1; dz <= 1; dz++)
+        for (int dx = -1; dx <= 1; dx++)
+            _dirty.Add(ChunkOf(p.X + dx, p.Z + dz));
+        UpdateCleared();
+    }
+
+    public static (int X, int Z) ChunkOf(int x, int z) => ((int)MathF.Floor(x / (float)ChunkSize), (int)MathF.Floor(z / (float)ChunkSize));
+
+    /// <summary>The chunks whose mesh must be rebuilt since the last call.</summary>
+    public List<(int X, int Z)> TakeDirtyChunks()
+    {
+        var chunks = _dirty.ToList();
+        _dirty.Clear();
+        return chunks;
+    }
+
+    /// <summary>The blocks in a chunk.</summary>
+    public IEnumerable<(BlockPos Position, Resource Resource)> InChunk((int X, int Z) chunk)
+    {
+        for (int z = chunk.Z * ChunkSize; z < (chunk.Z + 1) * ChunkSize; z++)
+        for (int x = chunk.X * ChunkSize; x < (chunk.X + 1) * ChunkSize; x++)
+        {
+            if (!_columns.TryGetValue((x, z), out var list)) continue;
+            foreach (int y in list) yield return (new BlockPos(x, y, z), _blocks[new BlockPos(x, y, z)]);
+        }
+    }
+
+    public List<BlockSave> Save() => _blocks.Select(b => new BlockSave(b.Value, b.Key.X, b.Key.Y, b.Key.Z)).ToList();
+
+    /// <summary>Replaces every block (before the world around is generated: no events).</summary>
+    public void Load(IEnumerable<BlockSave> blocks)
+    {
+        _blocks.Clear();
+        _columns.Clear();
+        foreach (var b in blocks)
+        {
+            var p = new BlockPos(b.X, b.Y, b.Z);
+            if (!Enum.IsDefined(b.Resource) || Overlaps(p)) continue;
+            _blocks[p] = b.Resource;
+            if (!_columns.TryGetValue((p.X, p.Z), out var list)) _columns[(p.X, p.Z)] = list = new List<int>();
+            list.Add(p.Y);
+            _dirty.Add(ChunkOf(p.X, p.Z));
+        }
+        Version++;
+        _cleared = ComputeCleared();
+    }
+
+    // ---- The grass around the blocks -----------------------------------------------------------
+
+    /// <summary>How grown the grass is at (x, z): 0 where blocks cleared it, up to 1 where it is untouched. Thread-safe.</summary>
+    public float GrassGrowth(float x, float z)
+    {
+        var column = ColumnOf(x, z);
+        if (_cleared.Contains(column)) return 0f;
+        if (_regrowing.TryGetValue(column, out long start)) return Math.Clamp((Environment.TickCount64 - start) / (RegrowSeconds * 1000f), 0f, 1f);
+        return 1f;
+    }
+
+    /// <summary>Lets the grass grow back: now and then the columns growing are announced, those grown fully released.</summary>
+    public void Update()
+    {
+        var regrowing = _regrowing;
+        long now = Environment.TickCount64;
+        if (regrowing.Count == 0 || now < _nextRegrowTick) return;
+        _nextRegrowTick = now + 2500;
+        var done = regrowing.Where(r => now - r.Value >= RegrowSeconds * 1000).Select(r => r.Key).ToList();
+        if (done.Count > 0)
+        {
+            var next = new Dictionary<(int X, int Z), long>(regrowing);
+            foreach (var column in done) next.Remove(column);
+            _regrowing = next;
+            foreach (var column in done) GroundChanged?.Invoke(column.X + 0.5f, column.Z + 0.5f);
+        }
+        foreach (var column in _regrowing.Keys) GrassGrowing?.Invoke(column.X + 0.5f, column.Z + 0.5f);
+    }
+
+    private void UpdateCleared()
+    {
+        var before = _cleared;
+        var after = ComputeCleared();
+        _cleared = after;
+        var regrowing = new Dictionary<(int X, int Z), long>(_regrowing);
+        foreach (var column in before.Where(c => !after.Contains(c))) regrowing[column] = Environment.TickCount64;
+        foreach (var column in after) regrowing.Remove(column);
+        _regrowing = regrowing;
+        foreach (var column in before.Where(c => !after.Contains(c)).Concat(after.Where(c => !before.Contains(c))))
+            GroundChanged?.Invoke(column.X + 0.5f, column.Z + 0.5f);
+    }
+
+    // A block near the ground clears its column and the ring around it, so no blade pokes through it.
+    private HashSet<(int X, int Z)> ComputeCleared()
+    {
+        var cleared = new HashSet<(int X, int Z)>();
+        foreach (var ((x, z), list) in _columns)
+        {
+            float ground = _terrain.Height(x + 0.5f, z + 0.5f);
+            if (list.Min() * Step - ground > 1.5f) continue;
+            for (int dz = -1; dz <= 1; dz++)
+            for (int dx = -1; dx <= 1; dx++)
+                cleared.Add((x + dx, z + dz));
+        }
+        return cleared;
+    }
+
+    // ---- Under a roof ------------------------------------------------------------------------
+
+    /// <summary>
+    /// Whether a point is under a block (a roof, a ceiling, a bridge): butterflies, fireflies, rain,
+    /// snow and lightning stay out.
+    /// </summary>
+    public bool Indoors(Vector3 p)
+    {
+        if (!_columns.TryGetValue(ColumnOf(p.X, p.Z), out var list)) return false;
+        return p.Y >= _terrain.Height(p.X, p.Z) - 1f && list.Any(y => y * Step > p.Y);
+    }
+
+    /// <summary>For each column with blocks: the ground under it, less a metre, and the bottom of its highest block (under which it is indoors).</summary>
+    public IEnumerable<((int X, int Z) Column, float Floor, float Ceiling)> Ceilings() =>
+        _columns.Select(c => (c.Key, _terrain.Height(c.Key.X + 0.5f, c.Key.Z + 0.5f) - 1f, c.Value.Max() * Step));
+
+    // ---- What the player meets ---------------------------------------------------------------
+
+    /// <summary>
+    /// The highest block top under a disc of <paramref name="radius"/> around (x, z) among the blocks
+    /// whose bottom is at height <paramref name="y"/> or below (like <see cref="IslandField.GroundBelow"/>):
+    /// the player stands on a block while overlapping it, and blocks above the head do not count.
+    /// </summary>
+    public bool GroundBelow(float x, float z, float y, out float top, float radius = 0.2f)
+    {
+        top = float.MinValue;
+        for (int cz = (int)MathF.Floor(z - radius); cz <= (int)MathF.Floor(z + radius); cz++)
+        for (int cx = (int)MathF.Floor(x - radius); cx <= (int)MathF.Floor(x + radius); cx++)
+        {
+            if (!_columns.TryGetValue((cx, cz), out var list)) continue;
+            foreach (int b in list)
+                if (b * Step <= y) top = MathF.Max(top, b * Step + Size);
+        }
+        return top > float.MinValue;
+    }
+
+    /// <summary>
+    /// Pushes the player (feet at <paramref name="feet"/>, a cylinder <paramref name="radius"/> wide and
+    /// <paramref name="height"/> tall) out of the blocks beside them, and stops them rising into a block
+    /// overhead. Blocks at the feet, no higher than <paramref name="climb"/>, are the ground's business.
+    /// </summary>
+    public void ResolveCollision(ref Vector3 feet, ref Vector3 velocity, float radius, float height, float climb)
+    {
+        for (int cz = (int)MathF.Floor(feet.Z - radius); cz <= (int)MathF.Floor(feet.Z + radius); cz++)
+        for (int cx = (int)MathF.Floor(feet.X - radius); cx <= (int)MathF.Floor(feet.X + radius); cx++)
+        {
+            if (!_columns.TryGetValue((cx, cz), out var list)) continue;
+            foreach (int b in list)
+            {
+                float bottom = b * Step, top = bottom + Size;
+                if (top <= feet.Y + climb || bottom >= feet.Y + height) continue;
+                float nx = Math.Clamp(feet.X, cx, cx + 1), nz = Math.Clamp(feet.Z, cz, cz + 1);
+                float ox = feet.X - nx, oz = feet.Z - nz, d2 = ox * ox + oz * oz;
+                if (d2 >= radius * radius) continue;
+                if (velocity.Y > 0 && bottom > feet.Y + height - 0.45f)
+                {
+                    // Head against a block while rising: stop under it.
+                    feet.Y = bottom - height;
+                    velocity.Y = 0;
+                    continue;
+                }
+                if (d2 > 1e-8f)
+                {
+                    float d = MathF.Sqrt(d2);
+                    feet.X = nx + ox / d * radius;
+                    feet.Z = nz + oz / d * radius;
+                }
+                else
+                {
+                    // Inside the column: out the nearest side.
+                    float left = feet.X - cx, right = cx + 1 - feet.X, back = feet.Z - cz, front = cz + 1 - feet.Z;
+                    float least = MathF.Min(MathF.Min(left, right), MathF.Min(back, front));
+                    if (least == left) feet.X = cx - radius;
+                    else if (least == right) feet.X = cx + 1 + radius;
+                    else if (least == back) feet.Z = cz - radius;
+                    else feet.Z = cz + 1 + radius;
+                }
+            }
+        }
+    }
+
+    /// <summary>The nearest block along the ray within <paramref name="maxDistance"/>: the columns are walked in order (2D DDA).</summary>
+    public BlockHit? Raycast(Vector3 origin, Vector3 direction, float maxDistance)
+    {
+        int x = (int)MathF.Floor(origin.X), z = (int)MathF.Floor(origin.Z);
+        int stepX = direction.X > 0 ? 1 : -1, stepZ = direction.Z > 0 ? 1 : -1;
+        float tDeltaX = MathF.Abs(direction.X) > 1e-6f ? MathF.Abs(1f / direction.X) : float.MaxValue;
+        float tDeltaZ = MathF.Abs(direction.Z) > 1e-6f ? MathF.Abs(1f / direction.Z) : float.MaxValue;
+        float tMaxX = MathF.Abs(direction.X) > 1e-6f ? ((stepX > 0 ? x + 1 - origin.X : origin.X - x) * tDeltaX) : float.MaxValue;
+        float tMaxZ = MathF.Abs(direction.Z) > 1e-6f ? ((stepZ > 0 ? z + 1 - origin.Z : origin.Z - z) * tDeltaZ) : float.MaxValue;
+        float entered = 0f;
+        BlockHit? best = null;
+        float nearest = maxDistance;
+        while (entered <= nearest)
+        {
+            if (_columns.TryGetValue((x, z), out var list))
+                foreach (int b in list)
+                {
+                    var p = new BlockPos(x, b, z);
+                    var box = new Box(new Vector3(x, p.Bottom, z), new Vector3(x + 1, p.Top, z + 1));
+                    if (!RayBox(origin, direction, box, out float t, out var normal) || t > nearest) continue;
+                    nearest = t;
+                    best = new BlockHit(p, origin + direction * t, normal, t);
+                }
+            if (tMaxX < tMaxZ) { entered = tMaxX; tMaxX += tDeltaX; x += stepX; }
+            else { entered = tMaxZ; tMaxZ += tDeltaZ; z += stepZ; }
+            if (entered > maxDistance) break;
+        }
+        return best;
+    }
+
+    private static bool RayBox(Vector3 origin, Vector3 direction, Box box, out float t, out Vector3 normal)
+    {
+        float tMin = 0f, tMax = float.MaxValue;
+        normal = Vector3.UnitY;
+        for (int axis = 0; axis < 3; axis++)
+        {
+            float o = origin[axis], d = direction[axis], lo = box.Min[axis], hi = box.Max[axis];
+            if (MathF.Abs(d) < 1e-7f)
+            {
+                if (o < lo || o > hi) { t = 0; return false; }
+                continue;
+            }
+            float t0 = (lo - o) / d, t1 = (hi - o) / d;
+            float sign = -1f;
+            if (t0 > t1) { (t0, t1) = (t1, t0); sign = 1f; }
+            if (t0 > tMin)
+            {
+                tMin = t0;
+                normal = Vector3.Zero;
+                normal[axis] = sign;
+            }
+            tMax = MathF.Min(tMax, t1);
+            if (tMin > tMax) { t = 0; return false; }
+        }
+        t = tMin;
+        return true;
+    }
+
+    // ---- Placing -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Where the next block goes: against the face of the block aimed at, or on the ground aimed at
+    /// (on the terrain tile's top, so it sits on it). Not where it would overlap a block, the player
+    /// (<paramref name="feet"/>, a cylinder <paramref name="radius"/> × <paramref name="height"/>),
+    /// a trunk (<paramref name="trunkIn"/>, a rectangle in xz) or where it would be buried.
+    /// </summary>
+    public BlockPlan? Plan(Vector3 eye, Vector3 look, float reach, Func<Vector2, Vector2, bool> trunkIn, Vector3 feet, float radius, float height)
+    {
+        var hit = Raycast(eye, look, reach);
+        bool groundHit = _terrain.Raycast(eye, look, reach, out var ground);
+        BlockPos p;
+        Vector3 normal;
+        if (hit is { } h && (!groundHit || h.Distance <= Vector3.Distance(eye, ground) + 0.01f))
+        {
+            var n = h.Normal;
+            normal = n;
+            p = n.Y > 0.5f ? h.Block with { Y = h.Block.Y + Tall }
+                : n.Y < -0.5f ? h.Block with { Y = h.Block.Y - Tall }
+                : new BlockPos(h.Block.X + (int)MathF.Round(n.X), h.Block.Y, h.Block.Z + (int)MathF.Round(n.Z));
+        }
+        else if (groundHit)
+        {
+            // The column aimed at (stepping back a hair, so a hit on a terrain step picks the tile in
+            // front of it), on the top of its tile.
+            var aimed = ground - look * 0.02f;
+            var (x, z) = ColumnOf(aimed.X, aimed.Z);
+            p = new BlockPos(x, (int)MathF.Round(_terrain.Height(x + 0.5f, z + 0.5f) / Step), z);
+            normal = Vector3.UnitY;
+        }
+        else return null;
+
+        return new BlockPlan(p, normal, Problem(p, trunkIn, feet, radius, height));
+    }
+
+    /// <summary>Why a block cannot go at <paramref name="p"/> (null if it can): see <see cref="Plan"/>.</summary>
+    public string? Problem(BlockPos p, Func<Vector2, Vector2, bool> trunkIn, Vector3 feet, float radius, float height)
+    {
+        if (Overlaps(p)) return "Qui c'è già un blocco";
+        if (p.Top <= _terrain.Height(p.X + 0.5f, p.Z + 0.5f) + 0.01f) return "Sotto terra";
+        // Not into the player.
+        float nx = Math.Clamp(feet.X, p.X, p.X + 1), nz = Math.Clamp(feet.Z, p.Z, p.Z + 1);
+        if ((feet.X - nx) * (feet.X - nx) + (feet.Z - nz) * (feet.Z - nz) < radius * radius
+            && p.Bottom < feet.Y + height && p.Top > feet.Y + 0.05f) return "Sei in mezzo";
+        float ground = _terrain.Height(p.X + 0.5f, p.Z + 0.5f);
+        if (p.Bottom - ground < 6f && trunkIn(new Vector2(p.X - 0.3f, p.Z - 0.3f), new Vector2(p.X + 1.3f, p.Z + 1.3f)))
+            return "Un albero o una roccia è d'intralcio";
+        return null;
+    }
+
+    // ---- Light -------------------------------------------------------------------------------
+
+    public static readonly Vector3 CrystalLight = new(0.66f, 0.46f, 1.0f);
+
+    /// <summary>The nearest crystal blocks within <paramref name="radius"/> (at most <paramref name="max"/>), as point lights.</summary>
+    public IEnumerable<PointLight> Lights(Vector3 center, float radius, int max = 6) => _blocks
+        .Where(b => b.Value == Resource.Crystal && Vector3.DistanceSquared(b.Key.Center, center) < radius * radius)
+        .OrderBy(b => Vector3.DistanceSquared(b.Key.Center, center))
+        .Take(max)
+        .Select(b => new PointLight(b.Key.Center, CrystalLight * 1.5f, 7f));
+}
+
+/// <summary>An axis-aligned box in world space.</summary>
+public readonly record struct Box(Vector3 Min, Vector3 Max);
