@@ -357,18 +357,21 @@ public static class TerrainShaders
             return albedo * (0.75 + 0.5 * fine);
         }
 
-        // Glitter: tiny grains that catch the light and twinkle, thickest on sand, brightest at night.
+        // Glitter: a few tiny grains that catch the light and twinkle, thickest on sand, brightest at
+        // night. Which cells hold a grain, and each grain's own pace and phase, come from different
+        // hashes: taken from the same one, the grains (all with nearly the same hash) blinked together.
         vec3 glitter(vec3 p, vec3 n, float slope, float dist)
         {
             if (dist > 70.0 || n.y < 0.5) return vec3(0.0);
             vec3 cell = floor(p * 5.0);
             float h = hash13(cell);
             float sandy = rockSand(p, slope).y;
-            if (h < 0.994 - sandy * 0.006) return vec3(0.0);
+            if (h < 0.997 - sandy * 0.003) return vec3(0.0);
             float r = length(fract(p * 5.0) - 0.5);
-            float twinkle = pow(max(0.5 + 0.5 * sin(uTime * (2.0 + h * 4.0) + h * 80.0), 0.0), 4.0);
+            float pace = 0.7 + 1.8 * hash13(cell + 11.7), phase = 6.2832 * hash13(cell - 23.1);
+            float twinkle = pow(max(0.5 + 0.5 * sin(uTime * pace + phase), 0.0), 6.0);
             vec3 tint = mix(vec3(0.5, 0.9, 1.0), vec3(0.9, 0.6, 1.0), hash13(cell + 5.0));
-            return tint * smoothstep(0.4, 0.0, r) * twinkle * mix(1.5, 4.0, uNight) * smoothstep(70.0, 30.0, dist);
+            return tint * smoothstep(0.4, 0.0, r) * twinkle * mix(1.0, 2.5, uNight) * smoothstep(70.0, 30.0, dist);
         }
 
         void main()

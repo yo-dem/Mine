@@ -43,7 +43,6 @@ public sealed class WorldObjects
     private const float ActiveRadius = 420f; // generated objects exist only within this distance
 
     private readonly TerrainField _terrain;
-    private readonly int _seed;
     private readonly Dictionary<(int X, int Z), List<WorldObject>> _cells = new();
     private readonly List<WorldObject> _placed = new();
     private readonly HashSet<long> _taken = new(); // generated objects the player picked up
@@ -53,7 +52,6 @@ public sealed class WorldObjects
     public WorldObjects(TerrainField terrain, int seed)
     {
         _terrain = terrain;
-        _seed = seed;
     }
 
     public IEnumerable<WorldObject> All => _cells.Values.SelectMany(c => c).Concat(_placed);
@@ -179,32 +177,8 @@ public sealed class WorldObjects
         return 0.8f + 0.2f * MathF.Sin(time * 1.4f + phase);
     }
 
-    /// <summary>Crystals in small clusters, only on gentle ground.</summary>
-    private List<WorldObject> Generate(int cx, int cz)
-    {
-        var list = new List<WorldObject>();
-        uint h = Hash(cx, cz);
-        var random = new Random((int)h);
-
-        if (random.NextSingle() < 0.3f)
-        {
-            float x = (cx + 0.15f + 0.7f * random.NextSingle()) * CellSize;
-            float z = (cz + 0.15f + 0.7f * random.NextSingle()) * CellSize;
-            int cluster = 1 + random.Next(3);
-            for (int i = 0; i < cluster; i++)
-                TryAdd(list, cx, cz, i, ObjectKind.Crystal,
-                    x + (random.NextSingle() - 0.5f) * 3f, z + (random.NextSingle() - 0.5f) * 3f, random.NextSingle() * MathF.Tau);
-        }
-        return list;
-    }
-
-    private void TryAdd(List<WorldObject> list, int cx, int cz, int index, ObjectKind kind, float x, float z, float yaw)
-    {
-        long id = ((long)(cx & 0xFFFFF) << 28) | ((long)(cz & 0xFFFFF) << 8) | (uint)index;
-        id += 1; // keep generated ids positive and non-zero
-        if (_taken.Contains(id) || _terrain.Normal(x, z).Y < 0.8f || _terrain.InPond(x, z, 1f) || _terrain.SpireHeight(x, z) > 0f) return;
-        list.Add(new WorldObject(id, kind, _terrain.TileCenter(x, z), yaw));
-    }
+    /// <summary>What the generator scatters in a cell: nothing for now (the small crystals were removed from the world).</summary>
+    private static List<WorldObject> Generate(int cx, int cz) => [];
 
     private static float CellDistance(Vector3 p, int cx, int cz)
     {
@@ -212,13 +186,4 @@ public sealed class WorldObjects
         return MathF.Sqrt(dx * dx + dz * dz);
     }
 
-    private uint Hash(int x, int z)
-    {
-        unchecked
-        {
-            uint h = (uint)(x * 73856093 ^ z * 19349663 ^ _seed * 83492791);
-            h = (h ^ (h >> 13)) * 1274126177u;
-            return h ^ (h >> 16);
-        }
-    }
 }

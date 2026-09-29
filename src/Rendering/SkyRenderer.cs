@@ -685,9 +685,6 @@ public sealed class SkyRenderer : IDisposable
         _manualStar = (time, _manualStar.Seed + 1f, start);
     }
 
-    /// <summary>Low quality (integrated GPUs): fewer cloud samples.</summary>
-    public bool LowQuality;
-
     /// <summary>
     /// Ray-marches the clouds at half the scene resolution into their own texture, only near the
     /// pixels where the sky shows (<paramref name="depthUnit"/> holds the opaque scene's depth).
@@ -716,8 +713,8 @@ public sealed class SkyRenderer : IDisposable
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _cloudFbo);
         _gl.Viewport(0, 0, (uint)width, (uint)height);
         _cloudShader.Use();
-        _cloudShader.Set("uCloudSteps", LowQuality ? 16 : 32);
-        _cloudShader.Set("uCloudLightSteps", LowQuality ? 2 : 3);
+        _cloudShader.Set("uCloudSteps", 32);
+        _cloudShader.Set("uCloudLightSteps", 3);
         _cloudShader.Set("uInvViewProj", inverseViewProjection);
         _cloudShader.Set("uCameraPos", cameraPosition);
         _cloudShader.Set("uSceneDepth", depthUnit);

@@ -106,12 +106,23 @@ public sealed class Game : IDisposable
     private double _lastRainTap = double.NegativeInfinity, _lastSnowTap = double.NegativeInfinity;
     private bool _sprinting; // latched by double-tapping W, lasts until W is released
 
-    // The F3 panel: the game's state (what the window title shows) and the options, switched by
+    // The inventory slides out of the screen to the left when left alone (InventoryHideDelay seconds
+    // after the wheel last turned, over InventoryOutSeconds), and back in place when the wheel turns
+    // (over InventoryInSeconds). _inventoryShown goes from 0 (out) to 1 (in place).
+    // Coming in it springs past its place and settles with little bounces; going out it draws back
+    // first (see DrawHud).
+    private const float InventoryHideDelay = 3f, InventoryOutSeconds = 0.4f, InventoryInSeconds = 0.6f;
+    private double _inventoryUsedAt;
+    private float _inventoryShown = 1f;
+    private bool _inventoryEntering = true;
+
+    // The menu (Esc): the game's state (what the window title shows) and the options, switched by
     // their keys only while it is open.
-    private bool _panelOpen = Environment.GetEnvironmentVariable("MINE_F3") == "1"; // MINE_F3=1: open from the start
+    private bool _panelOpen = Environment.GetEnvironmentVariable("MINE_MENU") == "1"; // MINE_MENU=1: open from the start
     private string[] _info = [];
     private static readonly (Key Key, string Name)[] OptionKeys =
-        [(Key.V, "Sincronizzazione verticale"), (Key.Q, "Qualita bassa"), (Key.H, "Suggerimenti a schermo")];
+        [(Key.V, "Sincronizzazione verticale"), (Key.M, "Salvataggio del mondo"), (Key.X, "Esci dal gioco")];
+    private const int VSyncOption = 0, SaveWorldOption = 1, QuitOption = 2; // quitting is an action, not a switch
 
     public Game()
     {
@@ -184,10 +195,6 @@ public sealed class Game : IDisposable
         _profiler = new GpuProfiler(_gl);
         _waterShader = new Shader(_gl, TerrainShaders.WaterVertex, TerrainShaders.WaterFragment);
         _water = new WaterRenderer(_gl);
-        // Integrated GPUs get the lighter clouds and a lower render scale; Q switches at any time.
-        string renderer = _gl.GetStringS(StringName.Renderer) ?? "";
-        SetLowQuality(_save.Options.LowQuality ?? (renderer.Contains("Intel", StringComparison.OrdinalIgnoreCase)
-                      || renderer.Contains("llvmpipe", StringComparison.OrdinalIgnoreCase)));
         if (_save.Options.VSync is { } vsync && Environment.GetEnvironmentVariable("MINE_NO_VSYNC") != "1") _window.VSync = vsync;
 
         Respawn();
@@ -344,6 +351,7 @@ public sealed class Game : IDisposable
         _grass.Growth = _blocks.GrassGrowth;
         _treeField.Covered = (x, z) => _blocks.GrassGrowth(x, z) < 1f;
         _creatures.Indoors = _blocks.Indoors;
+        _creatures.NearBlock = _blocks.Near;
         _blocks.GroundChanged += (x, z) =>
         {
             _grass.Invalidate(x, z);
@@ -356,7 +364,7 @@ public sealed class Game : IDisposable
     /// <summary>Restores what the player built and gathered in this world (before anything around is generated).</summary>
     private void LoadWorldState()
     {
-        if (!_save.Worlds.TryGetValue(WorldPreset.Current.Name, out var world)) return;
+        if (!_save.Options.SaveWorld || !_save.Worlds.TryGetValue(WorldPreset.Current.Name, out var world)) return;
         _blocks.Load(world.Blocks);
         _blocks.LoadDug(world.Dug);
         _treeField.LoadGathered(world.Gathered.Select(g => new Vector3(g.X, g.Y, g.Z)));
@@ -397,6 +405,15 @@ public sealed class Game : IDisposable
     private void SaveState()
     {
         _save.Slots = _inventory.Save();
+        if (!_save.Options.SaveWorld)
+        {
+            // Nothing of the worlds is kept: the next start finds them as they were generated.
+            _save.Worlds.Clear();
+            SaveGame.Write(_save);
+            _dirty = false;
+            _sinceSave = 0;
+            return;
+        }
         _save.Worlds[WorldPreset.Current.Name] = new WorldSave
         {
             Blocks = _blocks.Save(),
@@ -427,7 +444,8 @@ public sealed class Game : IDisposable
         float dt = (float)Math.Min(deltaTime, 0.05); // avoid huge steps after a hitch
 
         var move = Vector2.Zero;
-        if (_mouseCaptured)
+        bool playing = _mouseCaptured;
+        if (playing)
         {
             if (_keyboard.IsKeyPressed(Key.W)) move.Y += 1;
             if (_keyboard.IsKeyPressed(Key.S)) move.Y -= 1;
@@ -435,15 +453,15 @@ public sealed class Game : IDisposable
             if (_keyboard.IsKeyPressed(Key.A)) move.X -= 1;
         }
 
-        bool sneak = _mouseCaptured && !_player.Flying && _keyboard.IsKeyPressed(Key.ShiftLeft);
+        bool sneak = playing && !_player.Flying && _keyboard.IsKeyPressed(Key.ShiftLeft);
         if (move.Y <= 0 || sneak) _sprinting = false;
 
         _player.Update(_ground, dt, move,
-            up: _mouseCaptured && _keyboard.IsKeyPressed(Key.Space),
-            down: _mouseCaptured && _keyboard.IsKeyPressed(Key.ShiftLeft),
+            up: playing && _keyboard.IsKeyPressed(Key.Space),
+            down: playing && _keyboard.IsKeyPressed(Key.ShiftLeft),
             sprint: _sprinting || _keyboard.IsKeyPressed(Key.ControlLeft));
 
-        bool fastTime = _mouseCaptured && _keyboard.IsKeyPressed(Key.T);
+        bool fastTime = playing && _keyboard.IsKeyPressed(Key.T);
         _dayCycle.Update((float)deltaTime * (fastTime ? FastTimeScale : 1f));
         _weather.Update(dt);
         SkyRenderer.Rain = _weather.Rain;
@@ -471,7 +489,11 @@ public sealed class Game : IDisposable
         _creatureRenderer.Update(_creatures);
         Aim();
         Gather(dt);
-        if (_debris.Update(dt, _ground, _player.Position, _inventory) > 0) _dirty = true;
+        if (_debris.Update(dt, _ground, _player.Position, _inventory) > 0)
+        {
+            _dirty = true;
+            _inventoryUsedAt = _time; // something went into the bag: the inventory slides in to show it
+        }
         _blocks.UpdateSpires(_player.Position);
         _blockRenderer.Update(_blocks);
         _blocks.Update();
@@ -479,6 +501,11 @@ public sealed class Game : IDisposable
         var walk = new Vector2(_player.Velocity.X, _player.Velocity.Z).Length();
         if (_player.OnGround) _bobPhase += walk * dt * 1.2f;
         _toasts.RemoveAll(t => t.Until < _time);
+        bool inventoryWanted = _time - _inventoryUsedAt < InventoryHideDelay;
+        _inventoryEntering = inventoryWanted;
+        _inventoryShown = inventoryWanted
+            ? MathF.Min(1f, _inventoryShown + (float)deltaTime / InventoryInSeconds)
+            : MathF.Max(0f, _inventoryShown - (float)deltaTime / InventoryOutSeconds);
 
         _sinceSave += deltaTime;
         if (_dirty && _sinceSave > AutosaveSeconds) SaveState();
@@ -795,7 +822,7 @@ public sealed class Game : IDisposable
         _objectRenderer.DrawItem(resource);
     }
 
-    /// <summary>The interface: the materials bar, the piece in hand when building, what is aimed at, messages and hints.</summary>
+    /// <summary>The interface: the materials column, the progress of a blow, messages and the menu.</summary>
     private void DrawHud(int width, int height)
     {
         _hud.Begin(width, height);
@@ -804,21 +831,41 @@ public sealed class Game : IDisposable
         var soft = new Vector4(0.9f, 0.86f, 1f, 0.75f);
         var red = new Vector4(1f, 0.45f, 0.5f, 1f);
 
-        // The inventory: ten slots, each with its material turning in it and the count.
-        int slotSize = 20 * s, gap = 2 * s;
-        float barX = (width - (Inventory.SlotCount * slotSize + (Inventory.SlotCount - 1) * gap)) / 2f, barY = height - slotSize - 10 * s;
-        float SlotX(int i) => barX + i * (slotSize + gap);
+        // The inventory: a column of slots in the middle of the left edge, each with its material
+        // turning in it and the count; the one in hand glows with a pink halo. Left alone, it slides
+        // out of the screen to the left; the mouse wheel brings it back in place.
+        int slotSize = 20 * s, gap = 3 * s;
+        // Coming in, a damped spring, 1 - cos(3.5 pi t) e^(-4.5 t): it springs about a quarter of
+        // the way past its place to the right, then settles with smaller and smaller bounces (and
+        // is exactly in place at t = 1). Going out, 1 - easeInBack(1 - shown): it first draws back
+        // a touch to the right, then slides away.
+        const float back = 2.6f;
+        static float InBack(float t) => (back + 1f) * t * t * t - back * t * t;
+        static float Spring(float t) => 1f - MathF.Cos(3.5f * MathF.PI * t) * MathF.Exp(-4.5f * t);
+        float slide = _inventoryEntering ? Spring(_inventoryShown) : 1f - InBack(1f - _inventoryShown);
+        float barX = float.Lerp(-slotSize - 12 * s, 10 * s, slide);
+        float barY = (height - (Inventory.SlotCount * slotSize + (Inventory.SlotCount - 1) * gap)) / 2f;
+        float SlotX(int i) => barX;
+        float SlotY(int i) => barY + i * (slotSize + gap);
+        var pink = new Vector4(1f, 0.45f, 0.85f, 1f);
+        float pulse = 0.8f + 0.2f * MathF.Sin((float)_time * 3f);
+        for (int ring = 4; ring >= 1; ring--)
+        {
+            // The halo: soft rings fading outward around the slot in hand.
+            float r = ring * 1.5f * s;
+            _hud.Rect(SlotX(_slot) - r, SlotY(_slot) - r, slotSize + 2 * r, slotSize + 2 * r, (pink with { W = 0.12f * pulse }));
+        }
         for (int i = 0; i < Inventory.SlotCount; i++)
         {
             bool selected = i == _slot;
-            _hud.Rect(SlotX(i), barY, slotSize, slotSize, new Vector4(0.08f, 0.05f, 0.14f, 0.55f));
-            _hud.Frame(SlotX(i), barY, slotSize, slotSize, selected ? s : Math.Max(1, s / 2), selected ? white : new Vector4(1f, 1f, 1f, 0.25f));
+            _hud.Rect(SlotX(i), SlotY(i), slotSize, slotSize, (selected ? new Vector4(0.30f, 0.10f, 0.28f, 0.8f) : new Vector4(0.08f, 0.05f, 0.14f, 0.55f)));
+            _hud.Frame(SlotX(i), SlotY(i), slotSize, slotSize, selected ? s : Math.Max(1, s / 2), (selected ? pink : new Vector4(1f, 1f, 1f, 0.25f)));
         }
         _hud.End();
         _icons.Begin(width, height);
         for (int i = 0; i < Inventory.SlotCount; i++)
             if (_inventory[i] is { } stack)
-                _icons.Draw(stack.Resource, SlotX(i) + slotSize / 2f, barY + slotSize / 2f - s, slotSize * 0.55f, (float)_time * 1.2f + i * 0.7f);
+                _icons.Draw(stack.Resource, SlotX(i) + slotSize / 2f, SlotY(i) + slotSize / 2f - s, slotSize * 0.55f, (float)_time * 1.2f + i * 0.7f);
         _icons.End();
         _hud.Begin(width, height);
         for (int i = 0; i < Inventory.SlotCount; i++)
@@ -826,29 +873,20 @@ public sealed class Game : IDisposable
             if (_inventory[i] is not { } stack) continue;
             // At most three characters, so counts never run into the next slot: 999, then 1K, 12K...
             string number = stack.Count < 1000 ? stack.Count.ToString() : $"{stack.Count / 1000}K";
-            _hud.Text(number, SlotX(i) + slotSize - Hud.TextWidth(number, s) - s, barY + slotSize - 8 * s, s, white);
+            _hud.Text(number, SlotX(i) + slotSize - Hud.TextWidth(number, s) - s, SlotY(i) + slotSize - 8 * s, s, (white));
         }
 
-        float centerX = width / 2f, lineY = barY - 11 * s;
-        if (Held is { } held) _hud.TextCentered(Inventory.Names[(int)held], centerX, lineY, s, white);
-
-        // What is aimed at, and how far the blow has got.
-        if (_gatherTarget is not null || _aimedBlock is not null || _aimed is not null)
+        // How far the blow has got, while breaking something (nothing is named: the world speaks for itself).
+        float centerX = width / 2f;
+        if (_gathering is not null && (_gatherTarget is not null || _aimedBlock is not null || _aimed is not null))
         {
-            float y = height / 2f + 12 * s;
             var blockMaterial = _aimedBlock is { } aimedBlock ? _blocks.At(aimedBlock.Block) ?? Resource.Wood : Resource.Wood;
             var yield = _gatherTarget?.Yield ?? (_aimed is not null ? TreeModels.SmallCrystal : (TreeModels.Yield?)null);
-            string name = yield?.Name ?? $"Blocco di {Inventory.Names[(int)blockMaterial].ToLowerInvariant()}";
             float seconds = yield?.Seconds ?? BreakSeconds(blockMaterial);
-            _hud.TextCentered(name, centerX, y, s, white);
-            float barWidth = 50 * s;
-            if (_gathering is not null)
-            {
-                float done = Math.Clamp(_gatherProgress / seconds, 0f, 1f);
-                _hud.Rect(centerX - barWidth / 2, y + 10 * s, barWidth, 2 * s, new Vector4(0f, 0f, 0f, 0.5f));
-                _hud.Rect(centerX - barWidth / 2, y + 10 * s, barWidth * done, 2 * s, white);
-            }
-            else _hud.TextCentered("Tieni premuto il tasto sinistro", centerX, y + 9 * s, s, soft);
+            float done = Math.Clamp(_gatherProgress / seconds, 0f, 1f);
+            float y = height / 2f + 12 * s, barWidth = 50 * s;
+            _hud.Rect(centerX - barWidth / 2, y, barWidth, 2 * s, new Vector4(0f, 0f, 0f, 0.5f));
+            _hud.Rect(centerX - barWidth / 2, y, barWidth * done, 2 * s, white);
         }
 
         // Messages, newest at the bottom, fading out.
@@ -859,47 +897,48 @@ public sealed class Game : IDisposable
             _hud.TextCentered(text, centerX, height / 2f - (14 + 9 * (_toasts.Count - 1 - i)) * s, s, color with { W = color.W * fade });
         }
 
-        if (_panelOpen) DrawPanel(s, white, soft);
-        else if (_save.Options.Hints)
-        {
-            // Hints in the top left corner.
-            string[] hints = ["Tieni premuto clic sinistro: rompi", "Clic destro: posa un blocco", "Rotella: cambia oggetto", "F3: info e opzioni"];
-            for (int i = 0; i < hints.Length; i++)
-                _hud.Text(hints[i], 8 * s, 8 * s + i * 10 * s, s, soft);
-        }
+        if (_panelOpen) DrawPanel(s, white, soft, width);
 
         _hud.End();
     }
 
-    /// <summary>The F3 panel in the top left corner: the game's state, then the options and their keys.</summary>
-    private void DrawPanel(int s, Vector4 white, Vector4 soft)
+    /// <summary>
+    /// The menu, at the top in the middle of the screen: the game's state (the position first) in
+    /// one column, the options and their keys in the next.
+    /// </summary>
+    private void DrawPanel(int s, Vector4 white, Vector4 soft, int screenWidth)
     {
         var on = new Vector4(0.55f, 1f, 0.8f, 1f);
         var off = new Vector4(1f, 0.55f, 0.6f, 1f);
-        float line = 10 * s, x = 8 * s, y = 8 * s, pad = 6 * s;
-        var rows = new List<(string Text, Vector4 Color)> { ("Info", white) };
-        rows.AddRange(_info.Select(i => (i, soft)));
-        rows.Add(("", soft));
-        rows.Add(("Opzioni", white));
-        int optionsStart = rows.Count;
-        for (int i = 0; i < OptionKeys.Length; i++)
-            rows.Add(($"[{OptionKeys[i].Key}] {OptionKeys[i].Name}", soft));
-        rows.Add(("", soft));
-        rows.Add(("F3 o Esc: chiudi", soft));
-
+        float line = 10 * s, pad = 6 * s, gap = 16 * s, stateGap = 8 * s;
         const string stateOn = "SI", stateOff = "NO";
-        float width = rows.Max(r => Hud.TextWidth(r.Text, s));
-        width = MathF.Max(width, OptionKeys.Max(o => Hud.TextWidth($"[{o.Key}] {o.Name}", s)) + 8 * s + Hud.TextWidth(stateOff, s));
-        _hud.Rect(x - pad, y - pad, width + 2 * pad, rows.Count * line + 2 * pad - 2 * s, new Vector4(0.05f, 0.03f, 0.1f, 0.7f));
-        for (int i = 0; i < rows.Count; i++)
+
+        var info = new List<(string Text, Vector4 Color)> { ("Info", white) };
+        info.AddRange(_info.Select(i => (i, soft)));
+        var options = new List<(string Text, Vector4 Color)> { ("Opzioni", white) };
+        options.AddRange(OptionKeys.Select(o => ($"[{o.Key}] {o.Name}", soft)));
+        options.Add(("Esc: torna al gioco", soft));
+
+        float infoWidth = info.Max(r => Hud.TextWidth(r.Text, s));
+        float optionsWidth = MathF.Max(options.Max(r => Hud.TextWidth(r.Text, s)),
+            OptionKeys.Max(o => Hud.TextWidth($"[{o.Key}] {o.Name}", s)) + stateGap + Hud.TextWidth(stateOff, s));
+        int rows = Math.Max(info.Count, options.Count);
+        float total = infoWidth + gap + optionsWidth, height = rows * line - 2 * s;
+        float x = MathF.Round((screenWidth - total) / 2f), y = 8 * s + pad;
+        _hud.Rect(x - pad, y - pad, total + 2 * pad, height + 2 * pad, new Vector4(0.05f, 0.03f, 0.1f, 0.7f));
+
+        for (int i = 0; i < info.Count; i++)
+            _hud.Text(info[i].Text, x, y + i * line, s, info[i].Color);
+        float ox = x + infoWidth + gap;
+        for (int i = 0; i < options.Count; i++)
         {
-            _hud.Text(rows[i].Text, x, y + i * line, s, rows[i].Color);
-            int option = i - optionsStart;
-            if (option >= 0 && option < OptionKeys.Length)
+            _hud.Text(options[i].Text, ox, y + i * line, s, options[i].Color);
+            int option = i - 1;
+            if (option >= 0 && option < OptionKeys.Length && option != QuitOption)
             {
                 bool enabled = OptionOn(option);
                 string state = enabled ? stateOn : stateOff;
-                _hud.Text(state, x + width - Hud.TextWidth(state, s), y + i * line, s, enabled ? on : off);
+                _hud.Text(state, ox + optionsWidth - Hud.TextWidth(state, s), y + i * line, s, enabled ? on : off);
             }
         }
     }
@@ -953,9 +992,11 @@ public sealed class Game : IDisposable
             SetWorld(WorldPreset.All[key - Key.Number1]); // Ctrl+1..3: another kind of world
             return;
         }
-        if (key == Key.F3 || (key == Key.Escape && _panelOpen))
+        if (key == Key.Escape)
         {
-            _panelOpen = !_panelOpen && key == Key.F3;
+            // The menu lies over the game, which goes on as if nothing were open.
+            _panelOpen = !_panelOpen;
+            if (!_mouseCaptured) SetMouseCaptured(true);
             return;
         }
         if (_panelOpen && Array.FindIndex(OptionKeys, o => o.Key == key) is var option and >= 0)
@@ -965,12 +1006,6 @@ public sealed class Game : IDisposable
         }
         switch (key)
         {
-            case Key.Escape when _mouseCaptured:
-                SetMouseCaptured(false);
-                break;
-            case Key.Escape:
-                _window.Close();
-                break;
             case Key.W when _mouseCaptured:
                 if (_time - _lastForwardTap <= DoubleTapWindow) _sprinting = true;
                 _lastForwardTap = _time;
@@ -1032,32 +1067,32 @@ public sealed class Game : IDisposable
         if (!_mouseCaptured || wheel.Y == 0) return;
         int step = wheel.Y > 0 ? -1 : 1;
         _slot = (_slot + step + Inventory.SlotCount) % Inventory.SlotCount;
+        _inventoryUsedAt = _time; // the inventory shows fully again
     }
 
-    private bool OptionOn(int option) => option switch
-    {
-        0 => _window.VSync,
-        1 => _sky.LowQuality,
-        _ => _save.Options.Hints,
-    };
+    private bool OptionOn(int option) => option == VSyncOption ? _window.VSync : _save.Options.SaveWorld;
 
-    /// <summary>Switches an option of the F3 panel, and saves the choice.</summary>
+    /// <summary>Switches an option of the menu, and saves the choice (or quits the game).</summary>
     private void ToggleOption(int option)
     {
-        bool on = !OptionOn(option);
-        switch (option)
+        if (option == QuitOption)
         {
-            case 0: _window.VSync = on; _save.Options.VSync = on; break;
-            case 1: SetLowQuality(on); _save.Options.LowQuality = on; break;
-            default: _save.Options.Hints = on; break;
+            _window.Close(); // the game is saved on closing
+            return;
         }
-        SaveGame.Write(_save);
-    }
-
-    private void SetLowQuality(bool low)
-    {
-        _sky.LowQuality = low;
-        _post.LowQuality = low;
+        bool on = !OptionOn(option);
+        if (option == VSyncOption)
+        {
+            _window.VSync = on;
+            _save.Options.VSync = on;
+            SaveGame.Write(_save);
+        }
+        else
+        {
+            // Saving the world back on writes this world at once; off, the file forgets every world.
+            _save.Options.SaveWorld = on;
+            SaveState();
+        }
     }
 
     private void SetMouseCaptured(bool captured)
@@ -1075,25 +1110,19 @@ public sealed class Game : IDisposable
 
         int fps = (int)(_frames / _titleTimer);
         var p = _player.Position;
-        string mode = _player.Flying ? "volo" : _player.Swimming ? "nuoto" : "a piedi";
-        if (_sprinting) mode += " (corsa)";
-        else if (_player.Sneaking) mode += " (furtivo)";
         var (hours, minutes) = _dayCycle.Clock;
-        string hand = _inventory[_slot] is { } stack ? $"{Inventory.Names[(int)stack.Resource]} x{stack.Count}" : "mano vuota";
         string weather = _weather.Storm > 0.5f ? "temporale" : _weather.Blizzard > 0.5f ? "bufera di neve"
             : _weather.Raining ? "pioggia" : _weather.Snow > 0.5f ? "neve" : "sereno";
         _info =
         [
+            $"Posizione: {p.X:0} {p.Y:0} {p.Z:0}",
             $"{fps} FPS",
             $"Mondo: {WorldPreset.Current.Name}",
-            $"Posizione: {p.X:0} {p.Y:0} {p.Z:0}",
             $"Ore {hours:00}:{minutes:00}, {weather}",
-            $"Movimento: {mode}",
-            $"In mano: {hand}",
         ];
-        string hint = _mouseCaptured ? "" : " | clicca per giocare, Esc per uscire";
+        string hint = _mouseCaptured ? "" : " | clicca per giocare";
         _window.Title = $"Mine | {string.Join(" | ", _info)}{hint}";
-        if (LogHud) Console.WriteLine(_window.Title); // MINE_FPS_LOG=1: for measuring without a screen
+        if (LogHud) Console.WriteLine(_window.Title);
         _titleTimer = 0;
         _frames = 0;
     }

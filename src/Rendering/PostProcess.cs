@@ -166,19 +166,6 @@ public sealed unsafe class PostProcess : IDisposable
     public float BloomStrength = 0.7f;
     public float Exposure = 1.0f;
 
-    /// <summary>Low quality (integrated GPUs): the scene is rendered at 70% resolution.</summary>
-    public bool LowQuality
-    {
-        get => _lowQuality;
-        set
-        {
-            if (_lowQuality == value) return;
-            _lowQuality = value;
-            Resize(_screenWidth, _screenHeight, force: true);
-        }
-    }
-    private bool _lowQuality;
-
     /// <summary>Width of the scene buffer in pixels.</summary>
     public int SceneWidth => _width;
 
@@ -195,15 +182,14 @@ public sealed unsafe class PostProcess : IDisposable
     }
 
     /// <summary>(Re)creates the render targets for the window size.</summary>
-    public void Resize(int screenWidth, int screenHeight, bool force = false)
+    public void Resize(int screenWidth, int screenHeight)
     {
         if (screenWidth <= 0 || screenHeight <= 0) return;
-        if (!force && screenWidth == _screenWidth && screenHeight == _screenHeight) return;
+        if (screenWidth == _screenWidth && screenHeight == _screenHeight) return;
         DeleteTargets();
         _screenWidth = screenWidth;
         _screenHeight = screenHeight;
-        float scale = _lowQuality ? 0.7f : 1f;
-        int width = Math.Max(1, (int)(screenWidth * scale)), height = Math.Max(1, (int)(screenHeight * scale));
+        int width = screenWidth, height = screenHeight;
         _width = width;
         _height = height;
 

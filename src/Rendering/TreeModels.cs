@@ -332,14 +332,14 @@ public static class TreeModels
             case Decoration.CyanCrystals:
             {
                 var tint = decoration == Decoration.VioletCrystals ? new Vector3(0.66f, 0.42f, 1.0f) : new Vector3(0.40f, 0.85f, 1.0f);
-                Rock(mesh, Vector3.Zero, new Vector3(1.0f, 0.35f, 0.9f), new Vector3(0.10f, 0.08f, 0.16f), lod, 3.1f);
+                Plinth(mesh, CrystalBaseRadius, new Vector3(0.10f, 0.08f, 0.16f), random);
                 int count = 7;
                 for (int i = 0; i < count; i++)
                 {
                     // The tallest in the middle, the others leaning outward around it.
                     float a = i * MathF.Tau / count + random.NextSingle() * 0.6f;
                     float r = i == 0 ? 0f : 0.25f + 0.45f * random.NextSingle();
-                    var foot = new Vector3(MathF.Cos(a) * r, 0.1f, MathF.Sin(a) * r);
+                    var foot = new Vector3(MathF.Cos(a) * r, 0.15f, MathF.Sin(a) * r);
                     var dir = Vector3.Normalize(new Vector3(MathF.Cos(a) * r * 1.2f, 1f, MathF.Sin(a) * r * 1.2f));
                     float length = i == 0 ? 3.2f : 1.0f + 1.8f * random.NextSingle();
                     float radius = i == 0 ? 0.38f : 0.16f + 0.16f * random.NextSingle();
@@ -589,16 +589,41 @@ public static class TreeModels
         };
     }
 
-    /// <summary>A lumpy, dark stone half sunk in the ground.</summary>
-    private static void Rock(List<float> mesh, Vector3 center, Vector3 size, Vector3 color, int lod, float seed, float emissive = 0f)
+    /// <summary>How far a crystal cluster's base and its leaning crystals reach from its centre, before scaling.</summary>
+    public const float CrystalBaseRadius = 1.0f, CrystalReach = 2.6f;
+
+    /// <summary>
+    /// The base of a crystal cluster: a dark angular plinth, flat faced (nothing round in this
+    /// world): an irregular polygon standing on the ground (bottom at 0, never below), its sides
+    /// sloping in a little, its top a low faceted point.
+    /// </summary>
+    private static void Plinth(List<float> mesh, float radius, Vector3 color, Random random)
     {
-        foreach (var d in Icosphere(lod >= 2 ? 1 : 2))
+        const int sides = 7;
+        var bottom = new Vector3[sides];
+        var top = new Vector3[sides];
+        for (int i = 0; i < sides; i++)
         {
-            float lump = 1f + 0.25f * MathF.Sin(d.X * 4.1f + seed) * MathF.Sin(d.Z * 3.3f - seed) + 0.1f * MathF.Sin(d.Y * 7f + seed);
-            var p = center + d * lump * size;
-            p.Y = MathF.Max(p.Y, -0.3f);
-            var shade = color * (0.8f + 0.35f * (d.Y * 0.5f + 0.5f));
-            Vertex(mesh, p, Vector3.Normalize(d / size), shade, emissive, 0);
+            float a = (i + 0.35f * random.NextSingle()) * MathF.Tau / sides;
+            float r = radius * (0.8f + 0.2f * random.NextSingle());
+            var d = new Vector3(MathF.Cos(a), 0, MathF.Sin(a));
+            bottom[i] = d * r;
+            top[i] = d * r * 0.8f + new Vector3(0, 0.22f + 0.1f * random.NextSingle(), 0);
+        }
+        var peak = new Vector3(0, 0.42f, 0);
+        void Face(Vector3 a, Vector3 b, Vector3 c, float shade)
+        {
+            var n = Vector3.Normalize(Vector3.Cross(b - a, c - a));
+            if (n.Y < -0.01f || Vector3.Dot(n, ((a + b + c) / 3f) with { Y = 0 }) < 0) { (b, c) = (c, b); n = -n; }
+            Vertex(mesh, a, n, color * shade, 0, 0); Vertex(mesh, b, n, color * shade, 0, 0); Vertex(mesh, c, n, color * shade, 0, 0);
+        }
+        for (int i = 0; i < sides; i++)
+        {
+            int j = (i + 1) % sides;
+            float shade = i % 2 == 0 ? 1f : 0.82f; // the facets catch the light unevenly
+            Face(bottom[i], bottom[j], top[j], shade);
+            Face(bottom[i], top[j], top[i], shade);
+            Face(top[i], top[j], peak, 1.15f);
         }
     }
 

@@ -529,6 +529,29 @@ public sealed class TreeField
         return DesertBiome;
     }
 
+    // Giant crystal clusters are rare finds: this share of the sampled points on shores, desert
+    // sand and rocky slopes tries one (see TryCrystal, which turns many of them down).
+    private const float CrystalChance = 0.004f;
+
+    /// <summary>
+    /// A crystal cluster at (x, z), only where it touches no terrain but the ground it stands on:
+    /// the ground under its base must be one flat tile top (it stands on it, never sunk), and no
+    /// ground within the reach of its leaning crystals may rise above it.
+    /// </summary>
+    private void TryCrystal(List<TreeInstance> list, float x, float y, float z, float yaw, float scale, int variant)
+    {
+        float baseRadius = (TreeModels.CrystalBaseRadius + 0.2f) * scale, reach = TreeModels.CrystalReach * scale;
+        for (float dz = -reach; dz <= reach; dz += 0.5f)
+        for (float dx = -reach; dx <= reach; dx += 0.5f)
+        {
+            float d2 = dx * dx + dz * dz;
+            if (d2 > reach * reach) continue;
+            float h = _terrain.Height(x + dx, z + dz);
+            if (d2 <= baseRadius * baseRadius ? h != y : h > y) return;
+        }
+        list.Add(new TreeInstance(new Vector3(x, y, z), yaw, scale, variant));
+    }
+
     /// <summary>Samples a few points of the cell and decorates each according to the ground there.</summary>
     private void AddDecorations(List<TreeInstance> list, int cx, int cz, Random random)
     {
@@ -558,26 +581,26 @@ public sealed class TreeField
             }
             else if (y >= water - 1f && y < water + 4f)
             {
-                // The shore: palms and crystal clusters.
+                // The shore: palms, and a rare crystal cluster.
                 if (roll < 0.03f && y > water + 0.8f)
                     list.Add(RandomPalm(x, y, z, yaw, random));
-                else if (roll < 0.065f)
-                    list.Add(new TreeInstance(new Vector3(x, y - 0.3f, z), yaw, 0.7f + 1.5f * random.NextSingle(), crystals));
+                else if (roll < 0.03f + CrystalChance)
+                    TryCrystal(list, x, y, z, yaw, 0.7f + 1.5f * random.NextSingle(), crystals);
             }
             else if (y >= water + 2f)
             {
                 float normalY = _terrain.Normal(x, z, 1f).Y;
                 if (desert)
                 {
-                    // Crystal clusters rising from the desert sand.
-                    if (roll < 0.02f)
-                        list.Add(new TreeInstance(new Vector3(x, y - 0.3f, z), yaw, 0.7f + 1.6f * random.NextSingle(), crystals));
+                    // A rare crystal cluster rising from the desert sand.
+                    if (roll < CrystalChance)
+                        TryCrystal(list, x, y, z, yaw, 0.7f + 1.6f * random.NextSingle(), crystals);
                 }
                 else if (normalY < 0.75f)
                 {
-                    // Rocky slopes: the odd crystal cluster.
-                    if (roll < 0.012f)
-                        list.Add(new TreeInstance(new Vector3(x, y - 0.3f, z), yaw, 0.6f + 1.2f * random.NextSingle(), crystals));
+                    // Rocky slopes: a rare crystal cluster (where a ledge is flat and wide enough).
+                    if (roll < CrystalChance)
+                        TryCrystal(list, x, y, z, yaw, 0.6f + 1.2f * random.NextSingle(), crystals);
                 }
                 else if (roll < 0.3f && _forest.Fractal(x * 0.02f + 40f, z * 0.02f, 2) > 0.0f)
                 {

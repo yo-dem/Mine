@@ -48,6 +48,11 @@ public sealed class Creatures
 
     /// <summary>Whether a point is inside a space closed in by walls: butterflies never go in.</summary>
     public Func<Vector3, bool>? Indoors { get; set; }
+
+    /// <summary>Whether a point is within a margin of a block: butterflies never fly into one.</summary>
+    public Func<Vector3, float, bool>? NearBlock { get; set; }
+
+    private const float WingMargin = 0.45f; // how close a butterfly may come to a block (its wings reach ~0.4 m)
     private readonly Creature[] _fish = new Creature[FishCount];
     private readonly float[] _fishMinDepth = new float[FishCount];
 
@@ -186,6 +191,19 @@ public sealed class Creatures
                     b.Velocity.Z = -b.Velocity.Z;
                     continue;
                 }
+            }
+            if (NearBlock is { } nearBlock)
+            {
+                // Blocks are never flown through: one caught against a block (just placed there, or
+                // born by one) flies off; one heading into a block turns back well before it; and a
+                // step that would touch one is never taken.
+                if (nearBlock(b.Position, WingMargin)) { b.Active = false; continue; }
+                if (nearBlock(b.Position + b.Velocity * 0.6f, WingMargin))
+                {
+                    b.Velocity.X = -b.Velocity.X;
+                    b.Velocity.Z = -b.Velocity.Z;
+                }
+                if (nearBlock(b.Position + b.Velocity * dt, WingMargin)) continue;
             }
             b.Position += b.Velocity * dt;
         }

@@ -15,13 +15,11 @@ Nelle zone basse ci sono mari e laghi che riflettono il cielo, galassia compresa
 nell'acqua bassa pulsano venature di luce ciano bioluminescente, verso la riva arrivano onde che si alzano
 nell'acqua bassa e si rompono in creste di schiuma rosa e bianca luminosa, con un bagliore ciano sul fronte,
 e sulla superficie brillano scintille come stelle cadute. Vicino alla riva si cammina nell'acqua; al largo è profonda e si **nuota**: ci si muove come in volo ma lentamente, Spazio per salire, Shift per immergersi, e da fermi si torna a galla.
-Sulle rive crescono grappoli di cristalli viola e ciano che illuminano ciò che hanno intorno; nell'acqua bassa galleggiano fiori di loto luminosi e tra l'erba spuntano fiori di ogni colore: campanule luminose, margherite pastello, tulipani, lupini dalle punte che brillano, piccoli fiori a stella luminosi e, raccolti in giardini sotto i boschi fitti, fiori nati dalla luce: steli chiari che brillano verso l'alto e si ramificano in grappoli di 3–4 fiori, foglie colorate con venature di luce, petali al neon, semi di luce che fluttuano sopra la corolla e una luce colorata che tinge l'erba intorno (iris viola dalle foglie a spada, papaveri magenta su rosette di foglie, gigli ciano dai petali ripiegati); stelle luminose, campanule e gigli crescono anche sotto i boschi.
+Qua e là, rari, si trovano cristalli giganti viola e ciano su una base di pietra scura e spigolosa, che illuminano ciò che hanno intorno; nell'acqua bassa galleggiano fiori di loto luminosi e tra l'erba spuntano fiori di ogni colore: campanule luminose, margherite pastello, tulipani, lupini dalle punte che brillano, piccoli fiori a stella luminosi e, raccolti in giardini sotto i boschi fitti, fiori nati dalla luce: steli chiari che brillano verso l'alto e si ramificano in grappoli di 3–4 fiori, foglie colorate con venature di luce, petali al neon, semi di luce che fluttuano sopra la corolla e una luce colorata che tinge l'erba intorno (iris viola dalle foglie a spada, papaveri magenta su rosette di foglie, gigli ciano dai petali ripiegati); stelle luminose, campanule e gigli crescono anche sotto i boschi.
 Sulle spiagge e lungo le rive dei laghi crescono boschetti di palme scure in controluce, alte e slanciate, medie o basse e tozze, mai uguali tra loro; farfalle
 luminose svolazzano sui prati (a sciami di notte), pesci argentati dalle pinne colorate (rosse, viola, gialle, arancioni, ciano, magenta) nuotano nell'acqua più profonda e, tuffandosi, si incontrano banchi di grossi pesci luminosi che nuotano vicino al fondale e stormi di uccelli,
 ogni volta diversi per numero e forma, mai regolari (V sbilenche con ritardatari, nuvole che si allungano e si stringono, gruppetti che si separano e si riuniscono, vortici), volteggiano in cielo: tanti di giorno, arrivano da lontano al mattino e se ne vanno al calare della sera, e di sera e di notte se ne vede solo qualcuno.
 
-Nel mondo si trovano piccoli cristalli luminosi da raccogliere, e puoi piazzarli dove vuoi: ognuno emette
-una luce viola che illumina il paesaggio attorno, con un alone nell'aria.
 
 I prati sono coperti da un tappeto fitto di ciuffi d'erba (più fili da una base comune, aperti a ventaglio, raccolti in gruppetti, con ciuffi bassi che coprono il terreno tra quelli alti) a chiazze di colore (verde acqua, viola, magenta, oro-lilla, azzurro) che ondeggia al vento e brilla in controluce; le rive e l'acqua bassa sono punteggiate di canneti di altezze diverse, dai ciuffi bassi alle canne altissime, con le spighe scure delle tife; in certe zone cresce alta fino alle cosce e, al centro, più alta del personaggio, e il paesaggio è punteggiato
 di boschi fitti, con arbusti e alberelli nel sottobosco, fatti di boschetti ognuno di una sola specie, e di alberi isolati in stile fiabesco: querce, cipressi, pini, giganti, salici, alberi rosa, turchesi, fioriti di lilla,
@@ -45,11 +43,11 @@ fitti portati dal vento e una foschia bianca che cancella l'orizzonte.
 ## Raccogliere e costruire
 
 In giro per il mondo si raccolgono i materiali tenendo premuto il tasto sinistro su ciò che si guarda:
-gli alberi e le palme danno legno, i cristalli (giganti o piccoli) cubetti di cristallo: più grande il
+gli alberi e le palme danno legno, i cristalli giganti (rari) cubetti di cristallo: più grande il
 cristallo, più cubetti. Mentre li colpisci ne schizzano via piccole schegge
 cubiche; poi si rompono per sempre, esplodendo in schegge e in cubetti che cadono
 intorno e restano a fluttuare ruotando sul terreno finché non ti avvicini: allora volano verso di te e
-finiscono nell'inventario (vengono richiamati da qualche metro). In basso ci sono 10 caselle: ogni materiale si accumula nella sua, col suo
+finiscono nell'inventario (vengono richiamati da qualche metro). A sinistra, in colonna, ci sono 5 caselle (quella in mano ha un alone rosa; se non le usi escono dallo schermo a sinistra, e la rotella, o un cubetto che ti arriva in borsa, le fa rientrare): ogni materiale si accumula nella sua, col suo
 contatore, e il cubetto dentro ruota. Quello nella casella scelta con la rotella si vede in mano. Per
 ora, per provare le costruzioni, il gioco parte sempre con 100 di legno, pietra e cristallo.
 
@@ -94,15 +92,14 @@ portatili con due schede usa quella dedicata; la prima volta si riavvia da solo 
 | Click sinistro | Tieni premuto per rompere alberi e palme (legno), cristalli (cubetti di cristallo), le guglie di roccia (pietra) e i blocchi |
 | Click destro | Posa un blocco del materiale in mano (uno per click) |
 | Rotella | Scegli la casella dell'inventario (il materiale in mano) |
-| F3 | Apre e chiude il pannello di info (FPS, mondo, posizione, ora e meteo, movimento, oggetto in mano) e opzioni; si chiude anche con Esc |
-| V / Q / H (solo col pannello F3 aperto) | Sincronizzazione verticale, qualità bassa (di default automatica sulle schede integrate), suggerimenti a schermo; le scelte vengono salvate |
+| Esc | Apre e chiude il menu, in alto al centro: info (posizione, FPS, mondo, ora e meteo) e opzioni; col menu aperto si continua a giocare come se niente fosse |
+| V / M / X (solo col menu aperto) | Sincronizzazione verticale; salvataggio del mondo (se disattivato, a ogni avvio il mondo torna com'era stato generato); esci dal gioco. Le scelte vengono salvate |
 | F11 o Alt+Invio | Schermo intero / finestra (per ora il gioco parte in finestra, per il debug; `MINE_FULLSCREEN=1` lo avvia a schermo intero) |
 | F10 | Sposta il gioco sul monitor successivo |
 | 1 | Fai partire una stella cadente davanti a te (debug) |
 | 2 | Fai iniziare o smettere la pioggia (premuto due volte: temporale con fulmini) |
 | 3 | Fai iniziare o smettere la neve (premuto due volte: bufera) |
 | CTRL+1 / 2 / 3 / 4 / 5 | Cambia mondo (il gioco parte nel desertico, il mondo principale): classico (con le isole volanti), desertico (foreste rare, laghi rarissimi), arcipelago (isolotti con coste desertiche e cuore lussureggiante), piatto (pianure dolci e sobrie: poca erba e pochi alberi, un solo tono di colore, poche nuvole, di notte solo stelle e l'ombra del pianeta), base (come il piatto ma con biomi riconoscibili, vegetazione a gruppi della stessa specie, e il pianeta come ombra dal bordo luminoso) |
-| Esc | Libera il mouse (di nuovo Esc: esci) |
 
 ## Struttura
 
@@ -116,14 +113,14 @@ src/
     TerrainField.cs       forma del terreno: altezza in ogni punto
     DayCycle.cs           orologio e colori di cielo e luce per ogni ora
     Weather.cs            pioggia (tasto 2) e neve (tasto 3), intensità che sale e scende piano, neve che si accumula e si scioglie
-    WorldObjects.cs       cristalli da raccogliere e piazzare, e le loro luci
+    WorldObjects.cs       oggetti sparsi nel mondo e le loro luci (per ora nessuno)
     IslandField.cs        isole fluttuanti: dove sono, forma, alberi in cima
     Ground.cs             dove si può camminare: terreno, cime delle isole, blocchi
     Creatures.cs          farfalle, pesci e stormi di uccelli (simulazione)
     TreeField.cs          dove crescono alberi, fiori e cristalli, per bioma; ciò che si rompe sparisce per sempre; collisione con i tronchi
     GroundMaterials.cs    biomi, colore e copertura dell'erba (copia in C# delle funzioni dello shader)
     WorldPreset.cs        tipi di mondo (classico, desertico, arcipelago, piatto, base) scelti con CTRL+1..5
-    Inventory.cs          materiali (legno, pietra, cristallo) e inventario a 10 caselle
+    Inventory.cs          materiali (legno, pietra, cristallo) e inventario a 5 caselle
     Debris.cs             schegge e cubetti di materiale: volano, rimbalzano, vengono attirati e raccolti
     Blocks.cs             blocchi da costruzione: posa, collisioni, mira, erba tolta e ricresciuta, cosa sta sotto un tetto
     SaveGame.cs           salvataggio (inventario, costruzioni, cose rotte, cubetti a terra)

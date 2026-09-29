@@ -347,6 +347,19 @@ public sealed class Blocks
 
     // ---- What the player meets ---------------------------------------------------------------
 
+    /// <summary>Whether a point is within <paramref name="margin"/> of a block (inside it, or nearly touching it).</summary>
+    public bool Near(Vector3 p, float margin)
+    {
+        for (int z = (int)MathF.Floor(p.Z - margin); z <= (int)MathF.Floor(p.Z + margin); z++)
+        for (int x = (int)MathF.Floor(p.X - margin); x <= (int)MathF.Floor(p.X + margin); x++)
+        {
+            if (!_columns.TryGetValue((x, z), out var list)) continue;
+            foreach (int y in list)
+                if (p.Y > y * Step - margin && p.Y < y * Step + Size + margin) return true;
+        }
+        return false;
+    }
+
     /// <summary>Whether a point is inside a block.</summary>
     public bool Inside(Vector3 p) =>
         _columns.TryGetValue(ColumnOf(p.X, p.Z), out var list) && list.Any(y => y * Step <= p.Y && p.Y < y * Step + Size);

@@ -11,12 +11,11 @@ public sealed class SaveData
     public Dictionary<string, WorldSave> Worlds { get; set; } = new();
 }
 
-/// <summary>The options switched in the F3 panel (null: not chosen yet, the default applies).</summary>
+/// <summary>The options switched in the menu (Esc) (null: not chosen yet, the default applies).</summary>
 public sealed class GameOptions
 {
     public bool? VSync { get; set; }
-    public bool? LowQuality { get; set; }  // default: from the GPU (integrated ones: low)
-    public bool Hints { get; set; } = true; // the controls listed in the top left corner
+    public bool SaveWorld { get; set; } = true; // off: nothing of the worlds is kept, each start is a fresh world
 }
 
 /// <summary>What the player changed in one world (by <see cref="WorldPreset.Name"/>).</summary>

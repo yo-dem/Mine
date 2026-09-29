@@ -21,7 +21,7 @@ public readonly record struct SlotSave(Resource Resource, int Count);
 public sealed class Inventory
 {
     public static readonly string[] Names = ["Legno", "Pietra", "Cristallo"];
-    public const int SlotCount = 10;
+    public const int SlotCount = 5;
 
     private readonly Amount?[] _slots = new Amount?[SlotCount];
 
