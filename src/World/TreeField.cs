@@ -14,6 +14,8 @@ public readonly record struct TreeInstance(Vector3 Position, float Yaw, float Sc
 /// biomes (<see cref="GroundMaterials.Biome"/>) pick the family of tree models and the flowers of a
 /// region: indigo woods, pink woods, turquoise woods, and deserts of dry trees. Cells around the player are
 /// generated on the thread pool; <see cref="Version"/> changes whenever the set of trees does.
+/// Trees, palms and rocks can be broken (<see cref="Pick"/>, <see cref="Gather"/>): they are
+/// remembered by position and never come back; nothing without a trunk grows where a floor covers the ground.
 /// </summary>
 public sealed class TreeField
 {
@@ -53,6 +55,13 @@ public sealed class TreeField
     private readonly Dictionary<string, TreeInstance[]> _fixed = new();
 
     public int Version { get; private set; }
+
+    // What the player broke, by position (generation is deterministic, so positions repeat
+    // exactly): it is left out of the cells for good. Read by the worker threads.
+    private readonly ConcurrentDictionary<Vector3, bool> _gathered = new();
+
+    /// <summary>Whether a building covers the ground at (x, z): no flowers there. Called from worker threads.</summary>
+    public Func<float, float, bool>? Covered { get; set; }
 
     public TreeField(TerrainField terrain, int seed)
     {
@@ -100,6 +109,83 @@ public sealed class TreeField
             if (CellDistance(player, key.X, key.Z) > Radius + 2 * CellSize) _toDrop.Add(key);
         foreach (var key in _toDrop)
             if (_cells.Remove(key, out var trees) && trees.Length > 0) Version++;
+    }
+
+    /// <summary>Regenerates the cell around (x, z) at once, if it is loaded (after a change there).</summary>
+    public void Refresh(float x, float z)
+    {
+        var key = ((int)MathF.Floor(x / CellSize), (int)MathF.Floor(z / CellSize));
+        if (!_cells.ContainsKey(key)) return;
+        _cells[key] = Generate(key.Item1, key.Item2);
+        Version++;
+    }
+
+    /// <summary>
+    /// The gatherable instance the ray passes through nearest (within <paramref name="maxDistance"/>),
+    /// each aimed at as a vertical capsule around its trunk or body (see <see cref="TreeModels.YieldOf"/>).
+    /// </summary>
+    public (TreeInstance Tree, TreeModels.Yield Yield, float Distance)? Pick(Vector3 origin, Vector3 direction, float maxDistance)
+    {
+        (TreeInstance, TreeModels.Yield, float)? best = null;
+        float nearest = maxDistance;
+        int reach = (int)MathF.Ceiling(maxDistance / CellSize);
+        int cx = (int)MathF.Floor(origin.X / CellSize), cz = (int)MathF.Floor(origin.Z / CellSize);
+        for (int dz = -reach; dz <= reach; dz++)
+        for (int dx = -reach; dx <= reach; dx++)
+        {
+            if (!_cells.TryGetValue((cx + dx, cz + dz), out var trees)) continue;
+            foreach (var tree in trees)
+            {
+                if (Vector3.DistanceSquared(tree.Position, origin) > (maxDistance + 5f) * (maxDistance + 5f)) continue;
+                if (TreeModels.YieldOf(tree.Variant, tree.Scale) is not { } yield) continue;
+                var (t, miss) = WorldObjects.ClosestToSegment(origin, direction, tree.Position, yield.PickHeight);
+                if (t < 0 || t > nearest || miss > yield.PickRadius) continue;
+                nearest = t;
+                best = (tree, yield, t);
+            }
+        }
+        return best;
+    }
+
+    /// <summary>Takes a broken instance out of the world for good.</summary>
+    public void Gather(TreeInstance tree)
+    {
+        _gathered[tree.Position] = true;
+        var key = ((int)MathF.Floor(tree.Position.X / CellSize), (int)MathF.Floor(tree.Position.Z / CellSize));
+        if (!_cells.TryGetValue(key, out var trees)) return;
+        _cells[key] = trees.Where(t => t != tree).ToArray();
+        Version++;
+    }
+
+    /// <summary>Where the things broken stood, for saving.</summary>
+    public List<Vector3> SaveGathered() => _gathered.Keys.ToList();
+
+    /// <summary>Restores what was broken (before the cells around are generated).</summary>
+    public void LoadGathered(IEnumerable<Vector3> gathered)
+    {
+        _gathered.Clear();
+        foreach (var position in gathered) _gathered[position] = true;
+    }
+
+    /// <summary>Whether a trunk (a tree, a palm, a rock, a crystal cluster) stands in the rectangle min..max (xz).</summary>
+    public bool TrunkIn(Vector2 min, Vector2 max)
+    {
+        int x0 = (int)MathF.Floor((min.X - 2f) / CellSize), x1 = (int)MathF.Floor((max.X + 2f) / CellSize);
+        int z0 = (int)MathF.Floor((min.Y - 2f) / CellSize), z1 = (int)MathF.Floor((max.Y + 2f) / CellSize);
+        for (int cz = z0; cz <= z1; cz++)
+        for (int cx = x0; cx <= x1; cx++)
+        {
+            if (!_cells.TryGetValue((cx, cz), out var trees)) continue;
+            foreach (var tree in trees)
+            {
+                float r = TreeModels.TrunkRadius(tree.Variant) * tree.Scale;
+                if (r <= 0) continue;
+                float nx = Math.Clamp(tree.Position.X, min.X, max.X), nz = Math.Clamp(tree.Position.Z, min.Y, max.Y);
+                float ox = tree.Position.X - nx, oz = tree.Position.Z - nz;
+                if (ox * ox + oz * oz < r * r) return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>Point lights for the glowing decorations (crystal clusters) within <paramref name="radius"/>.</summary>
@@ -268,6 +354,10 @@ public sealed class TreeField
         }
     }
 
+    // A cluster of boulders of a random size, on the tile's flat top.
+    private static TreeInstance Boulders(float x, float y, float z, float yaw, Random random) =>
+        new(new Vector3(x, y - 0.1f, z), yaw, 0.7f + 0.7f * random.NextSingle(), TreeModels.VariantOf(TreeModels.Decoration.Rocks));
+
     // A palm of a random build (mostly the middling one) and size.
     private static TreeInstance RandomPalm(float x, float y, float z, float yaw, Random random)
     {
@@ -420,6 +510,11 @@ public sealed class TreeField
         AddDecorations(trees, cx, cz, random);
         // Nothing grows in the ponds under the islands' waterfalls.
         trees.RemoveAll(t => _terrain.InPond(t.Position.X, t.Position.Z, 1.5f));
+        // What the player broke is gone for good.
+        if (!_gathered.IsEmpty) trees.RemoveAll(t => _gathered.ContainsKey(t.Position));
+        // No flowers or reeds through the floors.
+        if (Covered is { } covered)
+            trees.RemoveAll(t => TreeModels.TrunkRadius(t.Variant) <= 0 && covered(t.Position.X, t.Position.Z));
         return trees.ToArray();
     }
 
@@ -477,15 +572,24 @@ public sealed class TreeField
                 float normalY = _terrain.Normal(x, z, 1f).Y;
                 if (desert)
                 {
-                    // Crystal clusters rising from the desert sand.
+                    // Crystal clusters rising from the desert sand, and boulders.
                     if (roll < 0.02f)
                         list.Add(new TreeInstance(new Vector3(x, y - 0.3f, z), yaw, 0.7f + 1.6f * random.NextSingle(), crystals));
+                    else if (roll < 0.08f)
+                        list.Add(Boulders(x, y, z, yaw, random));
                 }
                 else if (normalY < 0.75f)
                 {
-                    // Rocky slopes: the odd crystal cluster.
+                    // Rocky slopes: boulders, and the odd crystal cluster.
                     if (roll < 0.012f)
                         list.Add(new TreeInstance(new Vector3(x, y - 0.3f, z), yaw, 0.6f + 1.2f * random.NextSingle(), crystals));
+                    else if (roll < 0.14f)
+                        list.Add(Boulders(x, y, z, yaw, random));
+                }
+                else if (roll < 0.035f)
+                {
+                    // Meadows and woods: a boulder here and there, so stone is never far.
+                    list.Add(Boulders(x, y, z, yaw, random));
                 }
                 else if (roll < 0.3f && _forest.Fractal(x * 0.02f + 40f, z * 0.02f, 2) > 0.0f)
                 {

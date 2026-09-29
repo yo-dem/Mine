@@ -45,6 +45,9 @@ public sealed class Creatures
     private readonly TerrainField _terrain;
     private readonly Random _random = new(777);
     private readonly Creature[] _butterflies = new Creature[ButterflyCount];
+
+    /// <summary>Whether a point is inside a space closed in by walls: butterflies never go in.</summary>
+    public Func<Vector3, bool>? Indoors { get; set; }
     private readonly Creature[] _fish = new Creature[FishCount];
     private readonly float[] _fishMinDepth = new float[FishCount];
 
@@ -173,6 +176,17 @@ public sealed class Creatures
             float ground = Surface(b.Position.X, b.Position.Z);
             float target = ground + 1.2f + 0.8f * MathF.Sin(b.Phase + b.Position.X * 0.3f);
             b.Velocity.Y += (target - b.Position.Y) * 1.5f * dt - b.Velocity.Y * 0.8f * dt;
+            if (Indoors is { } indoors)
+            {
+                // Closed spaces keep them out: one about to fly in turns back (one shut in flies off).
+                if (indoors(b.Position)) { b.Active = false; continue; }
+                if (indoors(b.Position + b.Velocity * dt * 8f))
+                {
+                    b.Velocity.X = -b.Velocity.X;
+                    b.Velocity.Z = -b.Velocity.Z;
+                    continue;
+                }
+            }
             b.Position += b.Velocity * dt;
         }
 

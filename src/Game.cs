@@ -13,6 +13,9 @@ public sealed class Game : IDisposable
 {
     private const float MouseSensitivity = 0.0025f;
     private const float ReachDistance = 6f;
+    private const float BuildReach = 8f;
+    private const double AutosaveSeconds = 20;
+    private const int TestStock = 1000;
     private const float ObjectDrawDistance = 350f;
     private const double DoubleTapWindow = 0.3; // seconds between two W presses to start sprinting
     private const float FastTimeScale = 60f;     // holding T speeds up the day
@@ -25,6 +28,7 @@ public sealed class Game : IDisposable
     private IKeyboard _keyboard = null!;
     private Shader _terrainShader = null!;
     private Shader _objectShader = null!;
+    private Shader _cubeShader = null!;
     private Shader _grassShader = null!;
     private Shader _treeShader = null!;
     private GrassRenderer _grass = null!;
@@ -54,15 +58,43 @@ public sealed class Game : IDisposable
     private GpuProfiler _profiler = null!;
     private Shader _waterShader = null!;
     private WaterRenderer _water = null!;
+    private Blocks _blocks = null!;
+    private BlockRenderer _blockRenderer = null!;
+    private Hud _hud = null!;
+    private IndoorMap _indoor = null!;
+    private IconRenderer _icons = null!;
+    private Debris _debris = null!;
+    private CubeRenderer _cubes = null!;
+    private readonly List<DebrisCube> _cubeList = new();
     private readonly Player _player = new();
     private readonly DayCycle _dayCycle = new();
     private readonly PointLight[] _lights = new PointLight[TerrainShaders.MaxPointLights];
     private int _lightCount;
 
-    // Inventory: how many objects of each kind the player carries, and which one is in hand.
-    private readonly int[] _inventory = [3]; // crystals
-    private ObjectKind _selected = ObjectKind.Crystal;
+    // Inventory: the slots of materials the player carries, and which slot is in hand.
+    private readonly Inventory _inventory = new();
+    private int _slot;
+    private Resource? Held => _inventory[_slot]?.Resource;
     private WorldObject? _aimed; // the object under the crosshair, within reach
+
+    // Gathering: what is aimed at, and how long the button has been held on it.
+    private (TreeInstance Tree, TreeModels.Yield Yield, float Distance)? _gatherTarget;
+    private object? _gathering; // the tree, rock or block being hit
+    private float _gatherProgress;
+    private float _chipTimer; // chips fly off the thing being hit at a steady rate
+
+    // Building: where the right button would put a block of the material in hand (one per click), and
+    // the block under the crosshair (the left button breaks it).
+    private BlockPlan? _plan;
+    private BlockHit? _aimedBlock;
+
+    // Short messages over the crosshair ("+4 Legno"), and the swing of the hand while walking.
+    private readonly List<(string Text, Vector4 Color, double Until)> _toasts = new();
+    private float _bobPhase;
+
+    private SaveData _save = new();
+    private bool _dirty;
+    private double _sinceSave;
 
     private Vector2? _lastMouse;
     private bool _mouseCaptured;
@@ -106,15 +138,26 @@ public sealed class Game : IDisposable
         {
             mouse.MouseMove += OnMouseMove;
             mouse.MouseDown += OnMouseDown;
+            mouse.Scroll += OnScroll;
         }
         SetMouseCaptured(true);
 
         _terrainShader = new Shader(_gl, TerrainShaders.TerrainVertex, TerrainShaders.TerrainFragment);
         _objectShader = new Shader(_gl, TerrainShaders.ObjectVertex, TerrainShaders.ObjectFragment);
+        _cubeShader = new Shader(_gl, TerrainShaders.CubeVertex, TerrainShaders.ObjectFragment);
         _objectRenderer = new ObjectRenderer(_gl);
         _grassShader = new Shader(_gl, TerrainShaders.GrassVertex, TerrainShaders.GrassFragment);
         _treeShader = new Shader(_gl, TerrainShaders.TreeVertex, TerrainShaders.TreeFragment);
         _crosshair = new Crosshair(_gl);
+        _hud = new Hud(_gl);
+        _indoor = new IndoorMap(_gl);
+        _icons = new IconRenderer(_gl);
+        // The saved game: the inventory now, each world's changes as it is built.
+        if (SaveGame.Load() is { } save) _save = save;
+        if (_save.Slots is { } slots) _inventory.Load(slots);
+        // For now, while building is being tried out: at least TestStock of everything at every start.
+        foreach (var resource in Enum.GetValues<Resource>())
+            _inventory.Add(resource, Math.Max(0, TestStock - _inventory.Count(resource)));
         _sky = new SkyRenderer(_gl);
         _shadowMap = new ShadowMap(_gl);
         if (int.TryParse(Environment.GetEnvironmentVariable("MINE_WORLD"), out int world) && world >= 1 && world <= WorldPreset.All.Length)
@@ -136,6 +179,9 @@ public sealed class Game : IDisposable
                       || renderer.Contains("llvmpipe", StringComparison.OrdinalIgnoreCase));
 
         Respawn();
+        if (Environment.GetEnvironmentVariable("MINE_GIVE") == "1")
+            foreach (var resource in Enum.GetValues<Resource>()) _inventory.Add(resource, 99);
+        if (Environment.GetEnvironmentVariable("MINE_DEMO") == "1") BuildDemoHouse();
         if (Environment.GetEnvironmentVariable("MINE_RAIN") == "1") _weather.Toggle();
         if (Environment.GetEnvironmentVariable("MINE_SNOW") == "1") _weather.StartSnowed();
         if (Environment.GetEnvironmentVariable("MINE_STORM") == "1") _weather.StartStorm();
@@ -198,7 +244,7 @@ public sealed class Game : IDisposable
 
     // Debugging aids, from environment variables: MINE_FPS_LOG=1 prints the HUD line to the console,
     // MINE_RAIN=1 starts with rain, MINE_SNOW=1 starts snowing with the snow already lying, MINE_STORM=1 / MINE_BLIZZARD=1 start a storm / a blizzard, MINE_WORLD=2 starts in world preset 2 (Ctrl+2), MINE_TIME=0.45 sets the time of day, MINE_PITCH=0.2 the view
-    // pitch (radians), MINE_YAW=1.5 the view heading, MINE_POS=800,-300 spawns exactly there, MINE_WINDOWED=1 starts in a window, MINE_GPU_PROFILE=1 prints the GPU time of each pass (GpuProfiler).
+    // pitch (radians), MINE_YAW=1.5 the view heading, MINE_POS=800,-300 spawns exactly there, MINE_WINDOWED=1 starts in a window, MINE_GIVE=1 gives 99 of every material, MINE_DEMO=1 builds a small block house ahead, MINE_SHOT=file.png saves a frame and quits (Screenshot), MINE_BREAK=10 holds the left button from 10 s on, MINE_SAVE=path|none picks the save file, MINE_GPU_PROFILE=1 prints the GPU time of each pass (GpuProfiler).
     private static readonly string Skip = Environment.GetEnvironmentVariable("MINE_SKIP") ?? "";
     private static bool On(string pass) => !Skip.Contains(pass);
     // Where the game starts: a meadow by a lake. MINE_POS overrides it.
@@ -211,6 +257,9 @@ public sealed class Game : IDisposable
         return parts is { Length: 2 } && float.TryParse(parts[0], culture, out float x) && float.TryParse(parts[1], culture, out float z)
             ? new Vector2(x, z) : null;
     }
+    // Debug (MINE_BREAK=seconds): from then on, act as if the left button were held.
+    private static readonly double AutoBreakAt = double.TryParse(Environment.GetEnvironmentVariable("MINE_BREAK"),
+        System.Globalization.CultureInfo.InvariantCulture, out double breakAt) ? breakAt : double.MaxValue;
     private static readonly bool LogHud = Environment.GetEnvironmentVariable("MINE_FPS_LOG") == "1";
 
     private void Respawn()
@@ -257,6 +306,8 @@ public sealed class Game : IDisposable
         _islandRenderer?.Dispose();
         _waterfalls?.Dispose();
         _seaFloor?.Dispose();
+        _blockRenderer?.Dispose();
+        _cubes?.Dispose();
 
         _terrainField = new TerrainField(seed: 1337);
         _terrain = new TerrainRenderer(_gl, _terrainField);
@@ -268,14 +319,88 @@ public sealed class Game : IDisposable
         _islandRenderer = new IslandRenderer(_gl);
         _waterfalls = new WaterfallRenderer(_gl);
         _seaFloor = new SeaFloorMap(_gl, _terrainField);
-        _ground = new Ground(_terrainField, _islands);
+        _blocks = new Blocks(_terrainField);
+        _blockRenderer = new BlockRenderer(_gl);
+        _debris = new Debris();
+        _cubes = new CubeRenderer(_gl);
+        _ground = new Ground(_terrainField, _islands, _blocks);
         _creatures = new Creatures(_terrainField);
+
+        // Nothing grows under and around the buildings (the grass grows back slowly when they go),
+        // and nothing from outside gets into the spaces walls close in.
+        _grass.Growth = _blocks.GrassGrowth;
+        _treeField.Covered = (x, z) => _blocks.GrassGrowth(x, z) < 1f;
+        _creatures.Indoors = _blocks.Indoors;
+        _blocks.GroundChanged += (x, z) =>
+        {
+            _grass.Invalidate(x, z);
+            _treeField.Refresh(x, z);
+        };
+        _blocks.GrassGrowing += _grass.Invalidate;
+        LoadWorldState();
+    }
+
+    /// <summary>Restores what the player built and gathered in this world (before anything around is generated).</summary>
+    private void LoadWorldState()
+    {
+        if (!_save.Worlds.TryGetValue(WorldPreset.Current.Name, out var world)) return;
+        _blocks.Load(world.Blocks);
+        _treeField.LoadGathered(world.Gathered.Select(g => new Vector3(g.X, g.Y, g.Z)));
+        _debris.Load(world.Drops);
+        _objects.Load(world.TakenObjects, world.PlacedObjects);
+    }
+
+    /// <summary>
+    /// Debug (MINE_DEMO=1): a small block house a few metres ahead of the classic spawn: a 6×6 stone
+    /// floor, wooden walls three blocks high with a doorway and window openings, a flat wooden roof,
+    /// and a crystal block for a lamp.
+    /// </summary>
+    private void BuildDemoHouse()
+    {
+        int x0 = (int)MathF.Floor(Spawn.X) + 4, z0 = (int)MathF.Floor(Spawn.Y) - 3;
+        const int size = 6;
+        int floor = 0;
+        for (int x = x0; x < x0 + size; x++)
+        for (int z = z0; z < z0 + size; z++)
+            floor = Math.Max(floor, (int)MathF.Round(_terrainField.Height(x + 0.5f, z + 0.5f) / Blocks.Step));
+        for (int x = x0; x < x0 + size; x++)
+        for (int z = z0; z < z0 + size; z++)
+        {
+            _blocks.Add(new BlockPos(x, floor, z), Resource.Stone);
+            bool edge = x == x0 || z == z0 || x == x0 + size - 1 || z == z0 + size - 1;
+            for (int h = 1; h <= 3 && edge; h++)
+            {
+                bool door = x == x0 && (z == z0 + 2 || z == z0 + 3);
+                bool window = h == 2 && (z == z0 + size - 1 || x == x0 + size - 1) && (x == x0 + 2 || x == x0 + 3 || z == z0 + 2 || z == z0 + 3);
+                if (!door && !window) _blocks.Add(new BlockPos(x, floor + h * Blocks.Tall, z), Resource.Wood);
+            }
+            _blocks.Add(new BlockPos(x, floor + 4 * Blocks.Tall, z), Resource.Wood);
+        }
+        _blocks.Add(new BlockPos(x0 + 3, floor + Blocks.Tall, z0 + 3), Resource.Crystal);
+    }
+
+    /// <summary>Writes the inventory and this world's changes to the save file.</summary>
+    private void SaveState()
+    {
+        _save.Slots = _inventory.Save();
+        _save.Worlds[WorldPreset.Current.Name] = new WorldSave
+        {
+            Blocks = _blocks.Save(),
+            Gathered = _treeField.SaveGathered().Select(g => new GatheredSave(g.X, g.Y, g.Z)).ToList(),
+            Drops = _debris.Save(),
+            TakenObjects = _objects.SaveTaken(),
+            PlacedObjects = _objects.SavePlaced(),
+        };
+        SaveGame.Write(_save);
+        _dirty = false;
+        _sinceSave = 0;
     }
 
     /// <summary>Switches to another kind of world (Ctrl+1..3) and starts over in it.</summary>
     private void SetWorld(WorldPreset preset)
     {
         if (preset == WorldPreset.Current) return;
+        SaveState();
         WorldPreset.Current = preset;
         BuildWorld();
         Respawn();
@@ -322,15 +447,144 @@ public sealed class Game : IDisposable
         _seaFloor.Update(_player.Eye);
         _treeField.Update(_player.Position);
         _treeField.ResolveCollision(ref _player.Position, 0.35f);
+        _blocks.ResolveCollision(ref _player.Position, ref _player.Velocity, 0.35f, 2.2f, 0.55f);
         _terrain.Update(_player.Eye);
         _trees.Update(_treeField, _player.Eye);
         _grass.Update(_player.Eye);
         _objects.Update(_player.Position);
         _creatures.Update(_player.Position, _dayCycle.Sample(), dt);
         _creatureRenderer.Update(_creatures);
-        _aimed = _mouseCaptured ? _objects.Pick(_player.Eye, _player.LookDirection, ReachDistance, out _) : null;
+        Aim();
+        Gather(dt);
+        if (_debris.Update(dt, _ground, _player.Position, _inventory) > 0) _dirty = true;
+        _blockRenderer.Update(_blocks);
+        _blocks.Update();
+        _indoor.Update(_blocks, _player.Eye);
+        var walk = new Vector2(_player.Velocity.X, _player.Velocity.Z).Length();
+        if (_player.OnGround) _bobPhase += walk * dt * 1.2f;
+        _toasts.RemoveAll(t => t.Until < _time);
+
+        _sinceSave += deltaTime;
+        if (_dirty && _sinceSave > AutosaveSeconds) SaveState();
         UpdateTitle(deltaTime);
     }
+
+    /// <summary>
+    /// What is under the crosshair: in building mode, where the piece in hand would go and the piece
+    /// that would be taken apart; otherwise the nearest crystal or gatherable thing in reach (not
+    /// through the ground or a wall).
+    /// </summary>
+    private void Aim()
+    {
+        _aimed = null;
+        _gatherTarget = null;
+        _plan = null;
+        _aimedBlock = null;
+        if (!_mouseCaptured) return;
+        var eye = _player.Eye;
+        var look = _player.LookDirection;
+        if (Held is not null) _plan = _blocks.Plan(eye, look, BuildReach, _treeField.TrunkIn, _player.Position, 0.35f, 2.2f);
+        float limit = ReachDistance;
+        if (_terrainField.Raycast(eye, look, ReachDistance, out var ground)) limit = Vector3.Distance(eye, ground) + 0.3f;
+        if (_blocks.Raycast(eye, look, limit) is { } block)
+        {
+            limit = block.Distance;
+            _aimedBlock = block;
+        }
+        _aimed = _objects.Pick(eye, look, limit, out float objectDistance);
+        if (_aimed is not null) _aimedBlock = null;
+        _gatherTarget = _treeField.Pick(eye, look, objectDistance);
+        if (_gatherTarget is not null) (_aimed, _aimedBlock) = (null, null);
+    }
+
+    private void PlaceBlock(BlockPlan plan)
+    {
+        if (Held is not { } material) return;
+        if (!_inventory.Take(material, 1))
+        {
+            Toast("Mancano materiali", new Vector4(1f, 0.6f, 0.6f, 1f));
+            return;
+        }
+        _blocks.Add(plan.Position, material);
+        _dirty = true;
+    }
+
+    // How long a block takes to break, and the colours of the chips.
+    private static readonly (Vector3, Vector3) WoodChips = (new(0.42f, 0.29f, 0.26f), new(0.27f, 0.18f, 0.19f));
+    private static readonly (Vector3, Vector3) StoneChips = (new(0.52f, 0.48f, 0.56f), new(0.40f, 0.37f, 0.46f));
+    private static readonly (Vector3, Vector3) CrystalChips = (new(0.75f, 0.55f, 1.0f), new(0.45f, 0.85f, 1.0f));
+    private static float BreakSeconds(Resource r) => r switch { Resource.Wood => 0.45f, Resource.Stone => 0.6f, _ => 0.35f };
+    private static (Vector3, Vector3) ChipsOf(Resource r) => r switch { Resource.Wood => WoodChips, Resource.Stone => StoneChips, _ => CrystalChips };
+
+    /// <summary>
+    /// Holding the left button on a tree, a rock or a block hits it: chips fly off where the blow
+    /// lands, and after a moment it breaks, bursting into chips and cubes of its material (a block
+    /// gives itself back) that fall around and wait to be picked up (see <see cref="Debris"/>).
+    /// Trees and rocks never come back.
+    /// </summary>
+    private void Gather(float dt)
+    {
+        bool holding = _mouseCaptured && (_input.Mice.Any(m => m.IsButtonPressed(MouseButton.Left)) || _time > AutoBreakAt);
+        object? key = _gatherTarget?.Tree ?? (object?)_aimedBlock?.Block;
+        if (!holding || key is null)
+        {
+            _gathering = null;
+            _gatherProgress = 0;
+            return;
+        }
+        if (!Equals(_gathering, key))
+        {
+            _gathering = key;
+            _gatherProgress = 0;
+        }
+        _gatherProgress += dt;
+
+        var look = _player.LookDirection;
+        Vector3 chip, chip2, hit;
+        float seconds;
+        if (_gatherTarget is { } target)
+        {
+            (chip, chip2, seconds) = (target.Yield.Chip, target.Yield.Chip2, target.Yield.Seconds);
+            hit = _player.Eye + look * MathF.Max(target.Distance - target.Yield.PickRadius * 0.3f, 0.3f);
+        }
+        else
+        {
+            var block = _aimedBlock!.Value;
+            var material = _blocks.At(block.Block) ?? Resource.Wood;
+            (chip, chip2) = ChipsOf(material);
+            seconds = BreakSeconds(material);
+            hit = block.Point - look * 0.05f;
+        }
+
+        // Chips from the point hit, thrown back toward the player.
+        _chipTimer += dt * 30f;
+        int chips = (int)_chipTimer;
+        _chipTimer -= chips;
+        _debris.Chips(hit, -look, chips, chip, chip2);
+        if (_gatherProgress < seconds) return;
+
+        if (_gatherTarget is { } broken)
+        {
+            var yield = broken.Yield;
+            var tree = broken.Tree;
+            _debris.Burst(tree.Position, yield.PickHeight * 1.5f, yield.PickRadius * 1.5f, 40 + 10 * Math.Min(yield.Amount.Count, 8), chip, chip2);
+            _debris.Spill(yield.Amount.Resource, Math.Min(yield.Amount.Count, 32), tree.Position, MathF.Min(yield.PickHeight, 3f));
+            _treeField.Gather(tree);
+        }
+        else
+        {
+            // A block breaks into chips and gives itself back as a cube.
+            var at = _aimedBlock!.Value.Block;
+            var material = _blocks.Remove(at) ?? Resource.Wood;
+            _debris.Burst(at.Center - new Vector3(0, 0.5f, 0), 1f, 0.5f, 25, chip, chip2);
+            _debris.Spill(material, 1, at.Center - new Vector3(0, 0.5f, 0), 0.5f);
+        }
+        _gathering = null;
+        _gatherProgress = 0;
+        _dirty = true;
+    }
+
+    private void Toast(string text, Vector4 color) => _toasts.Add((text, color, _time + 2.2));
 
     private void OnRender(double deltaTime)
     {
@@ -347,7 +601,7 @@ public sealed class Game : IDisposable
         _profiler.Section("ombre");
         var atmosphere = _dayCycle.Sample();
         float time = (float)_time;
-        _lightCount = _objects.CollectLights(eye, time, _lights, _treeField.GlowingLights(eye, 80f).Concat(_treeField.FlowerLights(eye)).Concat(_waterfalls.Lights(eye)));
+        _lightCount = _objects.CollectLights(eye, time, _lights, _treeField.GlowingLights(eye, 80f).Concat(_treeField.FlowerLights(eye)).Concat(_waterfalls.Lights(eye)).Concat(_blocks.Lights(eye, 40f)));
         var shadowCenter = _player.Position;
         if (On("shadow")) _shadowMap.Render(shadowCenter, atmosphere.LightDirection, time, () =>
         {
@@ -357,6 +611,7 @@ public sealed class Game : IDisposable
             _shadowMap.SetInstanced(false);
             _shadowMap.SetCasterModel(Matrix4x4.Identity);
             _islandRenderer.Draw(); // floating islands throw their shadows on the land
+            _blockRenderer.Draw();
             foreach (var obj in _objects.All)
             {
                 if (Vector3.DistanceSquared(obj.Position, shadowCenter) > ShadowMap.Radius * ShadowMap.Radius) continue;
@@ -368,6 +623,7 @@ public sealed class Game : IDisposable
         _post.BeginScene();
         _gl.Clear(ClearBufferMask.DepthBufferBit); // the sky covers every pixel
         _cloudNoise.Bind(SkyRenderer.CloudNoiseUnit);
+        _indoor.Bind();
         var skyView = Matrix4x4.CreateLookAt(Vector3.Zero, look, Vector3.UnitY);
         var skyViewProjection = skyView * projection;
 
@@ -409,6 +665,20 @@ public sealed class Game : IDisposable
         _objectShader.Set("uGlow", 1f + 0.15f * MathF.Sin(time * 1.3f));
         _objectShader.Set("uHighlight", 0f);
         _islandRenderer.Draw();
+        // What the player built: crystal blocks glow steadily.
+        _objectShader.Set("uGlow", 1f);
+        _blockRenderer.Draw();
+
+        // Chips and cubes of material (the object fragment shader, with the cube vertex shader).
+        _cubeList.Clear();
+        _debris.Collect(_cubeList, time);
+        if (_cubeList.Count > 0)
+        {
+            SetWorldUniforms(_cubeShader, view * projection, eye, atmosphere, time);
+            _cubeShader.Set("uGlow", 1f);
+            _cubeShader.Set("uHighlight", 0f);
+            _cubes.Draw(_cubeList);
+        }
 
         // A snapshot of the opaque scene: the water shows it beneath, the clouds read its depth.
         // (Taken before the sky: where the water covers the sky, it is deep enough to hide it.)
@@ -451,15 +721,120 @@ public sealed class Game : IDisposable
         _profiler.Section("pulviscolo+pioggia");
         float heightAboveGround = eye.Y - _ground.Height(eye.X, eye.Z, eye.Y);
         float pointScale = _post.SceneHeight / (2f * MathF.Tan(FieldOfView / 2));
-        _motes.Draw(view * projection, eye, atmosphere, time, heightAboveGround, pointScale);
-        if (eye.Y > TerrainField.WaterLevel) _rain.Draw(view * projection, eye, time, _weather.Rain, _weather.Storm, atmosphere.Night, pointScale);
-        if (eye.Y > TerrainField.WaterLevel) _snow.Draw(view * projection, eye, time, _weather.Snow, _weather.Blizzard, atmosphere.Night, pointScale);
+        _motes.Draw(view * projection, eye, atmosphere, time, heightAboveGround, pointScale, _indoor);
+        if (eye.Y > TerrainField.WaterLevel) _rain.Draw(view * projection, eye, time, _weather.Rain, _weather.Storm, atmosphere.Night, pointScale, _indoor);
+        if (eye.Y > TerrainField.WaterLevel) _snow.Draw(view * projection, eye, time, _weather.Snow, _weather.Blizzard, atmosphere.Night, pointScale, _indoor);
+
+        DrawHeldItem(view, time);
 
         _profiler.Section("post");
         if (On("post")) _post.Finish(atmosphere.Night, MathF.Min(MathF.Max(_weather.Snow, _weather.SnowCover * 0.6f) + 0.2f * _weather.Blizzard, 1f));
 
         _crosshair.Draw();
+        DrawHud(size.X, size.Y);
         _profiler.EndFrame();
+
+        if (Screenshot.Path is { } shot && _time > Screenshot.At)
+        {
+            Screenshot.Save(_gl, size.X, size.Y, shot);
+            _window.Close();
+        }
+    }
+
+    /// <summary>
+    /// The material in hand, low on the right of the view, swaying as the player walks and chopping
+    /// while gathering. Drawn big, so the block fills the corner where a hand would be.
+    /// </summary>
+    private void DrawHeldItem(Matrix4x4 view, float time)
+    {
+        if (Held is not { } resource) return;
+        Matrix4x4.Invert(view, out var cameraToWorld);
+        float bobX = MathF.Cos(_bobPhase) * 0.012f, bobY = -MathF.Abs(MathF.Sin(_bobPhase)) * 0.018f;
+        float chop = _gathering is not null ? 0.5f + 0.5f * MathF.Sin(time * 14f) : 0f;
+        var local = Matrix4x4.CreateScale(0.34f) * Matrix4x4.CreateRotationY(-0.55f) * Matrix4x4.CreateRotationX(0.2f + chop * 0.5f)
+                    * Matrix4x4.CreateTranslation(0.42f + bobX, -0.38f + bobY - chop * 0.05f, -0.72f - chop * 0.06f);
+
+        // Over everything, never cut by a wall the player stands against.
+        _gl.DepthMask(true);
+        _gl.Clear(ClearBufferMask.DepthBufferBit);
+        _objectShader.Use();
+        _objectShader.Set("uModel", local * cameraToWorld);
+        _objectShader.Set("uGlow", 1f);
+        _objectShader.Set("uHighlight", 0f);
+        _objectRenderer.DrawItem(resource);
+    }
+
+    /// <summary>The interface: the materials bar, the piece in hand when building, what is aimed at, messages and hints.</summary>
+    private void DrawHud(int width, int height)
+    {
+        _hud.Begin(width, height);
+        int s = _hud.Scale;
+        var white = new Vector4(1f, 0.97f, 1f, 0.95f);
+        var soft = new Vector4(0.9f, 0.86f, 1f, 0.75f);
+        var red = new Vector4(1f, 0.45f, 0.5f, 1f);
+
+        // The inventory: ten slots, each with its material turning in it and the count.
+        int slotSize = 20 * s, gap = 2 * s;
+        float barX = (width - (Inventory.SlotCount * slotSize + (Inventory.SlotCount - 1) * gap)) / 2f, barY = height - slotSize - 10 * s;
+        float SlotX(int i) => barX + i * (slotSize + gap);
+        for (int i = 0; i < Inventory.SlotCount; i++)
+        {
+            bool selected = i == _slot;
+            _hud.Rect(SlotX(i), barY, slotSize, slotSize, new Vector4(0.08f, 0.05f, 0.14f, 0.55f));
+            _hud.Frame(SlotX(i), barY, slotSize, slotSize, selected ? s : Math.Max(1, s / 2), selected ? white : new Vector4(1f, 1f, 1f, 0.25f));
+        }
+        _hud.End();
+        _icons.Begin(width, height);
+        for (int i = 0; i < Inventory.SlotCount; i++)
+            if (_inventory[i] is { } stack)
+                _icons.Draw(stack.Resource, SlotX(i) + slotSize / 2f, barY + slotSize / 2f - s, slotSize * 0.55f, (float)_time * 1.2f + i * 0.7f);
+        _icons.End();
+        _hud.Begin(width, height);
+        for (int i = 0; i < Inventory.SlotCount; i++)
+        {
+            if (_inventory[i] is not { } stack) continue;
+            // At most three characters, so counts never run into the next slot: 999, then 1K, 12K...
+            string number = stack.Count < 1000 ? stack.Count.ToString() : $"{stack.Count / 1000}K";
+            _hud.Text(number, SlotX(i) + slotSize - Hud.TextWidth(number, s) - s, barY + slotSize - 8 * s, s, white);
+        }
+
+        float centerX = width / 2f, lineY = barY - 11 * s;
+        if (Held is { } held) _hud.TextCentered(Inventory.Names[(int)held], centerX, lineY, s, white);
+
+        // What is aimed at, and how far the blow has got.
+        if (_gatherTarget is not null || _aimedBlock is not null)
+        {
+            float y = height / 2f + 12 * s;
+            var blockMaterial = _aimedBlock is { } aimedBlock ? _blocks.At(aimedBlock.Block) ?? Resource.Wood : Resource.Wood;
+            string name = _gatherTarget?.Yield.Name ?? $"Blocco di {Inventory.Names[(int)blockMaterial].ToLowerInvariant()}";
+            float seconds = _gatherTarget?.Yield.Seconds ?? BreakSeconds(blockMaterial);
+            _hud.TextCentered(name, centerX, y, s, white);
+            float barWidth = 50 * s;
+            if (_gathering is not null)
+            {
+                float done = Math.Clamp(_gatherProgress / seconds, 0f, 1f);
+                _hud.Rect(centerX - barWidth / 2, y + 10 * s, barWidth, 2 * s, new Vector4(0f, 0f, 0f, 0.5f));
+                _hud.Rect(centerX - barWidth / 2, y + 10 * s, barWidth * done, 2 * s, white);
+            }
+            else _hud.TextCentered("Tieni premuto il tasto sinistro", centerX, y + 9 * s, s, soft);
+        }
+        else if (_aimed is not null)
+            _hud.TextCentered("Cristallo: clic sinistro per raccogliere", centerX, height / 2f + 12 * s, s, soft);
+
+        // Messages, newest at the bottom, fading out.
+        for (int i = 0; i < _toasts.Count; i++)
+        {
+            var (text, color, until) = _toasts[i];
+            float fade = (float)Math.Clamp((until - _time) / 0.6, 0, 1);
+            _hud.TextCentered(text, centerX, height / 2f - (14 + 9 * (_toasts.Count - 1 - i)) * s, s, color with { W = color.W * fade });
+        }
+
+        // Hints in the top left corner.
+        string[] hints = ["Tieni premuto clic sinistro: rompi", "Clic destro: posa un blocco", "Rotella: cambia oggetto"];
+        for (int i = 0; i < hints.Length; i++)
+            _hud.Text(hints[i], 8 * s, 8 * s + i * 10 * s, s, soft);
+
+        _hud.End();
     }
 
     /// <summary>Binds a world shader and sets everything it needs for this frame.</summary>
@@ -474,7 +849,9 @@ public sealed class Game : IDisposable
         shader.Set("uDesertRange", new Vector2(preset.DesertLow, preset.DesertHigh));
         shader.Set("uIslands", preset.Islands ? 1f : 0f);
         shader.Set("uColorVariety", preset.ColorVariety);
-        shader.Set("uAmbient", atmosphere.Ambient + new Vector3(0.7f, 0.75f, 1f) * _weather.Lightning * 0.9f); // lightning lights the world
+        shader.Set("uAmbient", atmosphere.Ambient);
+        shader.Set("uFlash", new Vector3(0.7f, 0.75f, 1f) * _weather.Lightning * 0.9f); // lightning lights the world (outdoors)
+        _indoor.SetUniforms(shader);
         shader.Set("uUnderwater", eye.Y < TerrainField.WaterLevel ? 1f : 0f);
         shader.Set("uLightColor", atmosphere.LightColor * (1f - 0.45f * MathF.Max(_weather.Rain, 0.8f * _weather.Snow))); // rain and snow veil the sun
         shader.Set("uLightDir", atmosphere.LightDirection);
@@ -568,23 +945,34 @@ public sealed class Game : IDisposable
             return;
         }
 
-        if (button == MouseButton.Left && _aimed is { } obj)
+        if (button == MouseButton.Right)
         {
-            // Pick it up.
+            // One block of the material in hand on the face aimed at.
+            if (_plan is { Valid: true } plan) PlaceBlock(plan);
+            else if (Held is not null && _plan is { Problem: { } problem }) Toast(problem, new Vector4(1f, 0.6f, 0.6f, 1f));
+            return;
+        }
+        if (button != MouseButton.Left) return;
+
+        if (_aimed is { } obj)
+        {
+            // A small crystal is picked up at once.
+            if (!_inventory.Add(Resource.Crystal, 1))
+            {
+                Toast("Inventario pieno", new Vector4(1f, 0.6f, 0.6f, 1f));
+                return;
+            }
             _objects.Remove(obj);
-            _inventory[(int)obj.Kind]++;
-            _selected = obj.Kind;
             _aimed = null;
+            _dirty = true;
         }
-        else if (button == MouseButton.Right && _inventory[(int)_selected] > 0
-                 && _terrainField.Raycast(_player.Eye, _player.LookDirection, ReachDistance, out var ground))
-        {
-            // Place it in the middle of the tile aimed at (stepping back a hair from the hit point,
-            // so a hit on a wall picks the tile in front of it), facing the player.
-            var aimed = ground - _player.LookDirection * 0.05f;
-            _objects.Place(_selected, _terrainField.TileCenter(aimed.X, aimed.Z), -_player.Yaw);
-            _inventory[(int)_selected]--;
-        }
+    }
+
+    private void OnScroll(IMouse mouse, ScrollWheel wheel)
+    {
+        if (!_mouseCaptured || wheel.Y == 0) return;
+        int step = wheel.Y > 0 ? -1 : 1;
+        _slot = (_slot + step + Inventory.SlotCount) % Inventory.SlotCount;
     }
 
     private void SetLowQuality(bool low)
@@ -613,7 +1001,7 @@ public sealed class Game : IDisposable
         else if (_player.Sneaking) mode += " (furtivo)";
         string hint = _mouseCaptured ? "" : " | clicca per giocare, Esc per uscire";
         var (hours, minutes) = _dayCycle.Clock;
-        string hand = $"{WorldObjects.Defs[(int)_selected].Name} x{_inventory[(int)_selected]}";
+        string hand = _inventory[_slot] is { } stack ? $"{Inventory.Names[(int)stack.Resource]} x{stack.Count}" : "mano vuota";
         if (_sky.LowQuality) mode += " | qualità bassa";
         if (_weather.Raining) mode += " | pioggia";
         _window.Title = $"Mine | mondo {WorldPreset.Current.Name} | {hand} | {mode} | ore {hours:00}:{minutes:00} | {fps} FPS | " +
@@ -627,6 +1015,13 @@ public sealed class Game : IDisposable
     // Run() destroys the window (and its context) before Dispose is called.
     private void OnClosing()
     {
+        SaveState();
+        _blockRenderer?.Dispose();
+        _hud?.Dispose();
+        _indoor?.Dispose();
+        _icons?.Dispose();
+        _cubes?.Dispose();
+        _cubeShader?.Dispose();
         _terrain?.Dispose();
         _islandRenderer?.Dispose();
         _waterfalls?.Dispose();

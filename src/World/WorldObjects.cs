@@ -97,7 +97,7 @@ public sealed class WorldObjects
     /// Closest approach between a ray and the vertical segment [bottom, bottom + height]:
     /// the ray parameter there and the distance between the two.
     /// </summary>
-    private static (float T, float Distance) ClosestToSegment(Vector3 origin, Vector3 direction, Vector3 bottom, float height)
+    public static (float T, float Distance) ClosestToSegment(Vector3 origin, Vector3 direction, Vector3 bottom, float height)
     {
         var w = origin - bottom;
         float b = direction.Y;           // dot(direction, up)
@@ -121,6 +121,21 @@ public sealed class WorldObjects
         _taken.Add(obj.Id);
         foreach (var list in _cells.Values)
             if (list.Remove(obj)) return;
+    }
+
+    /// <summary>The generated objects picked up (they never come back), for saving.</summary>
+    public List<long> SaveTaken() => _taken.ToList();
+
+    /// <summary>The objects the player placed, for saving.</summary>
+    public List<PlacedSave> SavePlaced() => _placed.Select(o => new PlacedSave(o.Kind, o.Position.X, o.Position.Y, o.Position.Z, o.Yaw)).ToList();
+
+    /// <summary>Restores what was picked up and placed (before the cells around are generated).</summary>
+    public void Load(IEnumerable<long> taken, IEnumerable<PlacedSave> placed)
+    {
+        _taken.Clear();
+        _taken.UnionWith(taken);
+        _placed.Clear();
+        foreach (var p in placed) Place(p.Kind, new Vector3(p.X, p.Y, p.Z), p.Yaw);
     }
 
     public WorldObject Place(ObjectKind kind, Vector3 position, float yaw)

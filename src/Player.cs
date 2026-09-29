@@ -19,11 +19,11 @@ public sealed class Player
     private const float Gravity = 28f;
     private const float JumpSpeed = 8.4f;
     private const float MaxFallSpeed = 50f;
-    private const float WalkSpeed = 9.5f;
+    private const float WalkSpeed = 5.5f;
     private const float SneakSpeed = 1.3f;
-    private const float SprintSpeed = 20f;
+    private const float SprintSpeed = 10f;
     private const float FlySpeed = 30f;
-    private const float FlySprintSpeed = 30f;
+    private const float FlySprintSpeed = 50f;
     private const float EyeLerpRate = 15f; // how fast the camera drops/rises when sneaking
 
     // Inertia: how fast the velocity approaches the target (1/s, higher = snappier).

@@ -15,7 +15,7 @@ public sealed class MoteRenderer : IDisposable
 {
     private const int Count = 1800;
 
-    private const string VertexSource = "#version 330 core\n" + SkyRenderer.Hash + """
+    private const string VertexSource = "#version 330 core\n" + SkyRenderer.Hash + IndoorMap.Glsl + """
         uniform mat4 uViewProj;
         uniform vec3 uCameraPos;
         uniform float uTime;
@@ -53,7 +53,7 @@ public sealed class MoteRenderer : IDisposable
             vec3 spore = mix(vec3(0.85, 0.55, 1.0), vec3(1.0, 0.6, 0.75), seed.z) * 1.2;
             vec3 firefly = mix(vec3(0.8, 1.0, 0.35), vec3(1.0, 0.8, 0.3), seed.x) * blink * 3.5;
             vec3 dayColor = mix(sparkle, spore, uDusk);
-            vColor = mix(dayColor, firefly, uNight) * fade * (1.0 - 0.75 * uRain);
+            vColor = mix(dayColor, firefly, uNight) * fade * (1.0 - 0.75 * uRain) * (1.0 - indoors(pos)); // none indoors
 
             vec4 clip = uViewProj * vec4(pos, 1.0);
             gl_Position = clip;
@@ -90,9 +90,10 @@ public sealed class MoteRenderer : IDisposable
 
     /// <summary>Draws the motes into the HDR scene (after the opaque geometry, which hides them).</summary>
     public void Draw(Matrix4x4 viewProjection, Vector3 camera, in Atmosphere atmosphere, float time,
-        float heightAboveGround, float pointScale)
+        float heightAboveGround, float pointScale, IndoorMap indoor)
     {
         _shader.Use();
+        indoor.SetUniforms(_shader);
         _shader.Set("uViewProj", viewProjection);
         _shader.Set("uCameraPos", camera);
         _shader.Set("uTime", time);

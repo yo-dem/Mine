@@ -42,6 +42,27 @@ lenti e la neve si posa, prima sulle cime e poi sempre più in basso, fino a cop
 spinta dal vento e fulmini che squarciano il cielo e illuminano tutto; premendo due volte il 3 una bufera di neve, con fiocchi
 fitti portati dal vento e una foschia bianca che cancella l'orizzonte.
 
+## Raccogliere e costruire
+
+In giro per il mondo si raccolgono i materiali tenendo premuto il tasto sinistro su ciò che si guarda:
+gli alberi e le palme danno legno, le rocce (frequenti, con punte di cristallo che brillano appena)
+pietra. Mentre li colpisci ne schizzano via piccole schegge
+cubiche; poi si rompono per sempre, esplodendo in schegge e in cubetti di legno o di pietra che cadono
+intorno e restano a fluttuare ruotando sul terreno finché non ti avvicini: allora volano verso di te e
+finiscono nell'inventario (vengono richiamati da qualche metro). In basso ci sono 10 caselle: ogni materiale si accumula nella sua, col suo
+contatore, e il cubetto dentro ruota. Quello nella casella scelta con la rotella si vede in mano. Per
+ora, per provare le costruzioni, il gioco parte sempre con almeno 1000 di legno, pietra e cristallo.
+
+Si costruisce con blocchi da 1 m, come in Minecraft, usando i cubetti raccolti: il tasto sinistro
+rompe, il destro posa. Il materiale scelto nell'inventario (legno, pietra, oppure cristallo, che fa
+un blocco di vetro viola luminoso che illumina di notte) va sulla faccia del blocco mirato, o sul
+terreno mirato. Per togliere un blocco lo si rompe come un albero, e torna
+nell'inventario. Sui blocchi si sale saltando, sotto ci si passa, contro un soffitto si batte la
+testa. Attorno ai blocchi l'erba e i fiori spariscono, e ricrescono piano quando li si toglie; sotto
+un tetto (un blocco sopra la testa) non entrano farfalle, lucciole, pioggia, neve né il bagliore
+dei fulmini. Il gioco salva da solo inventario, blocchi, ciò che si è rotto e i cubetti rimasti a
+terra.
+
 > Nato come clone di Minecraft: la versione a blocchi è sul branch `main`.
 > Questo branch (`terreno-realistico`) la sostituisce con un terreno continuo.
 
@@ -66,8 +87,9 @@ portatili con due schede usa quella dedicata; la prima volta si riavvia da solo 
 | Ctrl sinistro | Corri |
 | T (tenuto) | Fai scorrere il tempo più veloce |
 | F | Attiva/disattiva il volo |
-| Click sinistro | Raccogli il cristallo che guardi |
-| Click destro | Piazza un cristallo sul terreno |
+| Click sinistro | Tieni premuto per rompere alberi e palme (legno), rocce (pietra) e blocchi; click sui cristalli per raccoglierli |
+| Click destro | Posa un blocco del materiale in mano (uno per click) |
+| Rotella | Scegli la casella dell'inventario (il materiale in mano) |
 | Q | Qualità alta / bassa (bassa: automatica sulle schede integrate) |
 | F11 o Alt+Invio | Schermo intero / finestra (il gioco parte a schermo intero) |
 | F10 | Sposta il gioco sul monitor successivo |
@@ -91,11 +113,15 @@ src/
     Weather.cs            pioggia (tasto 2) e neve (tasto 3), intensità che sale e scende piano, neve che si accumula e si scioglie
     WorldObjects.cs       cristalli da raccogliere e piazzare, e le loro luci
     IslandField.cs        isole fluttuanti: dove sono, forma, alberi in cima
-    Ground.cs             dove si può camminare: terreno e cime delle isole
+    Ground.cs             dove si può camminare: terreno, cime delle isole, blocchi
     Creatures.cs          farfalle, pesci e stormi di uccelli (simulazione)
-    TreeField.cs          dove crescono alberi e fiori, per bioma (boschi, alberi isolati, deserti), collisione con i tronchi
+    TreeField.cs          dove crescono alberi, fiori e rocce, per bioma; ciò che si rompe sparisce per sempre; collisione con i tronchi
     GroundMaterials.cs    biomi, colore e copertura dell'erba (copia in C# delle funzioni dello shader)
     WorldPreset.cs        tipi di mondo (classico, desertico, arcipelago, piatto, base) scelti con CTRL+1..5
+    Inventory.cs          materiali (legno, pietra, cristallo) e inventario a 10 caselle
+    Debris.cs             schegge e cubetti di materiale: volano, rimbalzano, vengono attirati e raccolti
+    Blocks.cs             blocchi da costruzione: posa, collisioni, mira, erba tolta e ricresciuta, cosa sta sotto un tetto
+    SaveGame.cs           salvataggio (inventario, costruzioni, cose rotte, cubetti a terra)
   Rendering/
     TerrainRenderer.cs    tessere del terreno con livelli di dettaglio, costruite in background
     TerrainShaders.cs     shader di terreno e oggetti: materiali, luce, ombre, luci, foschia
@@ -114,7 +140,14 @@ src/
     IslandRenderer.cs     modelli delle isole fluttuanti
     SeaFloorMap.cs        forma continua del fondale attorno al giocatore, per le onde
     WaterfallRenderer.cs  cascate luminose delle isole e i loro laghetti
-    MeshBuilder.cs        costruzione di modelli (oggetti, isole)
+    MeshBuilder.cs        costruzione di modelli (oggetti, isole, blocchi)
+    ItemMeshes.cs         modelli dei materiali: cubetto di legno, di pietra, cristallo, scheggia
+    CubeRenderer.cs       disegno di schegge e cubetti (instancing)
+    IconRenderer.cs       i cubetti che ruotano nelle caselle dell'inventario
+    BlockRenderer.cs      disegno dei blocchi (solo le facce visibili, a pezzi)
+    Hud.cs                interfaccia a schermo: font a pixel, caselle, scritte
+    IndoorMap.cs          mappa di ciò che sta sotto un tetto, per gli shader (niente lucciole, pioggia, neve, fulmini)
+    Screenshot.cs         cattura di un fotogramma in PNG (debug, MINE_SHOT)
     ShadowMap.cs          mappa delle ombre vista dal sole
     Shader.cs, Crosshair.cs
 ```

@@ -60,6 +60,23 @@ public sealed unsafe class GrassRenderer : IDisposable
             gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(blade.Length * sizeof(float)), p, BufferUsageARB.StaticDraw);
     }
 
+    /// <summary>
+    /// How grown the grass is at (x, z): 0 where a building cleared it, up to 1 as it grows back
+    /// (shorter and sparser meanwhile). Called from worker threads.
+    /// </summary>
+    public Func<float, float, float>? Growth { get; set; }
+
+    // Tiles being rebuilt (so a burst of requests for one tile builds it once).
+    private readonly HashSet<(int X, int Z)> _rebuilding = new();
+
+    /// <summary>Rebuilds the grass tile around (x, z) (after the ground was cleared or while it grows back); the old blades stay until then.</summary>
+    public void Invalidate(float x, float z)
+    {
+        var key = ((int)MathF.Floor(x / TileSize), (int)MathF.Floor(z / TileSize));
+        if (!_tiles.ContainsKey(key) || !_rebuilding.Add(key)) return;
+        ThreadPool.QueueUserWorkItem(_ => _done.Enqueue((key, BuildBlades(key.Item1, key.Item2))));
+    }
+
     public void Update(Vector3 camera)
     {
         int radius = (int)MathF.Ceiling(Radius / TileSize);
@@ -74,7 +91,10 @@ public sealed unsafe class GrassRenderer : IDisposable
         }
 
         for (int i = 0; i < UploadsPerFrame && _done.TryDequeue(out var result); i++)
+        {
+            _rebuilding.Remove(result.Key);
             if (_tiles.TryGetValue(result.Key, out var tile)) Upload(tile, result.Built.Blades, result.Built.Keys);
+        }
 
         _toRemove.Clear();
         foreach (var (key, tile) in _tiles)
@@ -189,6 +209,7 @@ public sealed unsafe class GrassRenderer : IDisposable
                     : MinHeight + (maxHeight - MinHeight) * (0.6f * r + 0.4f * r * r);
                 float thinning = random.NextSingle();
                 float spin = random.NextSingle() * MathF.Tau;
+                int tuftStart = blades.Count;
                 for (int k = 0; k < bladeCount; k++)
                 {
                     float facing = spin + (k + 0.4f * random.NextSingle()) * MathF.Tau / bladeCount;
@@ -207,6 +228,17 @@ public sealed unsafe class GrassRenderer : IDisposable
                     blades.Add(color.Y);
                     blades.Add(color.Z);
                 }
+                // Where a building cleared the ground, no tuft; where the grass grows back, shorter
+                // tufts, fewer of them (the thinning key picks which come first). The tuft is changed
+                // after drawing its random numbers, so the rest of the tile stays exactly as it was.
+                float growth = Growth?.Invoke(root.X, root.Z) ?? 1f;
+                if (growth < 1f)
+                {
+                    if (thinning > growth * 1.2f) blades.RemoveRange(tuftStart, blades.Count - tuftStart);
+                    else
+                        for (int at = tuftStart; at < blades.Count; at += FloatsPerBlade)
+                            blades[at + 5] *= 0.2f + 0.8f * growth; // height
+                }
             }
         }
         // Sorted by thinning key (see Draw).
@@ -224,6 +256,12 @@ public sealed unsafe class GrassRenderer : IDisposable
 
     private void Upload(Tile tile, float[] blades, float[] keys)
     {
+        if (tile.Ready)
+        {
+            // A rebuilt tile: its new blades replace the old ones.
+            _gl.DeleteBuffer(tile.Vbo);
+            _gl.DeleteVertexArray(tile.Vao);
+        }
         tile.Vao = _gl.GenVertexArray();
         tile.Vbo = _gl.GenBuffer();
         _gl.BindVertexArray(tile.Vao);

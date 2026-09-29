@@ -15,7 +15,7 @@ public sealed class SnowRenderer : IDisposable
 {
     private const int Count = 22000; // in a blizzard; about 9000 in plain snow
 
-    private const string VertexSource = "#version 330 core\n" + SkyRenderer.Hash + """
+    private const string VertexSource = "#version 330 core\n" + SkyRenderer.Hash + IndoorMap.Glsl + """
         uniform mat4 uViewProj;
         uniform vec3 uCameraPos;
         uniform float uTime;
@@ -52,7 +52,7 @@ public sealed class SnowRenderer : IDisposable
             float fade = smoothstep(1.0, 0.75, max(edge.x, max(edge.y, edge.z))) * smoothstep(0.3, 1.0, dist);
             float size = (0.05 + 0.05 * seed.z) * (1.0 + 0.6 * uBlizzard) * uPixelScale / max(dist, 0.1);
             gl_PointSize = clamp(size, 1.5, 14.0);
-            vAlpha = fade * present * min(size / 1.5, 1.0) * 0.9;
+            vAlpha = fade * present * min(size / 1.5, 1.0) * 0.9 * (1.0 - indoors(pos)); // no snow indoors
             vColor = mix(vec3(0.95, 0.97, 1.0), vec3(0.35, 0.4, 0.55), uNight);
             gl_Position = uViewProj * vec4(pos, 1.0);
         }
@@ -85,11 +85,12 @@ public sealed class SnowRenderer : IDisposable
     }
 
     /// <summary>Draws the snowfall into the HDR scene (after everything that can hide it).</summary>
-    public void Draw(Matrix4x4 viewProjection, Vector3 camera, float time, float snow, float blizzard, float night, float pixelScale)
+    public void Draw(Matrix4x4 viewProjection, Vector3 camera, float time, float snow, float blizzard, float night, float pixelScale, IndoorMap indoor)
     {
         if (snow <= 0.001f) return;
         int flakes = (int)(Count * (0.41f + 0.59f * blizzard));
         _shader.Use();
+        indoor.SetUniforms(_shader);
         _shader.Set("uViewProj", viewProjection);
         _shader.Set("uCameraPos", camera);
         _shader.Set("uTime", time);

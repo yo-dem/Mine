@@ -47,6 +47,21 @@ internal sealed class MeshBuilder
         }
     }
 
+    /// <summary>
+    /// A box turned any way: its centre and three half-extent vectors (at right angles). Each face is
+    /// wound to face away from the centre.
+    /// </summary>
+    public void OrientedBox(Vector3 center, Vector3 hx, Vector3 hy, Vector3 hz, Vector3 color, float emissive = 0f)
+    {
+        foreach (var (n, u, v) in (ReadOnlySpan<(Vector3, Vector3, Vector3)>)[(hx, hy, hz), (-hx, hy, hz), (hy, hx, hz), (-hy, hx, hz), (hz, hx, hy), (-hz, hx, hy)])
+        {
+            var c = center + n;
+            Vector3 a = c - u - v, b = c + u - v, cc = c + u + v, d = c - u + v;
+            if (Vector3.Dot(Vector3.Cross(b - a, cc - a), n) < 0) (b, d) = (d, b);
+            Quad(a, b, cc, d, color, emissive);
+        }
+    }
+
     private void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3 color, float emissive)
     {
         Triangle(a, b, c, color, emissive);
@@ -62,7 +77,7 @@ internal sealed class MeshBuilder
         Vertices.Add(emissive);
     }
 
-    private void Triangle(Vector3 a, Vector3 b, Vector3 c, Vector3 color, float emissive)
+    public void Triangle(Vector3 a, Vector3 b, Vector3 c, Vector3 color, float emissive = 0f)
     {
         var normal = Vector3.Normalize(Vector3.Cross(b - a, c - a));
         foreach (var p in (ReadOnlySpan<Vector3>)[a, b, c])

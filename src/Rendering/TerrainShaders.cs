@@ -132,6 +132,7 @@ public static class TerrainShaders
     private const string Lighting = """
         uniform vec3 uCameraPos;
         uniform vec3 uAmbient;
+        uniform vec3 uFlash;      // the light of a lightning bolt (none reaches indoors)
         uniform vec3 uLightColor;
         uniform vec3 uLightDir;
         uniform sampler2DShadow uShadowMap;
@@ -227,7 +228,7 @@ public static class TerrainShaders
             vec3 skyLight = skyColor(normalize(n + vec3(0.0, 0.6, 0.0)), false);
             // By day, warm the sky's fill: the bright blue-violet overhead would cool everything down.
             skyLight = mix(skyLight, dot(skyLight, vec3(0.3, 0.59, 0.11)) * vec3(1.15, 0.95, 0.8), 0.5 * (1.0 - uNight));
-            vec3 ambient = mix(uAmbient, skyLight, 0.35) * (0.9 + 0.2 * n.y) * 1.25;
+            vec3 ambient = mix(uAmbient + uFlash * (1.0 - indoors(pos)), skyLight, 0.35) * (0.9 + 0.2 * n.y) * 1.25;
             vec3 direct = uLightColor * diffuse * shadowAt(pos, n) * cloudShadow(pos);
             return albedo * (ambient + direct + pointLighting(pos, n));
         }
@@ -284,7 +285,7 @@ public static class TerrainShaders
         }
         """;
 
-    private const string FragmentHeader = "#version 330 core\n" + SkyRenderer.Glsl + Materials + Lighting;
+    private const string FragmentHeader = "#version 330 core\n" + SkyRenderer.Glsl + IndoorMap.Glsl + Materials + Lighting;
 
     // ---- Terrain -------------------------------------------------------------------------
 
@@ -443,7 +444,7 @@ public static class TerrainShaders
         """;
 
     /// <summary>Grass uses the cheap lighting path: one shadow tap, no haze noise, no halos (see Lighting).</summary>
-    public const string GrassFragment = "#version 330 core\n#define CHEAP\n" + SkyRenderer.Glsl + Materials + Lighting + """
+    public const string GrassFragment = "#version 330 core\n#define CHEAP\n" + SkyRenderer.Glsl + IndoorMap.Glsl + Materials + Lighting + """
 
         in vec3 vWorldPos;
         in vec3 vNormal;
@@ -851,6 +852,40 @@ public static class TerrainShaders
             vColor = aColor;
             vEmissive = aEmissive;
             gl_Position = uViewProj * world;
+        }
+        """;
+
+    /// <summary>
+    /// Small instanced cubes (chips and material cubes, see Debris): one shared model placed, sized,
+    /// turned (a quaternion) and tinted per instance; drawn with <see cref="ObjectFragment"/>.
+    /// </summary>
+    public const string CubeVertex = """
+        #version 330 core
+        layout(location = 0) in vec3 aPos;
+        layout(location = 1) in vec3 aNormal;
+        layout(location = 2) in vec3 aColor;
+        layout(location = 3) in float aEmissive;
+        layout(location = 4) in vec4 aPlace; // position, size
+        layout(location = 5) in vec4 aTurn;  // rotation (quaternion)
+        layout(location = 6) in vec3 aTint;
+
+        uniform mat4 uViewProj;
+
+        out vec3 vWorldPos;
+        out vec3 vNormal;
+        out vec3 vColor;
+        out float vEmissive;
+
+        vec3 turn(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
+
+        void main()
+        {
+            vec3 world = aPlace.xyz + turn(aTurn, aPos * aPlace.w);
+            vWorldPos = world;
+            vNormal = turn(aTurn, aNormal);
+            vColor = aColor * aTint;
+            vEmissive = aEmissive;
+            gl_Position = uViewProj * vec4(world, 1.0);
         }
         """;
 

@@ -1,4 +1,5 @@
 using System.Numerics;
+using Mine.World;
 
 namespace Mine.Rendering;
 
@@ -70,6 +71,7 @@ public static class TreeModels
         Lilies,      // arching strap leaves, leafy stems, glowing trumpets
         TallPalm,    // a very tall, slender palm with a deep curve
         ShortPalm,   // a short, stocky palm with a big crown
+        Rocks,       // a cluster of boulders, broken for stone
     }
 
     public static int TreeStyleCount => Styles.Length;
@@ -89,6 +91,7 @@ public static class TreeModels
         Decoration.Irises or Decoration.Lilies or Decoration.Poppies => 120f,
         Decoration.Reeds => 400f,
         Decoration.Palm or Decoration.TallPalm or Decoration.ShortPalm => float.MaxValue,
+        Decoration.Rocks => 500f,
         _ => 700f,
     };
 
@@ -116,6 +119,7 @@ public static class TreeModels
         Decoration.Palm => 0.24f,
         Decoration.TallPalm => 0.22f,
         Decoration.ShortPalm => 0.3f,
+        Decoration.Rocks => 0.9f,
         _ => 0f, // flowers do not block the way
     };
 
@@ -545,12 +549,74 @@ public static class TreeModels
                 }
                 break;
             }
+            case Decoration.Rocks:
+            {
+                // A few pale lilac-grey boulders huddled together, the biggest in the middle, with
+                // small crystal points glowing faintly in their cracks: something worth breaking.
+                int count = 3 + random.Next(2);
+                for (int i = 0; i < count; i++)
+                {
+                    float a = i * MathF.Tau / count + random.NextSingle();
+                    float r = i == 0 ? 0f : 0.55f + 0.3f * random.NextSingle();
+                    float size = i == 0 ? 0.75f : 0.35f + 0.25f * random.NextSingle();
+                    var center = new Vector3(MathF.Cos(a) * r, size * 0.35f, MathF.Sin(a) * r);
+                    var color = Vector3.Lerp(new Vector3(0.40f, 0.37f, 0.46f), new Vector3(0.56f, 0.52f, 0.60f), random.NextSingle());
+                    Rock(mesh, center, new Vector3(size * 1.15f, size * 0.8f, size), color, lod, random.NextSingle() * 10f, 0.1f);
+                }
+                if (lod < 3)
+                    for (int i = 0; i < 4; i++)
+                    {
+                        float a = random.NextSingle() * MathF.Tau;
+                        var outward = new Vector3(MathF.Cos(a), 0, MathF.Sin(a));
+                        // On the big middle boulder's flank (an ellipsoid of about 0.86 × 0.6 m), pointing out.
+                        float up = 0.25f + 0.5f * random.NextSingle();
+                        var axis = Vector3.Normalize(outward * 0.9f + Vector3.UnitY * (0.5f + up));
+                        var foot = new Vector3(0, 0.26f + 0.5f * up, 0) + outward * (0.8f - 0.35f * up);
+                        var tint = random.NextSingle() < 0.5f ? new Vector3(0.62f, 0.50f, 1.0f) : new Vector3(0.45f, 0.85f, 1.0f);
+                        Prism(mesh, foot, axis, 0.2f + 0.15f * random.NextSingle(), 0.045f, tint, 4);
+                    }
+                break;
+            }
         }
         return mesh.ToArray();
     }
 
+    /// <summary>
+    /// What breaking an instance gives, how long it takes, how it is aimed at (a vertical capsule
+    /// around its trunk or body) and the colours of the chips that fly off it.
+    /// </summary>
+    public readonly record struct Yield(string Name, Amount Amount, float Seconds, float PickRadius, float PickHeight, Vector3 Chip, Vector3 Chip2);
+
+    private static readonly Vector3 RockChip = new(0.52f, 0.48f, 0.58f), RockChip2 = new(0.38f, 0.35f, 0.44f);
+
+    /// <summary>
+    /// What breaking an instance of <paramref name="variant"/> at <paramref name="scale"/> gives
+    /// (bigger ones give more and take longer), or null if it cannot be broken: for now trees
+    /// (palms too) give wood and rocks give stone.
+    /// </summary>
+    public static Yield? YieldOf(int variant, float scale)
+    {
+        int Round(float v) => Math.Max(1, (int)MathF.Round(v));
+        if (variant < Styles.Length)
+        {
+            var style = Styles[variant];
+            float size = style.Height * scale;
+            string name = style.Height < 2f ? "Arbusto" : style.Bare ? "Albero secco" : "Albero";
+            return new Yield(name, new Amount(Resource.Wood, Round(size * (style.Bare ? 0.35f : 0.5f))), 0.8f + 0.1f * size,
+                MathF.Max(0.45f, style.TrunkRadius * scale * 2f), MathF.Min(4f, MathF.Max(1.2f, size * 0.5f)),
+                style.Bark * 1.3f, style.Bare ? style.Bark * 1.7f : style.LeafHigh);
+        }
+        return (Decoration)(variant - Styles.Length) switch
+        {
+            Decoration.Palm or Decoration.TallPalm or Decoration.ShortPalm => new Yield("Palma", new Amount(Resource.Wood, Round(4f * scale)),
+                1.6f * scale, 0.5f, 3f, new Vector3(0.30f, 0.22f, 0.26f), new Vector3(0.16f, 0.22f, 0.34f)),
+            Decoration.Rocks => new Yield("Roccia", new Amount(Resource.Stone, Round(6f * scale)), 2f * scale, 1.1f * scale, 1.2f * scale, RockChip, RockChip2),
+            _ => null,
+        };
+    }
+
     /// <summary>A lumpy, dark stone half sunk in the ground.</summary>
-    private static void Rock(List<float> mesh, Vector3 center, Vector3 size, Vector3 color, int lod, float seed)
+    private static void Rock(List<float> mesh, Vector3 center, Vector3 size, Vector3 color, int lod, float seed, float emissive = 0f)
     {
         foreach (var d in Icosphere(lod >= 2 ? 1 : 2))
         {
@@ -558,7 +624,7 @@ public static class TreeModels
             var p = center + d * lump * size;
             p.Y = MathF.Max(p.Y, -0.3f);
             var shade = color * (0.8f + 0.35f * (d.Y * 0.5f + 0.5f));
-            Vertex(mesh, p, Vector3.Normalize(d / size), shade, 0, 0);
+            Vertex(mesh, p, Vector3.Normalize(d / size), shade, emissive, 0);
         }
     }
 

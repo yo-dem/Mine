@@ -16,11 +16,21 @@ public sealed unsafe class ObjectRenderer : IDisposable
 
     private readonly GL _gl;
     private readonly (uint Vao, uint Vbo, int Count)[] _meshes;
+    private readonly (uint Vao, uint Vbo, int Count)[] _items;
 
     public ObjectRenderer(GL gl)
     {
         _gl = gl;
         _meshes = Enum.GetValues<ObjectKind>().Select(kind => Upload(BuildMesh(kind))).ToArray();
+        _items = Enum.GetValues<Resource>().Select(r => Upload(ItemMeshes.Item(r))).ToArray();
+    }
+
+    /// <summary>Draws the model of a material (one unit across, centred on the origin: see <see cref="ItemMeshes"/>).</summary>
+    public void DrawItem(Resource resource)
+    {
+        var (vao, _, count) = _items[(int)resource];
+        _gl.BindVertexArray(vao);
+        _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)count);
     }
 
     public static Matrix4x4 ModelMatrix(WorldObject obj) =>
@@ -75,7 +85,7 @@ public sealed unsafe class ObjectRenderer : IDisposable
 
     public void Dispose()
     {
-        foreach (var (vao, vbo, _) in _meshes)
+        foreach (var (vao, vbo, _) in _meshes.Concat(_items))
         {
             _gl.DeleteBuffer(vbo);
             _gl.DeleteVertexArray(vao);

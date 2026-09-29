@@ -16,7 +16,7 @@ public sealed class RainRenderer : IDisposable
 {
     private const int Count = 36000; // in a storm; about 20000 in plain rain
 
-    private const string VertexSource = "#version 330 core\n" + SkyRenderer.Hash + """
+    private const string VertexSource = "#version 330 core\n" + SkyRenderer.Hash + IndoorMap.Glsl + """
         uniform mat4 uViewProj;
         uniform vec3 uCameraPos;
         uniform float uTime;
@@ -68,7 +68,7 @@ public sealed class RainRenderer : IDisposable
             // Pale silver, a touch brighter at night (the rain catches the glow of the world).
             vec3 silver = vec3(0.8, 0.82, 0.9) * mix(0.22, 0.32, uNight) * (0.7 + 0.3 * seed.x);
             // The head of the streak (its lower end) is the brightest.
-            vColor = silver * (thin / width) * mix(1.0, 0.35, along) * fade * present;
+            vColor = silver * (thin / width) * mix(1.0, 0.35, along) * fade * present * (1.0 - indoors(pos)); // no rain indoors
             vAcross = side;
             gl_Position = uViewProj * vec4(pos, 1.0);
         }
@@ -100,11 +100,12 @@ public sealed class RainRenderer : IDisposable
     }
 
     /// <summary>Draws the rain into the HDR scene (after everything that can hide it).</summary>
-    public void Draw(Matrix4x4 viewProjection, Vector3 camera, float time, float rain, float storm, float night, float pixelScale)
+    public void Draw(Matrix4x4 viewProjection, Vector3 camera, float time, float rain, float storm, float night, float pixelScale, IndoorMap indoor)
     {
         if (rain <= 0.001f) return;
         int drops = (int)(Count * (0.56f + 0.44f * storm));
         _shader.Use();
+        indoor.SetUniforms(_shader);
         _shader.Set("uViewProj", viewProjection);
         _shader.Set("uCameraPos", camera);
         _shader.Set("uTime", time);
