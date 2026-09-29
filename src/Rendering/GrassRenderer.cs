@@ -141,6 +141,8 @@ public sealed unsafe class GrassRenderer : IDisposable
         float S(int i, int j) => smooth[(j + 1) * n + (i + 1)];
 
         var random = new Random(tx * 73856093 ^ tz * 19349663);
+        // Grass also grows on the ledges of the mountains (their tops, from Mountains.Top).
+        bool mountains = _terrain.Mountains.Near(x0 + TileSize / 2, z0 + TileSize / 2, TileSize).Any();
         // Tall meadows are a little denser: more attempts everywhere, some dropped on ordinary ground.
         const float averageClump = 11f; // blades per clump on average: ~2 tufts of ~5.5 blades
         int count = (int)(TileSize * TileSize * BladesPerSquareMetre * WorldPreset.Current.GrassDensity * 1.6f / averageClump);
@@ -154,6 +156,11 @@ public sealed unsafe class GrassRenderer : IDisposable
             float y = TerrainField.Layer(S(i, j));
             float gx = (S(i + 1, j) - S(i - 1, j)) / (2 * t), gz = (S(i, j + 1) - S(i, j - 1)) / (2 * t);
             float normalY = 1f / MathF.Sqrt(1 + gx * gx + gz * gz);
+            if (mountains && _terrain.Mountains.Top(x0 + lx, z0 + lz) is { } top)
+            {
+                y = top; // on a ledge (the grass shader drops it if that block is broken)
+                normalY = 1f;
+            }
             var center = new Vector3(x0 + lx, y - 0.02f, z0 + lz);
             const float water = TerrainField.WaterLevel; // shores and shallows hold reed clumps instead (TreeField)
             if (normalY < 0.6f || y < water + 1f) continue; // certainly rock, sand or water: skip early

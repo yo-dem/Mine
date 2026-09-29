@@ -33,7 +33,7 @@ public sealed unsafe class ObjectRenderer : IDisposable
         _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)count);
     }
 
-    private static List<float> BuildMesh(ObjectKind kind)
+    internal static List<float> BuildMesh(ObjectKind kind)
     {
         var m = new MeshBuilder();
         switch (kind)

@@ -144,6 +144,12 @@ public static class TerrainShaders
         uniform float uUnderwater;  // 1 while the camera is below the water surface
 
         #define MAX_POINT_LIGHTS 16
+        // The caverns of the mountains near the camera (Mountain): inside them the light of
+        // the sky does not reach.
+        #define MAX_CAVES 4
+        uniform int uCaveCount;
+        uniform vec3 uCaveCenter[MAX_CAVES];
+        uniform vec3 uCaveRadii[MAX_CAVES];
         uniform int uPointCount;
         uniform vec3 uPointPos[MAX_POINT_LIGHTS];
         uniform vec3 uPointColor[MAX_POINT_LIGHTS]; // colour times intensity
@@ -219,6 +225,18 @@ public static class TerrainShaders
         }
 
         // wrap > 0 lets light bend around soft shapes (foliage, grass) instead of cutting off at 90 degrees.
+        // 1 in the open, down to a dim glow deep inside a cave's hollow.
+        float caveShade(vec3 pos)
+        {
+            float shade = 1.0;
+            for (int i = 0; i < uCaveCount; i++)
+            {
+                float e = length((pos - uCaveCenter[i]) / uCaveRadii[i]);
+                shade = min(shade, mix(0.1, 1.0, smoothstep(0.75, 1.25, e)));
+            }
+            return shade;
+        }
+
         vec3 litColor(vec3 albedo, vec3 pos, vec3 n, float wrap)
         {
             float diffuse = max((dot(n, uLightDir) + wrap) / (1.0 + wrap), 0.0);
@@ -227,7 +245,7 @@ public static class TerrainShaders
             vec3 skyLight = skyColor(normalize(n + vec3(0.0, 0.6, 0.0)), false);
             // By day, warm the sky's fill: the bright blue-violet overhead would cool everything down.
             skyLight = mix(skyLight, dot(skyLight, vec3(0.3, 0.59, 0.11)) * vec3(1.15, 0.95, 0.8), 0.5 * (1.0 - uNight));
-            vec3 ambient = mix(uAmbient, skyLight, 0.35) * (0.9 + 0.2 * n.y) * 1.25;
+            vec3 ambient = mix(uAmbient, skyLight, 0.35) * (0.9 + 0.2 * n.y) * 1.25 * caveShade(pos);
             vec3 direct = uLightColor * diffuse * shadowAt(pos, n) * cloudShadow(pos);
             return albedo * (ambient + direct + pointLighting(pos, n));
         }
@@ -316,23 +334,9 @@ public static class TerrainShaders
     /// Materials are painted from slope and height: grass on gentle ground, warm sandstone with
     /// faint strata on steep flanks, pale sand in the lowlands, and fine grain that fades with distance.
     /// </summary>
-    public const string TerrainFragment = FragmentHeader + """
-
-        in vec3 vWorldPos;
-        in vec3 vNormal;
-        in float vSlope;
-        in float vAo;
-
-        out vec4 FragColor;
-
-        // The land is made of tiles: a faint groove along their edges, fading with distance.
-        float tileEdges(vec3 p, vec3 n, float dist)
-        {
-            if (n.y < 0.5 || dist > 60.0) return 1.0;
-            vec2 f = fract(p.xz / 2.0); // TerrainField.TileSize
-            float edge = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)) * 2.0;
-            return mix(1.0, 0.86 + 0.14 * smoothstep(0.0, 0.03, edge), smoothstep(60.0, 20.0, dist));
-        }
+    // The ground's colour at a point: grass, sand and rock by slope and height (the terrain, and
+    // the sod blocks that take the look of the ground where they lie).
+    private const string TerrainAlbedo = """
 
         vec3 terrainAlbedo(vec3 p, float slope, float dist)
         {
@@ -354,6 +358,26 @@ public static class TerrainShaders
             vec2 w = rockSand(p, slope);
             vec3 albedo = mix(mix(grassColor(xz), sand, w.y), rock, w.x);
             return albedo * (0.75 + 0.5 * fine);
+        }
+
+        """;
+
+    public const string TerrainFragment = FragmentHeader + TerrainAlbedo + """
+
+        in vec3 vWorldPos;
+        in vec3 vNormal;
+        in float vSlope;
+        in float vAo;
+
+        out vec4 FragColor;
+
+        // The land is made of tiles: a faint groove along their edges, fading with distance.
+        float tileEdges(vec3 p, vec3 n, float dist)
+        {
+            if (n.y < 0.5 || dist > 60.0) return 1.0;
+            vec2 f = fract(p.xz / 2.0); // TerrainField.TileSize
+            float edge = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)) * 2.0;
+            return mix(1.0, 0.86 + 0.14 * smoothstep(0.0, 0.03, edge), smoothstep(60.0, 20.0, dist));
         }
 
         // Glitter: tiny grains that catch the light and twinkle, thickest on sand, brightest at night.
@@ -398,6 +422,9 @@ public static class TerrainShaders
         uniform vec3 uCameraPos;
         uniform float uGrassRadius;
         uniform float uTime;
+        // The tops of the blocks' columns (BlockMask): one texel per 0.5 m column from uBlockMaskOrigin.
+        uniform sampler2D uBlockMask;
+        uniform vec2 uBlockMaskOrigin;
 
         out vec3 vWorldPos;
         out vec3 vNormal;
@@ -416,7 +443,16 @@ public static class TerrainShaders
             vNormal = vec3(0.0, 1.0, 0.0);
             vColor = vec3(0.0);
             vTip = 0.0;
-            if (aShape.z > keep || dist > uGrassRadius)
+            bool cleared = false;
+            ivec2 maskCell = ivec2(floor((root.xz - uBlockMaskOrigin) / 0.5));
+            ivec2 maskSize = textureSize(uBlockMask, 0);
+            if (all(greaterThanEqual(maskCell, ivec2(0))) && all(lessThan(maskCell, maskSize)))
+            {
+                // BlockMask: under a block, off a ledge whose block went, or against a block beside.
+                vec2 tops = texelFetch(uBlockMask, maskCell, 0).rg;
+                cleared = cleared || tops.x > -1e8 && abs(root.y - tops.x) > 0.3 || tops.y > root.y + 0.3;
+            }
+            if (aShape.z > keep || dist > uGrassRadius || cleared)
             {
                 gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // outside the clip volume: dropped
                 return;
@@ -482,6 +518,9 @@ public static class TerrainShaders
 
         uniform mat4 uViewProj;
         uniform float uTime;
+        // The tops of the blocks' columns (BlockMask): plants under or against a block are not drawn.
+        uniform sampler2D uBlockMask;
+        uniform vec2 uBlockMaskOrigin;
 
         out vec3 vWorldPos;
         out vec3 vNormal;
@@ -491,6 +530,14 @@ public static class TerrainShaders
 
         void main()
         {
+            ivec2 maskCell = ivec2(floor((aInstance.xz - uBlockMaskOrigin) / 0.5));
+            vec2 tops = all(greaterThanEqual(maskCell, ivec2(0))) && all(lessThan(maskCell, textureSize(uBlockMask, 0)))
+                ? texelFetch(uBlockMask, maskCell, 0).rg : vec2(-1e9);
+            if (tops.x > -1e8 && abs(aInstance.y - tops.x) > 0.5 || tops.y > aInstance.y + 0.5)
+            {
+                gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // under a block: dropped
+                return;
+            }
             vec3 world = treeWorld(aPos, aSway, aInstance, aScale, uTime, 1.0);
             vWorldPos = world;
             vNormal = treeRotate(aNormal, aInstance.w);
@@ -827,6 +874,116 @@ public static class TerrainShaders
         """;
 
     // ---- Objects -------------------------------------------------------------------------
+
+    // ---- Blocks -----------------------------------------------------------------------------
+
+    public const string BlockVertex = """
+        #version 330 core
+        layout(location = 0) in vec3 aPos;
+        layout(location = 1) in vec3 aNormal;
+        layout(location = 2) in vec3 aColor;
+        layout(location = 3) in float aEmissive;
+        layout(location = 4) in vec3 aLocal;   // position inside its 1 m block, 0..1
+        layout(location = 5) in float aPattern; // Materials.Pattern
+
+        uniform mat4 uViewProj;
+
+        out vec3 vWorldPos;
+        out vec3 vNormal;
+        out vec3 vColor;
+        out float vEmissive;
+        out vec3 vLocal;
+        out float vPattern;
+
+        void main()
+        {
+            vWorldPos = aPos;
+            vNormal = aNormal;
+            vColor = aColor;
+            vEmissive = aEmissive;
+            vLocal = aLocal;
+            vPattern = aPattern;
+            gl_Position = uViewProj * vec4(aPos, 1.0);
+        }
+        """;
+
+    public const string BlockFragment = FragmentHeader + TerrainAlbedo + """
+
+        in vec3 vWorldPos;
+        in vec3 vNormal;
+        in vec3 vColor;
+        in float vEmissive;
+        in vec3 vLocal;
+        in float vPattern;
+
+        out vec4 FragColor;
+
+        // 1 on a thin line at c (half-width w), smoothed over a pixel.
+        float groove(float x, float c, float w)
+        {
+            float fw = fwidth(x) + 1e-4;
+            return 1.0 - smoothstep(w, w + fw, abs(x - c));
+        }
+
+        // The motif carved into a face: a factor on the stone's colour.
+        float motif(vec3 l, vec3 n, float pattern)
+        {
+            bool top = abs(n.y) > 0.5;
+            vec2 uv = top ? l.xz : abs(n.x) > 0.5 ? l.zy : l.xy;
+            // Every block's edges are softly darkened, so the blocks read as blocks.
+            float edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+            float s = mix(0.86, 1.0, smoothstep(0.0, 0.035, edge));
+            if (pattern > 0.5 && pattern < 1.5)
+            {
+                // A column: flutes running up the sides between a base and a capital; rings on top.
+                if (top)
+                {
+                    float r = length(uv - 0.5);
+                    s *= 1.0 - 0.3 * groove(r, 0.36, 0.016) - 0.22 * groove(r, 0.2, 0.014);
+                }
+                else if (uv.y < 0.08 || uv.y > 0.92) s *= 1.07;
+                else
+                {
+                    float flute = 0.5 + 0.5 * cos(uv.x * 6.2832 * 4.0);
+                    s *= mix(1.04, 0.8, smoothstep(0.5, 0.95, flute));
+                    s *= 1.0 - 0.3 * groove(uv.y, 0.09, 0.01) - 0.3 * groove(uv.y, 0.91, 0.01);
+                }
+            }
+            else if (pattern > 1.5 && pattern < 2.5)
+            {
+                // A carved panel: a raised frame, a groove inside it, a lozenge in the middle.
+                float d = abs(uv.x - 0.5) + abs(uv.y - 0.5);
+                s *= edge < 0.09 ? 1.06 : 0.97;
+                s *= 1.0 - 0.3 * groove(edge, 0.105, 0.012);
+                s *= 1.0 - 0.28 * groove(d, 0.3, 0.013);
+                s *= d < 0.3 ? 1.05 : 1.0;
+                s *= 1.0 - 0.25 * groove(d, 0.12, 0.01);
+            }
+            return s;
+        }
+
+        void main()
+        {
+            vec3 n = normalize(vNormal);
+            float dist = length(vWorldPos - uCameraPos);
+            vec3 albedo;
+            if (vPattern > 2.5)
+            {
+                // Sod: the ground's own look, grass on top, rock on the sides, as the terrain's walls.
+                albedo = terrainAlbedo(vWorldPos, n.y > 0.5 ? 1.0 : 0.0, dist);
+            }
+            else
+            {
+                // Stone, with a faint grain and its motif.
+                float grain = noise2(vWorldPos.xz * 3.1 + vWorldPos.y * 2.3, 7.0);
+                albedo = vColor * (0.93 + 0.1 * grain) * motif(vLocal, n, vPattern);
+            }
+            albedo = mix(albedo, SnowColor, snowOn(vWorldPos, n.y) * (1.0 - vEmissive));
+            vec3 color = litColor(albedo, vWorldPos, n, 0.0);
+            color = mix(color, vColor * mix(1.4, 2.2, uNight), vEmissive);
+            FragColor = finishColor(color, vWorldPos, 1.0 - 0.8 * vEmissive);
+        }
+        """;
 
     public const string ObjectVertex = """
         #version 330 core

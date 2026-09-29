@@ -1,7 +1,7 @@
 namespace Mine.World;
 
 /// <summary>
-/// The knobs of world generation, switched at runtime with Ctrl+1..3 to compare kinds of world.
+/// The knobs of world generation, switched at runtime with Ctrl+1..6 to compare kinds of world.
 /// <see cref="Current"/> is read by the terrain, the biomes (C# and, through uniforms set with the
 /// world uniforms, the shaders) and the trees; changing it means rebuilding the world (see
 /// Game.SetWorld).
@@ -37,10 +37,13 @@ public sealed record WorldPreset(
     // Share of the usual lone trees scattered outside the woods (low: vegetation grows in groups).
     float LoneTrees = 1f,
     // With PlainNight: the planet's dark disk keeps a glowing rim.
-    bool PlanetRim = false)
+    bool PlanetRim = false,
+    // How much scree of breakable stone lies at the foot of the slopes: the blocks that can be
+    // broken and built with (see StoneOutcrops, BlockWorld).
+    float StoneFields = 0f)
 {
     /// <summary>The world as it was built: woods, meadows, lakes, a few deserts.</summary>
-    public static readonly WorldPreset Classic = new("classico", 0.70f, 0.76f, 0.0f, 0.6f, false);
+    public static readonly WorldPreset Classic = new("classico", 0.70f, 0.76f, 0.0f, 0.6f, false, StoneFields: 0.5f);
 
     /// <summary>Mostly desert, with rare woods and lakes.</summary>
     public static readonly WorldPreset Desert = new("deserto", 0.30f, 0.38f, 0.3f, 0.01f, false, LandLift: 9f);
@@ -61,7 +64,13 @@ public sealed record WorldPreset(
         GrassDensity: 0.5f, TreeDensity: 0.75f, Saturation: 0.95f, ClearSky: 0.6f, PlainNight: true, ColorVariety: 0.6f,
         LoneTrees: 0.08f, PlanetRim: true);
 
-    public static readonly WorldPreset[] All = [Classic, Desert, Archipelago, Flat, Base];
+    /// <summary>
+    /// The base world, hillier, with scree of breakable stone at the foot of its slopes: the place to try building
+    /// (hold the button to break the stone, pick up the blocks it leaves, place them).
+    /// </summary>
+    public static readonly WorldPreset Stone = Base with { Name = "pietra", StoneFields = 0.7f, Relief = 0.8f };
+
+    public static readonly WorldPreset[] All = [Classic, Desert, Archipelago, Flat, Base, Stone];
 
     public static WorldPreset Current { get; set; } = Classic;
 

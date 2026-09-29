@@ -164,12 +164,30 @@ public sealed class WorldObjects
         return 0.8f + 0.2f * MathF.Sin(time * 1.4f + phase);
     }
 
-    /// <summary>Crystals in small clusters, only on gentle ground.</summary>
+    /// <summary>Crystals in small clusters, only on gentle ground; and some glowing on the floor of each cavern.</summary>
     private List<WorldObject> Generate(int cx, int cz)
     {
         var list = new List<WorldObject>();
         uint h = Hash(cx, cz);
         var random = new Random((int)h);
+
+        // Crystals glowing on the floor of a cavern whose middle lies in this cell: its only light,
+        // with the veins in its walls.
+        int index = 100;
+        foreach (var m in _terrain.Mountains.Near((cx + 0.5f) * CellSize, (cz + 0.5f) * CellSize, CellSize))
+        {
+            if ((int)MathF.Floor(m.X / CellSize) != cx || (int)MathF.Floor(m.Z / CellSize) != cz) continue;
+            var caveRandom = new Random(m.Seed);
+            for (int i = 0; i < 8; i++)
+            {
+                float angle = caveRandom.NextSingle() * MathF.Tau, r = m.CavernRadius * (0.2f + 0.55f * caveRandom.NextSingle());
+                float x = m.X + MathF.Cos(angle) * r, z = m.Z + MathF.Sin(angle) * r;
+                long id = (((long)(cx & 0xFFFFF) << 28) | ((long)(cz & 0xFFFFF) << 8) | (uint)index++) + 1;
+                var at = _terrain.TileCenter(x, z);
+                if (!_taken.Contains(id) && Mountains.CavernDistance(m, at + new Vector3(0, 1f, 0)) < 0.9f)
+                    list.Add(new WorldObject(id, ObjectKind.Crystal, at, caveRandom.NextSingle() * MathF.Tau));
+            }
+        }
 
         if (random.NextSingle() < 0.3f)
         {
@@ -187,7 +205,7 @@ public sealed class WorldObjects
     {
         long id = ((long)(cx & 0xFFFFF) << 28) | ((long)(cz & 0xFFFFF) << 8) | (uint)index;
         id += 1; // keep generated ids positive and non-zero
-        if (_taken.Contains(id) || _terrain.Normal(x, z).Y < 0.8f || _terrain.InPond(x, z, 1f)) return;
+        if (_taken.Contains(id) || _terrain.Normal(x, z).Y < 0.8f || _terrain.InPond(x, z, 1f) || _terrain.Outcrops.Covers(x, z, 0.5f)) return;
         list.Add(new WorldObject(id, kind, _terrain.TileCenter(x, z), yaw));
     }
 

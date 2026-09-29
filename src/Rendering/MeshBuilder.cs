@@ -21,6 +21,21 @@ internal sealed class MeshBuilder
         Quad(C(0, 0, 0), C(0, 1, 0), C(1, 1, 0), C(1, 0, 0), color, emissive); // -Z
     }
 
+    /// <summary>One face of the box [min, max]: 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z.</summary>
+    public void BoxFace(Vector3 min, Vector3 max, int face, Vector3 color, float emissive = 0f)
+    {
+        Vector3 C(int x, int y, int z) => new(x == 0 ? min.X : max.X, y == 0 ? min.Y : max.Y, z == 0 ? min.Z : max.Z);
+        switch (face)
+        {
+            case 0: Quad(C(1, 0, 0), C(1, 1, 0), C(1, 1, 1), C(1, 0, 1), color, emissive); break;
+            case 1: Quad(C(0, 0, 1), C(0, 1, 1), C(0, 1, 0), C(0, 0, 0), color, emissive); break;
+            case 2: Quad(C(0, 1, 0), C(0, 1, 1), C(1, 1, 1), C(1, 1, 0), color, emissive); break;
+            case 3: Quad(C(0, 0, 0), C(1, 0, 0), C(1, 0, 1), C(0, 0, 1), color, emissive); break;
+            case 4: Quad(C(1, 0, 1), C(1, 1, 1), C(0, 1, 1), C(0, 0, 1), color, emissive); break;
+            default: Quad(C(0, 0, 0), C(0, 1, 0), C(1, 1, 0), C(1, 0, 0), color, emissive); break;
+        }
+    }
+
     /// <summary>
     /// An elongated eight-faced gem standing on <paramref name="baseCenter"/>; its tip leans by
     /// <paramref name="tilt"/> per metre of height. A negative height makes it hang downward.
@@ -47,7 +62,8 @@ internal sealed class MeshBuilder
         }
     }
 
-    private void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3 color, float emissive)
+    /// <summary>A flat quad a-b-c-d, wound counter-clockwise seen from the side it faces.</summary>
+    public void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3 color, float emissive)
     {
         Triangle(a, b, c, color, emissive);
         Triangle(a, c, d, color, emissive);
@@ -62,7 +78,7 @@ internal sealed class MeshBuilder
         Vertices.Add(emissive);
     }
 
-    private void Triangle(Vector3 a, Vector3 b, Vector3 c, Vector3 color, float emissive)
+    public void Triangle(Vector3 a, Vector3 b, Vector3 c, Vector3 color, float emissive)
     {
         var normal = Vector3.Normalize(Vector3.Cross(b - a, c - a));
         foreach (var p in (ReadOnlySpan<Vector3>)[a, b, c])

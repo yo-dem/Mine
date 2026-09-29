@@ -56,9 +56,17 @@ public sealed class TerrainField
     public readonly record struct Pond(float X, float Z, float Radius, float Surface);
 
     /// <summary>The seed must be the one the islands use, since the ponds lie under their waterfalls.</summary>
+    /// <summary>The scree of breakable stone lying on this terrain (see <see cref="BlockWorld"/>).</summary>
+    public StoneOutcrops Outcrops { get; }
+
+    /// <summary>The mountains of blocks with their caverns standing on this terrain.</summary>
+    public Mountains Mountains { get; }
+
     public TerrainField(int seed)
     {
         _seed = seed;
+        Outcrops = new StoneOutcrops(this, seed);
+        Mountains = new Mountains(this, seed);
         _continent = new PerlinNoise(seed);
         _hills = new PerlinNoise(seed + 1);
         _warp = new PerlinNoise(seed + 2);

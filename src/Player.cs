@@ -37,6 +37,9 @@ public sealed class Player
     // Walls: a step up to this height is climbed by walking; higher ones block (a jump clears ~1.2 m).
     private const float StepHeight = 0.55f;
     private const float Radius = 0.3f;        // how far ahead of the feet walls are felt
+    // Against blocks the body is a box: this half-width, this tall.
+    private const float BodyHalfWidth = 0.25f;
+    private const float BodyHeight = 2.3f;
     private const float StepSmoothRate = 14f; // how fast the camera catches up after a step
     // While walking, stay glued to ground that drops away by less than this in one frame
     // (two layers), so walking down steps never turns into a short fall.
@@ -139,20 +142,28 @@ public sealed class Player
         float climb = Flying ? float.MaxValue : Swimming ? SwimClimb : wasOnGround ? StepHeight : 0.05f;
 
         Position.X += delta.X;
-        if (delta.X != 0 && surface.Height(Position.X + MathF.Sign(delta.X) * Radius, Position.Z, Position.Y + climb) - Position.Y > climb)
+        if (delta.X != 0 && (surface.Height(Position.X + MathF.Sign(delta.X) * Radius, Position.Z, Position.Y + climb) - Position.Y > climb
+                             || BlockedByBlocks(surface, MathF.Min(climb, SwimClimb))))
         {
             Position.X -= delta.X;
             Velocity.X = 0;
         }
         Position.Z += delta.Z;
-        if (delta.Z != 0 && surface.Height(Position.X, Position.Z + MathF.Sign(delta.Z) * Radius, Position.Y + climb) - Position.Y > climb)
+        if (delta.Z != 0 && (surface.Height(Position.X, Position.Z + MathF.Sign(delta.Z) * Radius, Position.Y + climb) - Position.Y > climb
+                             || BlockedByBlocks(surface, MathF.Min(climb, SwimClimb))))
         {
             Position.Z -= delta.Z;
             Velocity.Z = 0;
         }
 
         Position.Y += delta.Y;
-        float ground = surface.Height(Position.X, Position.Z, Position.Y + climb);
+        if (delta.Y > 0 && surface.BlockedByBlocks(Position, BodyHalfWidth, BodyHeight * 0.5f, BodyHeight))
+        {
+            // Head against a block: stop rising.
+            Position.Y -= delta.Y;
+            Velocity.Y = 0;
+        }
+        float ground = surface.Height(Position.X, Position.Z, Position.Y + climb, BodyHalfWidth);
 
         OnGround = false;
         if (Position.Y <= ground)
@@ -171,6 +182,17 @@ public sealed class Player
             Velocity.Y = 0;
             OnGround = true;
         }
+    }
+
+    /// <summary>
+    /// Whether the body, where it now stands, runs into blocks it cannot step onto: a block low
+    /// enough to climb (with room above it) lets it through, the ground then lifting it up.
+    /// </summary>
+    private bool BlockedByBlocks(Ground surface, float climb)
+    {
+        if (!surface.BlockedByBlocks(Position, BodyHalfWidth, 0.02f, BodyHeight)) return false;
+        float step = surface.Height(Position.X, Position.Z, Position.Y + climb, BodyHalfWidth) - Position.Y;
+        return step > climb || step <= 0 || surface.BlockedByBlocks(Position + new Vector3(0, step, 0), BodyHalfWidth, 0.02f, BodyHeight);
     }
 
     /// <summary>Call once per frame after moving: tracks how long ago the player last touched the ground.</summary>

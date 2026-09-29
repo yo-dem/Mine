@@ -67,15 +67,43 @@ portatili con due schede usa quella dedicata; la prima volta si riavvia da solo 
 | T (tenuto) | Fai scorrere il tempo più veloce |
 | F | Attiva/disattiva il volo |
 | Click sinistro | Raccogli il cristallo che guardi |
-| Click destro | Piazza un cristallo sul terreno |
+| Click sinistro (tenuto) | Rompi il blocco che guardi: perde schegge, si rovina a segni scuri e alla fine lascia a terra un cubetto da raccogliere |
+| Click destro | Con un cristallo in mano: piazzalo sul terreno. Con un blocco: piazzalo accanto al blocco o sul terreno che guardi |
+| Rotella / Tab | Scegli la casella della barra, cioè l'oggetto in mano (Shift+Tab: indietro) |
 | Q | Qualità alta / bassa (bassa: automatica sulle schede integrate) |
 | F11 o Alt+Invio | Schermo intero / finestra (il gioco parte a schermo intero) |
 | F10 | Sposta il gioco sul monitor successivo |
 | 1 | Fai partire una stella cadente davanti a te (debug) |
 | 2 | Fai iniziare o smettere la pioggia (premuto due volte: temporale con fulmini) |
 | 3 | Fai iniziare o smettere la neve (premuto due volte: bufera) |
-| CTRL+1 / 2 / 3 / 4 / 5 | Cambia mondo: classico (con le isole volanti), desertico (foreste rare, laghi rarissimi), arcipelago (isolotti con coste desertiche e cuore lussureggiante), piatto (pianure dolci e sobrie: poca erba e pochi alberi, un solo tono di colore, poche nuvole, di notte solo stelle e l'ombra del pianeta), base (come il piatto ma con biomi riconoscibili, vegetazione a gruppi della stessa specie, e il pianeta come ombra dal bordo luminoso) |
+| CTRL+1 / 2 / 3 / 4 / 5 / 6 | Cambia mondo: classico (con le isole volanti), desertico (foreste rare, laghi rarissimi), arcipelago (isolotti con coste desertiche e cuore lussureggiante), piatto (pianure dolci e sobrie: poca erba e pochi alberi, un solo tono di colore, poche nuvole, di notte solo stelle e l'ombra del pianeta), base (come il piatto ma con biomi riconoscibili, vegetazione a gruppi della stessa specie, e il pianeta come ombra dal bordo luminoso), pietra (il mondo base, più collinoso, con detriti di pietra da rompere ai piedi dei pendii: il posto per costruire) |
 | Esc | Libera il mouse (di nuovo Esc: esci) |
+
+## Costruire
+
+Nel mondo classico (CTRL+1) e nel mondo pietra (CTRL+6) ai piedi dei pendii si trovano cumuli di
+detriti fatti di blocchi da 1 m, addossati alla collina da cui sono franati, con qualche blocco
+rotolato più in basso. La pietra prende il colore del luogo: ardesia indaco nei boschi indaco, arenaria rosa
+nei boschi rosa e nei deserti, pietra turchese vicino ai boschi turchesi, e qua e là pietra porosa
+lilla. Nel mondo pietra si parte sotto il cumulo più vicino.
+
+Qua e là, su terre ampie e asciutte, sorgono delle **montagne** di blocchi, larghe fino a 80 m e
+alte fino a una trentina: da fuori sono colline a terrazze, con l'erba sui ripiani e la roccia sulle
+alzate, come il resto del terreno. Dentro nascondono un'**enorme caverna** naturale, con pareti e
+volta irregolari di roccia scura, vene di cristallo che brillano e cristalli sul pavimento che fanno
+luce; la luce del cielo non ci arriva. Ci si entra da un tunnel tortuoso che si apre sul fianco più
+basso, davanti al quale gli alberi lasciano una radura. Nel mondo classico si parte davanti al tunnel
+della montagna più vicina al lago (per partire dal lago come prima: `MINE_CAVE=0`). Anche questi
+blocchi si rompono e si raccolgono: zolle, roccia di caverna, vene di cristallo luminose. (Esistono
+anche la pietra scolpita e la pietra scanalata, con motivi incisi, per future rovine.) Tenendo premuto il clic sinistro su un blocco, dal
+blocco si staccano subito tante schegge, sempre più fitte, e la pietra comincia a rovinarsi, come
+in Minecraft: sulle facce compaiono segni scuri a pixel, per lo più in diagonale e bordati di pixel
+più chiari, che si moltiplicano finché il blocco ne è coperto; dopo un paio di secondi si frantuma lasciando a terra un **cubetto** che ruota piano. Passandoci sopra il cubetto viene attratto
+e finisce nella **barra** in basso: otto caselle con dentro gli oggetti che porti, in 3D e ruotanti,
+con la quantità scritta nell'angolo. Con la rotella si sceglie la casella: l'oggetto scelto si vede
+in mano, grande, entrare nella visuale dall'angolo in basso a destra. Il blocco che guardi ha gli spigoli evidenziati. I blocchi si piazzano con il clic destro (l'erba e le piante sotto e intorno spariscono): sul terreno, allineati alla
+griglia di 1 m e alla sua altezza, o accanto e sopra altri blocchi. Si cammina sopra i blocchi, e
+per salirci si salta.
 
 ## Struttura
 
@@ -91,15 +119,22 @@ src/
     Weather.cs            pioggia (tasto 2) e neve (tasto 3), intensità che sale e scende piano, neve che si accumula e si scioglie
     WorldObjects.cs       cristalli da raccogliere e piazzare, e le loro luci
     IslandField.cs        isole fluttuanti: dove sono, forma, alberi in cima
-    Ground.cs             dove si può camminare: terreno e cime delle isole
+    Ground.cs             dove si può camminare: terreno, cime delle isole e blocchi
+    Blocks.cs             blocchi da 1 m (su una griglia da 50 cm), materiali, detriti, collisioni
+    Mountains.cs          montagne a terrazze di blocchi con le loro caverne
+    Drops.cs              cubetti lasciati dai blocchi rotti, che si raccolgono passandoci sopra, e schegge
+    Inventory.cs          le otto caselle di ciò che porta il giocatore, e quella in mano
     Creatures.cs          farfalle, pesci e stormi di uccelli (simulazione)
     TreeField.cs          dove crescono alberi e fiori, per bioma (boschi, alberi isolati, deserti), collisione con i tronchi
     GroundMaterials.cs    biomi, colore e copertura dell'erba (copia in C# delle funzioni dello shader)
-    WorldPreset.cs        tipi di mondo (classico, desertico, arcipelago, piatto, base) scelti con CTRL+1..5
+    WorldPreset.cs        tipi di mondo (classico, desertico, arcipelago, piatto, base, pietra) scelti con CTRL+1..6
   Rendering/
     TerrainRenderer.cs    tessere del terreno con livelli di dettaglio, costruite in background
     TerrainShaders.cs     shader di terreno e oggetti: materiali, luce, ombre, luci, foschia
     ObjectRenderer.cs     modelli procedurali degli oggetti
+    BlockRenderer.cs      blocchi (un modello per zona, rifatto quando cambia), usura del blocco che si rompe, cubetti a terra
+    Hud.cs                barra delle otto caselle con gli oggetti in 3D e i numeri; modelli degli oggetti
+    BlockMask.cs          la cima di ogni colonna di blocchi, perché erba e piante crescano solo sopra, mai attraverso
     GrassRenderer.cs      ciuffi d'erba attorno al giocatore (instancing, costruiti in background)
     TreeModels.cs         modelli procedurali degli alberi, 16 stili (anche secchi) e 4 livelli di dettaglio
     TreeRenderer.cs       disegno degli alberi (instancing per stile e livello di dettaglio)
