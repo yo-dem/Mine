@@ -92,7 +92,7 @@ public static class TreeModels
         Decoration.Daisies or Decoration.Tulips or Decoration.Starflowers => 110f,
         Decoration.Lupins => 140f,
         Decoration.Irises or Decoration.Lilies or Decoration.Poppies => 120f,
-        Decoration.Reeds => 400f,
+        Decoration.Reeds => 220f, // reed beds are thousands of clumps: past this they are a few pixels
         Decoration.Palm or Decoration.TallPalm or Decoration.ShortPalm => float.MaxValue,
         _ => 700f,
     };
@@ -287,7 +287,9 @@ public static class TreeModels
             radii = Vector3.Max(radii, extent);
         }
         Cylinder(mesh, new Segment(trunk[0], center, style.TrunkRadius, style.TrunkRadius * 0.5f, 0, 0.5f), 3, style.Bark);
-        Foliage(mesh, Icosphere(1), new Blob(center, 1f, radii, 1.7f, 1f), center, style);
+        // A plain icosahedron (20 triangles): beyond ~380 m the crown is a few dozen pixels, and
+        // this level has ten thousand trees (80 triangles each cost 2.6 M vertices a frame).
+        Foliage(mesh, Icosphere(0), new Blob(center, 1f, radii, 1.7f, 1f), center, style);
     }
 
     private static void Cylinder(List<float> mesh, Segment s, int sides, Vector3 bark)
@@ -489,7 +491,10 @@ public static class TreeModels
                     _ => (8.5f, 0.24f, 1f, 2.8f, 10),
                 };
                 float lean = (0.9f + 0.6f * random.NextSingle()) * bend;
-                int rings = lod >= 2 ? 5 : 9;
+                // The last level (beyond ~380 m, thousands of palms) is a silhouette: a three-sided
+                // trunk in three pieces and six fronds of two steps, ~200 vertices instead of ~800.
+                bool silhouette = lod == LodCount - 1;
+                int rings = silhouette ? 3 : lod >= 2 ? 5 : 9;
                 var trunk = new Vector3[rings + 1];
                 for (int i = 0; i <= rings; i++)
                 {
@@ -501,12 +506,12 @@ public static class TreeModels
                 {
                     float t0 = i / (float)rings, t1 = (i + 1) / (float)rings;
                     Cylinder(mesh, new Segment(trunk[i], trunk[i + 1], radius * (1 - 0.35f * t0), radius * (1 - 0.35f * t1),
-                        t0 * t0 * 0.6f, t1 * t1 * 0.6f), lod >= 2 ? 4 : 6, bark * (0.8f + 0.25f * t1));
+                        t0 * t0 * 0.6f, t1 * t1 * 0.6f), silhouette ? 3 : lod >= 2 ? 4 : 6, bark * (0.8f + 0.25f * t1));
                 }
 
                 var top = trunk[rings];
-                int fronds = lod >= 2 ? 7 : fronds0;
-                int steps = lod >= 2 ? 4 : 7;
+                int fronds = silhouette ? 6 : lod >= 2 ? 7 : fronds0;
+                int steps = silhouette ? 2 : lod >= 2 ? 4 : 7;
                 for (int f = 0; f < fronds; f++)
                 {
                     float a = f * MathF.Tau / fronds + random.NextSingle() * 0.4f;
@@ -528,6 +533,15 @@ public static class TreeModels
                         var r1 = p1 - across * w1 - new Vector3(0, w1 * 0.35f, 0);
                         var n = Vector3.UnitY;
                         var c = leaf * (0.8f + 0.4f * t1);
+                        if (lod >= 2)
+                        {
+                            // Far away, a flat frond (both windings): the V no longer shows.
+                            Vertex(mesh, l0, n, c, 0, 1); Vertex(mesh, r1, n, c, 0, 1); Vertex(mesh, r0, n, c, 0, 1);
+                            Vertex(mesh, l0, n, c, 0, 1); Vertex(mesh, l1, n, c, 0, 1); Vertex(mesh, r1, n, c, 0, 1);
+                            Vertex(mesh, l0, -n, c, 0, 1); Vertex(mesh, r0, -n, c, 0, 1); Vertex(mesh, r1, -n, c, 0, 1);
+                            Vertex(mesh, l0, -n, c, 0, 1); Vertex(mesh, r1, -n, c, 0, 1); Vertex(mesh, l1, -n, c, 0, 1);
+                            continue;
+                        }
                         // Both windings, so the fronds are seen from above and below.
                         Vertex(mesh, p0, n, c, 0, 1); Vertex(mesh, l0, n, c, 0, 1); Vertex(mesh, l1, n, c, 0, 1);
                         Vertex(mesh, p0, n, c, 0, 1); Vertex(mesh, l1, n, c, 0, 1); Vertex(mesh, p1, n, c, 0, 1);

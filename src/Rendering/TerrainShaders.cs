@@ -83,19 +83,22 @@ public static class TerrainShaders
             return smoothstep(uDesertRange.x, uDesertRange.y, noise2(xz * 0.0008, 23.0) * 0.75 + noise2(xz * 0.003, 24.0) * 0.25);
         }
 
-        vec4 biomeWeights(vec2 xz)
+        // The biome weights given the desert's share (desertWeight), when it is already known.
+        vec4 biomeWeightsFor(vec2 xz, float desert)
         {
-            float desert = desertWeight(xz);
             float flavour = noise2(xz * 0.0011, 21.0) * 0.7 + noise2(xz * 0.004, 22.0) * 0.3;
             float pink = smoothstep(0.58, 0.64, flavour), teal = smoothstep(0.47, 0.41, flavour);
             float wet = 1.0 - desert;
             return vec4((1.0 - pink - teal) * wet, pink * wet, teal * wet, desert);
         }
 
+        vec4 biomeWeights(vec2 xz) { return biomeWeightsFor(xz, desertWeight(xz)); }
+
         // Cosmic grass in patches of one hue each: teal, violet, magenta, lilac gold, sky blue.
         // A slow noise picks the hue (with soft borders between patches), a faster one varies it.
         // Mirrored in C# by GroundMaterials.GrassColor: keep the two in sync.
-        vec3 grassColor(vec2 xz)
+        // b: biomeWeights(xz), when already known.
+        vec3 grassColorFor(vec2 xz, vec4 b)
         {
             float hue = noise2(xz * 0.012, 11.0) * 0.75 + noise2(xz * 0.04, 12.0) * 0.25;
             float shade = noise2(xz * 0.09, 13.0);
@@ -105,24 +108,27 @@ public static class TerrainShaders
             c = mix(c, vec3(0.58, 0.46, 0.42), smoothstep(0.56, 0.62, hue)); // lilac gold
             c = mix(c, vec3(0.16, 0.32, 0.58), smoothstep(0.68, 0.74, hue)); // sky blue
             // Each biome pulls the patches toward its own hue (indigo, pink, teal, desert straw).
-            vec4 b = biomeWeights(xz);
             vec3 tint = vec3(0.20, 0.24, 0.56) * b.x + vec3(0.62, 0.24, 0.50) * b.y + vec3(0.10, 0.44, 0.48) * b.z + vec3(0.60, 0.46, 0.36) * b.w;
             c = mix(c, tint, 0.4);
             c = mix(vec3(0.36, 0.32, 0.44), c, uColorVariety); // WorldPreset.ColorVariety (GroundMaterials.MutedGrass)
             return c * (0.85 + 0.3 * shade);
         }
 
+        vec3 grassColor(vec2 xz) { return grassColorFor(xz, biomeWeights(xz)); }
+
         // How much of the ground is rock (x, steep slopes) and sand (y, lowlands); the rest is grass.
-        vec2 rockSand(vec3 p, float normalY)
+        // mid: noise2(p.xz * 0.045, 2.0) and desert: desertWeight(p.xz), when already known.
+        vec2 rockSandFor(vec3 p, float normalY, float mid, float desert)
         {
-            float mid = noise2(p.xz * 0.045, 2.0);
             float rockW = smoothstep(0.30, 0.46, 1.0 - normalY + (mid - 0.5) * 0.12);
             // Sand on the shores: from a few metres above the water (TerrainField.WaterLevel = 15) down.
             // ...and over the deserts, frayed at their edges.
-            float desertSand = smoothstep(0.25, 0.7, desertWeight(p.xz) + (mid - 0.5) * 0.3);
+            float desertSand = smoothstep(0.25, 0.7, desert + (mid - 0.5) * 0.3);
             float sandW = max(smoothstep(19.5, 14.0, p.y + (mid - 0.5) * 4.0), desertSand) * (1.0 - rockW);
             return vec2(rockW, sandW);
         }
+
+        vec2 rockSand(vec3 p, float normalY) { return rockSandFor(p, normalY, noise2(p.xz * 0.045, 2.0), desertWeight(p.xz)); }
         """;
 
     /// <summary>
@@ -324,6 +330,22 @@ public static class TerrainShaders
 
     // ---- Terrain -------------------------------------------------------------------------
 
+    /// <summary>Draws <see cref="GroundMap"/>: per texel, the ground's grass colour (rgb) and the desert's share (a).</summary>
+    public const string GroundMapFragment = "#version 330 core\n" + SkyRenderer.Hash + Materials + """
+
+        uniform vec2 uOrigin; // world xz of the map's corner
+        uniform float uStep;  // metres per texel
+
+        out vec4 FragColor;
+
+        void main()
+        {
+            vec2 xz = uOrigin + gl_FragCoord.xy * uStep; // gl_FragCoord is at the texel's centre
+            float desert = desertWeight(xz);
+            FragColor = vec4(grassColorFor(xz, biomeWeightsFor(xz, desert)), desert);
+        }
+        """;
+
     public const string TerrainVertex = """
         #version 330 core
         layout(location = 0) in vec3 aPos;
@@ -370,37 +392,63 @@ public static class TerrainShaders
             return mix(1.0, 0.86 + 0.14 * smoothstep(0.0, 0.03, edge), smoothstep(60.0, 20.0, dist));
         }
 
-        vec3 terrainAlbedo(vec3 p, float slope, float dist)
+        // The ground map (GroundMap): grass colour and desert share, drawn per 2 m around the camera.
+        uniform sampler2D uGroundMap;
+        uniform vec2 uGroundMapOrigin;
+        uniform float uGroundMapExtent;
+
+        // Each noise is computed once and handed to the material functions (they were computed up
+        // to four times a pixel: the terrain's shading was mostly noise), and the slow ones come
+        // from the ground map where it reaches. sandy: rockSand's y, for glitter.
+        vec3 terrainAlbedo(vec3 p, float slope, float dist, out float sandy)
         {
             vec2 xz = p.xz;
+            vec2 uv = (xz - uGroundMapOrigin) / uGroundMapExtent;
+            float desert;
+            vec3 grass;
+            if (all(greaterThan(uv, vec2(0.001))) && all(lessThan(uv, vec2(0.999))))
+            {
+                vec4 ground = texture(uGroundMap, uv);
+                grass = ground.rgb;
+                desert = ground.a;
+            }
+            else
+            {
+                desert = desertWeight(xz);
+                grass = grassColorFor(xz, biomeWeightsFor(xz, desert));
+            }
             float broad = noise2(xz * 0.0035, 0.0);
             float mid = noise2(xz * 0.045, 2.0);
-            // Fine grain in three octaves, fading out with distance where it would only shimmer.
-            float grain = noise2(xz * 0.7, 3.0) * 0.5 + noise2(xz * 2.9, 4.0) * 0.3 + noise2(xz * 9.0, 5.0) * 0.2;
-            float fine = mix(grain, 0.5, smoothstep(30.0, 140.0, dist));
+            // Fine grain in three octaves, fading out with distance where it would only shimmer
+            // (and not computed at all past that).
+            float fine = 0.5;
+            if (dist < 140.0)
+            {
+                float grain = noise2(xz * 0.7, 3.0) * 0.5 + noise2(xz * 2.9, 4.0) * 0.3 + noise2(xz * 9.0, 5.0) * 0.2;
+                fine = mix(grain, 0.5, smoothstep(30.0, 140.0, dist));
+            }
 
             float strata = 0.5 + 0.5 * sin(p.y * 0.45 + mid * 6.0 + broad * 4.0);
             vec3 rock = mix(vec3(0.30, 0.23, 0.36), vec3(0.46, 0.35, 0.50), 0.5 + (strata - 0.5) * 0.45);
             vec3 sand = vec3(0.62, 0.48, 0.68);
             // Desert sand is warmer, peach and gold under the violet sky, with faint wind ripples.
-            float desert = desertWeight(xz);
             float ripples = 0.5 + 0.5 * sin(dot(xz, vec2(0.9, 0.45)) + mid * 9.0);
             sand = mix(sand, vec3(0.78, 0.56, 0.52) * (0.93 + 0.07 * ripples * smoothstep(80.0, 20.0, dist)), desert);
 
-            vec2 w = rockSand(p, slope);
-            vec3 albedo = mix(mix(grassColor(xz), sand, w.y), rock, w.x);
+            vec2 w = rockSandFor(p, slope, mid, desert);
+            sandy = w.y;
+            vec3 albedo = mix(mix(grass, sand, w.y), rock, w.x);
             return albedo * (0.75 + 0.5 * fine);
         }
 
         // Glitter: a few tiny grains that catch the light and twinkle, thickest on sand, brightest at
         // night. Which cells hold a grain, and each grain's own pace and phase, come from different
         // hashes: taken from the same one, the grains (all with nearly the same hash) blinked together.
-        vec3 glitter(vec3 p, vec3 n, float slope, float dist)
+        vec3 glitter(vec3 p, vec3 n, float sandy, float dist)
         {
             if (dist > 70.0 || n.y < 0.5) return vec3(0.0);
             vec3 cell = floor(p * 5.0);
             float h = hash13(cell);
-            float sandy = rockSand(p, slope).y;
             if (h < 0.997 - sandy * 0.003) return vec3(0.0);
             float r = length(fract(p * 5.0) - 0.5);
             float pace = 0.7 + 1.8 * hash13(cell + 11.7), phase = 6.2832 * hash13(cell - 23.1);
@@ -413,11 +461,12 @@ public static class TerrainShaders
         {
             vec3 n = normalize(vNormal);
             float dist = length(vWorldPos - uCameraPos);
-            vec3 albedo = terrainAlbedo(vWorldPos, vSlope, dist);
+            float sandy;
+            vec3 albedo = terrainAlbedo(vWorldPos, vSlope, dist, sandy);
             albedo = mix(albedo, SnowColor, snowOn(vWorldPos, n.y)) * vAo * tileEdges(vWorldPos, n, dist);
             // Sown ground looks watered: darker and a touch cooler on the tile's top, drying as the grass grows.
             albedo *= mix(vec3(1.0), vec3(0.42, 0.40, 0.48), wetGround(vWorldPos) * step(0.7, n.y));
-            vec3 color = litColor(albedo, vWorldPos, n, 0.0) + glitter(vWorldPos, n, vSlope, dist) * uMagic;
+            vec3 color = litColor(albedo, vWorldPos, n, 0.0) + glitter(vWorldPos, n, sandy, dist) * uMagic;
             FragColor = finishColor(color, vWorldPos, 1.0);
         }
         """;

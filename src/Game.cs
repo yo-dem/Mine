@@ -45,6 +45,7 @@ public sealed class Game : IDisposable
     private IslandRenderer _islandRenderer = null!;
     private WaterfallRenderer _waterfalls = null!;
     private SeaFloorMap _seaFloor = null!;
+    private GroundMap _groundMap = null!;
     private Ground _ground = null!;
     private Creatures _creatures = null!;
     private CreatureRenderer _creatureRenderer = null!;
@@ -339,6 +340,7 @@ public sealed class Game : IDisposable
         _islandRenderer?.Dispose();
         _waterfalls?.Dispose();
         _seaFloor?.Dispose();
+        _groundMap?.Dispose();
         _blockRenderer?.Dispose();
         _cubes?.Dispose();
 
@@ -352,6 +354,7 @@ public sealed class Game : IDisposable
         _islandRenderer = new IslandRenderer(_gl);
         _waterfalls = new WaterfallRenderer(_gl);
         _seaFloor = new SeaFloorMap(_gl, _terrainField);
+        _groundMap = new GroundMap(_gl, TerrainShaders.GroundMapFragment);
         _blocks = new Blocks(_terrainField);
         _blockRenderer = new BlockRenderer(_gl);
         _debris = new Debris();
@@ -807,6 +810,14 @@ public sealed class Game : IDisposable
         var projection = Matrix4x4.CreatePerspectiveFieldOfView(FieldOfView, (float)size.X / size.Y, NearPlane, FarPlane);
 
         _profiler.BeginFrame();
+        // The terrain's slow materials around the camera (redrawn only after moving far).
+        _groundMap.Update(eye, shader =>
+        {
+            var preset = WorldPreset.Current;
+            shader.Set("uDesertRange", new Vector2(preset.DesertLow, preset.DesertHigh));
+            shader.Set("uIslands", preset.Islands ? 1f : 0f);
+            shader.Set("uColorVariety", preset.ColorVariety);
+        });
         _profiler.Section("ombre");
         var atmosphere = _dayCycle.Sample();
         float time = (float)_time;
@@ -854,6 +865,10 @@ public sealed class Game : IDisposable
 
         _profiler.Section("terreno");
         SetWorldUniforms(_terrainShader, view * projection, eye, atmosphere, time);
+        _groundMap.Bind();
+        _terrainShader.Set("uGroundMap", GroundMap.Unit);
+        _terrainShader.Set("uGroundMapOrigin", float.IsNaN(_groundMap.Origin.X) ? new Vector2(1e9f) : _groundMap.Origin);
+        _terrainShader.Set("uGroundMapExtent", GroundMap.Extent);
         if (On("terrain")) _terrain.Draw(eye, look);
 
         _profiler.Section("oggetti+creature+isole");
@@ -1402,6 +1417,7 @@ public sealed class Game : IDisposable
         _islandRenderer?.Dispose();
         _waterfalls?.Dispose();
         _seaFloor?.Dispose();
+        _groundMap?.Dispose();
         _cloudNoise?.Dispose();
         _motes?.Dispose();
         _rain?.Dispose();
