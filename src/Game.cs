@@ -74,6 +74,15 @@ public sealed class Game : IDisposable
     // Inventory: the slots of materials the player carries, and which slot is in hand.
     private readonly Inventory _inventory = new();
     private int _slot;
+    // The wheel picks the slot one notch at a time. A trackpad sends a stream of small scroll events
+    // (and keeps sending them as the swipe coasts on), so after the first step of a gesture the next
+    // needs ScrollNotch of scrolling and at least ScrollInterval seconds since the last step; a pause
+    // of ScrollGestureGap (or scrolling the other way) starts a new gesture, which steps at once.
+    private const float ScrollNotch = 2.5f;
+    private const double ScrollInterval = 0.18, ScrollGestureGap = 0.25;
+    private float _scrollAccum;
+    private double _lastScrollAt = double.NegativeInfinity, _lastScrollStepAt = double.NegativeInfinity;
+    private int _scrollSign;
     private Resource? Held => _inventory[_slot]?.Resource;
     private WorldObject? _aimed; // the object under the crosshair, within reach
 
@@ -547,8 +556,12 @@ public sealed class Game : IDisposable
         if (_aimed is not null) _aimedBlock = null;
         _gatherTarget = _treeField.Pick(eye, look, objectDistance);
         if (_gatherTarget is not null) (_aimed, _aimedBlock) = (null, null);
-        // Nothing else aimed at: the meadow under the crosshair can be mown.
-        if (_gatherTarget is null && _aimed is null && _aimedBlock is null && groundHit && GrassAt(ground)) _mowTarget = ground;
+        // Nothing else aimed at: the tile under the crosshair can be mown if any of it holds grass
+        // (as far as seeds can be thrown, and not past a tree).
+        if (_gatherTarget is null && _aimed is null && _aimedBlock is null && AimedTile() is { } tile
+            && _treeField.Pick(eye, look, tile.Distance) is null
+            && Blocks.TileColumns(tile.Center.X, tile.Center.Z).Any(c => GrassAt(c.X, c.Z)))
+            _mowTarget = tile.Center;
     }
 
     private void PlaceBlock(BlockPlan plan)
@@ -570,28 +583,45 @@ public sealed class Game : IDisposable
     private static float BreakSeconds(Resource r) => r switch { Resource.Wood => 0.45f, Resource.Stone => 0.6f, _ => 0.35f };
     private static (Vector3, Vector3) ChipsOf(Resource r) => r switch { Resource.Wood => WoodChips, Resource.Stone => StoneChips, _ => CrystalChips };
 
-    // Tearing up grass: the meadow aimed at is torn up almost at once, within MowRadius of the
-    // point aimed at, for good (Blocks.TearUp), giving a seed for every SeedColumns columns of
-    // grass (at most MaxSeeds). Sowing a seed (right button) greens PlantRadius round the point
-    // where it lands, SowFlight seconds after it is thrown; holding the button sows a strip, a seed
-    // every SowInterval seconds wherever the aim has moved on.
-    private const float MowSeconds = 0.12f, MowRadius = 2.4f, PlantRadius = 1.3f, SowFlight = 0.55f, SowInterval = 0.3f;
-    private const int SeedColumns = 6, MaxSeeds = 4;
+    // Tearing up grass: the whole terrain tile aimed at is torn up almost at once, for good
+    // (Blocks.TearUp), giving one seed. Sowing a seed (right button) greens the tile where it lands,
+    // SowFlight seconds after it is thrown; holding the button sows a strip, a seed every
+    // SowInterval seconds wherever the aim has moved on to another tile.
+    private const float MowSeconds = 0.12f, SowFlight = 0.55f, SowInterval = 0.3f;
     private static readonly (Vector3, Vector3) SeedGlow = (new(0.45f, 1.0f, 0.85f), new(0.8f, 0.6f, 1.0f));
     private readonly List<(Vector3 At, double LandsAt)> _sown = new(); // seeds in the air
     private Vector3? _lastSown;
     private double _nextSowAt;
     private const float ButterflyGrass = 0.6f; // how grown planted grass must be for butterflies
-    private Vector3? _mowTarget; // the meadow ground under the crosshair, when nothing else is aimed at
+    private Vector3? _mowTarget; // the centre of the grassy tile under the crosshair, when nothing else is aimed at
     private readonly record struct MowKey(int X, int Z); // what is being mown (for the progress of the blow)
 
-    /// <summary>Whether grass grows at a point of the ground (so it can be torn up): a meadow not torn up, or grass planted.</summary>
+    /// <summary>
+    /// Whether grass grows at a point of the ground (so it can be torn up): a meadow not torn up
+    /// (growing back counts), or grass planted. The tests follow GrassRenderer's (a little more
+    /// generous: it tests each clump, this one point), so no visible grass is left out.
+    /// </summary>
     private bool GrassAt(Vector3 p)
     {
-        if (_terrainField.InPond(p.X, p.Z, 1f)) return false;
-        if (_blocks.Planted(p.X, p.Z)) return _blocks.GrassGrowth(p.X, p.Z) > 0.2f;
-        return p.Y > TerrainField.WaterLevel + 1f && _blocks.GrassGrowth(p.X, p.Z) >= 1f
-            && GroundMaterials.GrassWeight(p, _terrainField.Normal(p.X, p.Z).Y) > 0.5f;
+        if (_terrainField.InPond(p.X, p.Z, 0.5f)) return false;
+        float growth = _blocks.GrassGrowth(p.X, p.Z);
+        if (_blocks.Planted(p.X, p.Z)) return growth > 0f; // even just sown (it gives its seed back)
+        if (growth <= 0.2f) return false;
+        return p.Y >= TerrainField.WaterLevel + 1f && GroundMaterials.GrassWeight(p, _terrainField.Normal(p.X, p.Z).Y) >= 0.3f;
+    }
+
+    /// <summary>
+    /// The terrain tile under the crosshair within BuildReach, with no block in the way: its centre
+    /// (at its height) and how far along the view it was hit. A wall counts for the tile it belongs to.
+    /// </summary>
+    private (Vector3 Center, float Distance)? AimedTile()
+    {
+        var eye = _player.Eye;
+        var look = _player.LookDirection;
+        if (!_terrainField.Raycast(eye, look, BuildReach, out var ground)) return null;
+        float distance = Vector3.Distance(eye, ground);
+        if (_blocks.Raycast(eye, look, distance) is not null) return null;
+        return (_terrainField.TileCenter(ground.X + look.X * 0.05f, ground.Z + look.Z * 0.05f), distance);
     }
 
     private bool GrassAt(int x, int z) => GrassAt(new Vector3(x + 0.5f, _terrainField.Height(x + 0.5f, z + 0.5f), z + 0.5f));
@@ -613,10 +643,9 @@ public sealed class Game : IDisposable
     {
         var eye = _player.Eye;
         var look = _player.LookDirection;
-        if (!_terrainField.Raycast(eye, look, BuildReach, out var ground)) return;
-        if (_blocks.Raycast(eye, look, Vector3.Distance(eye, ground)) is not null) return; // a block is in the way
-        if (!click && _lastSown is { } last && Vector3.Distance(last, ground) < PlantRadius * 1.3f) return;
-        if (_sown.Any(s => Vector3.Distance(s.At, ground) < PlantRadius) || !_blocks.CanPlant(ground, PlantRadius, Plantable))
+        if (AimedTile() is not { Center: var ground }) return;
+        if (!click && _lastSown == ground) return;
+        if (_sown.Any(s => s.At == ground) || !_blocks.CanPlant(Blocks.TileColumns(ground.X, ground.Z), Plantable))
         {
             if (click) Toast("Qui non si puo seminare", new Vector4(1f, 0.6f, 0.6f, 1f));
             return;
@@ -644,7 +673,7 @@ public sealed class Game : IDisposable
             if (_sown[i].LandsAt > _time) continue;
             var at = _sown[i].At;
             _sown.RemoveAt(i);
-            if (_blocks.Plant(at, PlantRadius, Plantable) > 0) _dirty = true;
+            if (_blocks.Plant(Blocks.TileColumns(at.X, at.Z), Plantable) > 0) _dirty = true;
         }
     }
 
@@ -727,13 +756,13 @@ public sealed class Game : IDisposable
         }
         else if (_mowTarget is { } mown)
         {
-            // The meadow bursts into bits of blades, torn up round the point aimed at for good,
-            // and leaves tufts to plant elsewhere.
-            int grassy = _blocks.TearUp(mown, MowRadius, GrassAt);
+            // The tile's grass bursts into bits of blades, torn up for good, and leaves seeds to
+            // plant elsewhere.
+            int grassy = _blocks.TearUp(Blocks.TileColumns(mown.X, mown.Z).ToList(), GrassAt);
             if (grassy > 0)
             {
-                _debris.Burst(mown, 0.9f, MowRadius, 70, chip, chip2);
-                _debris.Spill(Resource.Seeds, Math.Clamp(grassy / SeedColumns, 1, MaxSeeds), mown, 0.4f);
+                _debris.Burst(mown, 0.9f, TerrainField.TileSize * 0.6f, 40, chip, chip2);
+                _debris.Spill(Resource.Seeds, 1, mown, 0.4f);
             }
             _mowTarget = null;
         }
@@ -1183,7 +1212,19 @@ public sealed class Game : IDisposable
     private void OnScroll(IMouse mouse, ScrollWheel wheel)
     {
         if (!_mouseCaptured || wheel.Y == 0) return;
-        int step = wheel.Y > 0 ? -1 : 1;
+        int sign = Math.Sign(wheel.Y);
+        bool newGesture = _time - _lastScrollAt > ScrollGestureGap || sign != _scrollSign;
+        _lastScrollAt = _time;
+        _scrollSign = sign;
+        if (newGesture) _scrollAccum = 0f;
+        else
+        {
+            _scrollAccum += MathF.Abs(wheel.Y);
+            if (_scrollAccum < ScrollNotch || _time - _lastScrollStepAt < ScrollInterval) return;
+            _scrollAccum = 0f;
+        }
+        _lastScrollStepAt = _time;
+        int step = -sign;
         _slot = (_slot + step + Inventory.SlotCount) % Inventory.SlotCount;
         _inventoryUsedAt = _time; // the inventory shows fully again
     }

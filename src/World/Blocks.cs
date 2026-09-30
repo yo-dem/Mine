@@ -306,30 +306,28 @@ public sealed class Blocks
     /// <summary>Whether the grass at (x, z) was torn up (and not planted again).</summary>
     public bool Torn(float x, float z) => _torn.Contains(ColumnOf(x, z)) && !Planted(x, z);
 
-    // The columns whose centre lies within `radius` of a point.
-    private static IEnumerable<(int X, int Z)> ColumnsWithin(Vector3 center, float radius)
+    /// <summary>The columns of the terrain tile containing (x, z).</summary>
+    public static IEnumerable<(int X, int Z)> TileColumns(float x, float z)
     {
-        for (int z = (int)MathF.Floor(center.Z - radius); z <= (int)MathF.Floor(center.Z + radius); z++)
-        for (int x = (int)MathF.Floor(center.X - radius); x <= (int)MathF.Floor(center.X + radius); x++)
-        {
-            float dx = x + 0.5f - center.X, dz = z + 0.5f - center.Z;
-            if (dx * dx + dz * dz <= radius * radius) yield return (x, z);
-        }
+        int size = (int)TerrainField.TileSize;
+        int x0 = (int)MathF.Floor(x / size) * size, z0 = (int)MathF.Floor(z / size) * size;
+        for (int dz = 0; dz < size; dz++)
+        for (int dx = 0; dx < size; dx++)
+            yield return (x0 + dx, z0 + dz);
     }
 
     /// <summary>
-    /// Tears up the grass within <paramref name="radius"/> of a point, for good: nothing grows
-    /// there again unless planted. Returns how many of its columns held grass
-    /// (<paramref name="grassy"/>), for the tufts it gives.
+    /// Tears up the grass of some columns, for good: nothing grows there again unless planted.
+    /// Returns how many of them held grass (<paramref name="grassy"/>), for the seeds it gives.
     /// </summary>
-    public int TearUp(Vector3 center, float radius, Func<int, int, bool> grassy)
+    public int TearUp(IEnumerable<(int X, int Z)> columns, Func<int, int, bool> grassy)
     {
         var torn = new HashSet<(int X, int Z)>(_torn);
         var planted = new Dictionary<(int X, int Z), long>(_planted);
         var regrowing = new Dictionary<(int X, int Z), long>(_regrowing);
         var changed = new List<(int X, int Z)>();
         int withGrass = 0;
-        foreach (var column in ColumnsWithin(center, radius))
+        foreach (var column in columns)
         {
             if (_cleared.Contains(column)) continue;
             if (grassy(column.X, column.Z)) withGrass++;
@@ -345,17 +343,17 @@ public sealed class Blocks
         return withGrass;
     }
 
-    /// <summary>Whether any column within <paramref name="radius"/> of a point could be planted (see <see cref="Plant"/>).</summary>
-    public bool CanPlant(Vector3 center, float radius, Func<int, int, bool> bare) =>
-        ColumnsWithin(center, radius).Any(c => !_cleared.Contains(c) && !_planted.ContainsKey(c) && bare(c.X, c.Z));
+    /// <summary>Whether any of some columns could be planted (see <see cref="Plant"/>).</summary>
+    public bool CanPlant(IEnumerable<(int X, int Z)> columns, Func<int, int, bool> bare) =>
+        columns.Any(c => !_cleared.Contains(c) && !_planted.ContainsKey(c) && bare(c.X, c.Z));
 
-    /// <summary>Plants grass within <paramref name="radius"/> of a point (where <paramref name="bare"/> says it has none): it starts small and grows.</summary>
-    public int Plant(Vector3 center, float radius, Func<int, int, bool> bare)
+    /// <summary>Plants grass in some columns (where <paramref name="bare"/> says it has none): it starts small and grows.</summary>
+    public int Plant(IEnumerable<(int X, int Z)> columns, Func<int, int, bool> bare)
     {
         var planted = new Dictionary<(int X, int Z), long>(_planted);
         var changed = new List<(int X, int Z)>();
         long now = UnixNow;
-        foreach (var column in ColumnsWithin(center, radius))
+        foreach (var column in columns)
         {
             if (_cleared.Contains(column) || planted.ContainsKey(column) || !bare(column.X, column.Z)) continue;
             planted[column] = now;
