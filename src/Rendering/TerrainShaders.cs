@@ -97,13 +97,13 @@ public static class TerrainShaders
         // Mirrored in C# by GroundMaterials.GrassColor: keep the two in sync.
         vec3 grassColor(vec2 xz)
         {
-            float patch = noise2(xz * 0.012, 11.0) * 0.75 + noise2(xz * 0.04, 12.0) * 0.25;
+            float hue = noise2(xz * 0.012, 11.0) * 0.75 + noise2(xz * 0.04, 12.0) * 0.25;
             float shade = noise2(xz * 0.09, 13.0);
-            vec3 c = vec3(0.14, 0.34, 0.38);                                   // teal
-            c = mix(c, vec3(0.34, 0.22, 0.54), smoothstep(0.30, 0.36, patch)); // violet
-            c = mix(c, vec3(0.56, 0.20, 0.46), smoothstep(0.44, 0.50, patch)); // magenta
-            c = mix(c, vec3(0.58, 0.46, 0.42), smoothstep(0.56, 0.62, patch)); // lilac gold
-            c = mix(c, vec3(0.16, 0.32, 0.58), smoothstep(0.68, 0.74, patch)); // sky blue
+            vec3 c = vec3(0.14, 0.34, 0.38);                                 // teal
+            c = mix(c, vec3(0.34, 0.22, 0.54), smoothstep(0.30, 0.36, hue)); // violet
+            c = mix(c, vec3(0.56, 0.20, 0.46), smoothstep(0.44, 0.50, hue)); // magenta
+            c = mix(c, vec3(0.58, 0.46, 0.42), smoothstep(0.56, 0.62, hue)); // lilac gold
+            c = mix(c, vec3(0.16, 0.32, 0.58), smoothstep(0.68, 0.74, hue)); // sky blue
             // Each biome pulls the patches toward its own hue (indigo, pink, teal, desert straw).
             vec4 b = biomeWeights(xz);
             vec3 tint = vec3(0.20, 0.24, 0.56) * b.x + vec3(0.62, 0.24, 0.50) * b.y + vec3(0.10, 0.44, 0.48) * b.z + vec3(0.60, 0.46, 0.36) * b.w;
