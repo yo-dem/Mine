@@ -6,7 +6,8 @@ namespace Mine.Rendering;
 
 /// <summary>
 /// The inventory's icons: each material's model (<see cref="ItemMeshes"/>) turning slowly in its
-/// slot, drawn over the finished image in pixels (origin top left) with a simple fixed light.
+/// slot, drawn over the finished image in pixels (origin top left) with a simple fixed light. The
+/// seeds show as they are held, in their glass jar (<see cref="ItemMeshes.SeedJar"/>).
 /// </summary>
 public sealed unsafe class IconRenderer : IDisposable
 {
@@ -19,7 +20,7 @@ public sealed unsafe class IconRenderer : IDisposable
         layout(location = 2) in vec3 aColor;
         layout(location = 3) in float aEmissive;
         uniform mat4 uTransform; // model to screen
-        uniform mat4 uTurn;      // the model's rotation, for the normals
+        uniform mat4 uTurn;      // the model's rotation, for the normals (in screen space, y down)
         out vec3 vNormal;
         out vec3 vColor;
         out float vEmissive;
@@ -37,10 +38,18 @@ public sealed unsafe class IconRenderer : IDisposable
         in vec3 vNormal;
         in vec3 vColor;
         in float vEmissive;
+        uniform float uGlass; // 1 for glass: see-through, brighter at its edges (premultiplied alpha)
         out vec4 FragColor;
         void main()
         {
             vec3 n = normalize(vNormal);
+            if (uGlass > 0.5)
+            {
+                float edge = pow(1.0 - abs(n.z), 2.0);
+                float alpha = mix(0.12, 0.65, edge) + 0.5 * vEmissive;
+                FragColor = vec4(vColor * alpha, min(alpha, 1.0));
+                return;
+            }
             float light = 0.45 + 0.75 * max(dot(n, normalize(vec3(-0.4, 0.8, 0.5))), 0.0);
             vec3 color = mix(vColor * light * 1.2, vColor * 1.7, vEmissive * 0.6);
             FragColor = vec4(min(color, vec3(1.0)), 1.0);
@@ -50,12 +59,15 @@ public sealed unsafe class IconRenderer : IDisposable
     private readonly GL _gl;
     private readonly Shader _shader;
     private readonly (uint Vao, uint Vbo, int Count)[] _models;
+    private readonly (uint Vao, uint Vbo, int Count) _jarGlass;
 
     public IconRenderer(GL gl)
     {
         _gl = gl;
         _shader = new Shader(gl, VertexSource, FragmentSource);
-        _models = Enum.GetValues<Resource>().Select(r => Upload(ItemMeshes.Item(r))).ToArray();
+        var (jar, glass) = ItemMeshes.SeedJar();
+        _models = Enum.GetValues<Resource>().Select(r => Upload(r == Resource.Seeds ? jar : ItemMeshes.Item(r))).ToArray();
+        _jarGlass = Upload(glass);
     }
 
     /// <summary>Starts drawing icons over a screen of this size (depth cleared, so each model sorts its own faces).</summary>
@@ -82,6 +94,18 @@ public sealed unsafe class IconRenderer : IDisposable
         var (vao, _, count) = _models[(int)resource];
         _gl.BindVertexArray(vao);
         _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)count);
+        if (resource != Resource.Seeds) return;
+
+        // The jar's glass over its grains, blended without writing depth.
+        _gl.Enable(EnableCap.Blend);
+        _gl.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
+        _gl.DepthMask(false);
+        _shader.Set("uGlass", 1f);
+        _gl.BindVertexArray(_jarGlass.Vao);
+        _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)_jarGlass.Count);
+        _shader.Set("uGlass", 0f);
+        _gl.DepthMask(true);
+        _gl.Disable(EnableCap.Blend);
     }
 
     public void End() => _gl.Enable(EnableCap.CullFace);
@@ -107,7 +131,7 @@ public sealed unsafe class IconRenderer : IDisposable
 
     public void Dispose()
     {
-        foreach (var (vao, vbo, _) in _models)
+        foreach (var (vao, vbo, _) in _models.Append(_jarGlass))
         {
             _gl.DeleteBuffer(vbo);
             _gl.DeleteVertexArray(vao);

@@ -130,8 +130,8 @@ public sealed class Game : IDisposable
     private bool _panelOpen = Environment.GetEnvironmentVariable("MINE_MENU") == "1"; // MINE_MENU=1: open from the start
     private string[] _info = [];
     private static readonly (Key Key, string Name)[] OptionKeys =
-        [(Key.V, "Sincronizzazione verticale"), (Key.M, "Salvataggio del mondo"), (Key.X, "Esci dal gioco")];
-    private const int VSyncOption = 0, SaveWorldOption = 1, QuitOption = 2; // quitting is an action, not a switch
+        [(Key.V, "Sincronizzazione verticale"), (Key.M, "Salvataggio del mondo"), (Key.I, "Schermo intero"), (Key.X, "Esci dal gioco")];
+    private const int VSyncOption = 0, SaveWorldOption = 1, FullscreenOption = 2, QuitOption = 3; // quitting is an action, not a switch
 
     public Game()
     {
@@ -189,6 +189,9 @@ public sealed class Game : IDisposable
             if (have > TestStock) _inventory.Take(resource, have - TestStock);
             else _inventory.Add(resource, TestStock - have);
         }
+        // MINE_SLOT=seeds (or wood, stone, crystal): starts with that material in hand.
+        if (Enum.TryParse<Resource>(Environment.GetEnvironmentVariable("MINE_SLOT"), true, out var inHand))
+            _slot = Math.Max(Enumerable.Range(0, Inventory.SlotCount).FirstOrDefault(i => _inventory[i]?.Resource == inHand, -1), 0);
         _sky = new SkyRenderer(_gl);
         _shadowMap = new ShadowMap(_gl);
         if (int.TryParse(Environment.GetEnvironmentVariable("MINE_WORLD"), out int world) && world >= 1 && world <= WorldPreset.All.Length)
@@ -513,7 +516,7 @@ public sealed class Game : IDisposable
         _blocks.UpdateSpires(_player.Position);
         _blockRenderer.Update(_blocks);
         _blocks.Update();
-        _indoor.Update(_blocks, _player.Eye);
+        _indoor.Update(_blocks, _player.Eye, _time);
         var walk = new Vector2(_player.Velocity.X, _player.Velocity.Z).Length();
         if (_player.OnGround) _bobPhase += walk * dt * 1.2f;
         _toasts.RemoveAll(t => t.Until < _time);
@@ -591,6 +594,8 @@ public sealed class Game : IDisposable
     private static readonly (Vector3, Vector3) SeedGlow = (new(0.45f, 1.0f, 0.85f), new(0.8f, 0.6f, 1.0f));
     private readonly List<(Vector3 At, double LandsAt)> _sown = new(); // seeds in the air
     private Vector3? _lastSown;
+    private double _thrownAt = double.NegativeInfinity; // when seeds were last thrown (the jar's flick, see DrawHeldItem)
+    private const float FlickSeconds = 0.35f;
     private double _nextSowAt;
     private const float ButterflyGrass = 0.6f; // how grown planted grass must be for butterflies
     private Vector3? _mowTarget; // the centre of the grassy tile under the crosshair, when nothing else is aimed at
@@ -655,6 +660,7 @@ public sealed class Game : IDisposable
         var right = Vector3.Normalize(Vector3.Cross(look, Vector3.UnitY));
         var hand = eye + look * 0.5f + right * 0.35f - Vector3.UnitY * 0.35f;
         _debris.Throw(hand, ground, SowFlight, 16, SeedGlow.Item1, SeedGlow.Item2);
+        _thrownAt = _time;
         _sown.Add((ground, _time + SowFlight));
     }
 
@@ -946,8 +952,16 @@ public sealed class Game : IDisposable
         Matrix4x4.Invert(view, out var cameraToWorld);
         float bobX = MathF.Cos(_bobPhase) * 0.012f, bobY = -MathF.Abs(MathF.Sin(_bobPhase)) * 0.018f;
         float chop = _gathering is not null ? 0.5f + 0.5f * MathF.Sin(time * 14f) : 0f;
-        var local = Matrix4x4.CreateScale(0.34f) * Matrix4x4.CreateRotationY(-0.55f) * Matrix4x4.CreateRotationX(0.2f + chop * 0.5f)
-                    * Matrix4x4.CreateTranslation(0.42f + bobX, -0.38f + bobY - chop * 0.05f, -0.72f - chop * 0.06f);
+        // The seed jar is big and low, its bottom out of the view (so no hand is missed).
+        bool jar = resource == Resource.Seeds;
+        float lift = jar ? 0.06f : 0f;
+        // Throwing seeds, the jar flicks forward and up, tipping its mouth toward the ground aimed at,
+        // and swings back.
+        float since = (float)(_time - _thrownAt) / FlickSeconds;
+        float flick = jar && since is >= 0f and < 1f ? MathF.Sin(MathF.PI * since) * (1f - 0.3f * since) : 0f;
+        var local = Matrix4x4.CreateScale(jar ? 0.6f : 0.34f) * Matrix4x4.CreateRotationY(-0.55f)
+                    * Matrix4x4.CreateRotationX(0.2f + chop * 0.5f - flick * 0.75f) * Matrix4x4.CreateRotationZ(flick * 0.2f)
+                    * Matrix4x4.CreateTranslation(0.42f + bobX - flick * 0.04f, -0.38f + lift + bobY - chop * 0.05f + flick * 0.07f, -0.72f - chop * 0.06f - flick * 0.12f);
 
         // Over everything, never cut by a wall the player stands against.
         _gl.DepthMask(true);
@@ -956,7 +970,26 @@ public sealed class Game : IDisposable
         _objectShader.Set("uModel", local * cameraToWorld);
         _objectShader.Set("uGlow", 1f);
         _objectShader.Set("uHighlight", 0f);
-        _objectRenderer.DrawItem(resource);
+        if (resource != Resource.Seeds)
+        {
+            _objectRenderer.DrawItem(resource);
+            return;
+        }
+
+        // The seeds are held in a glass jar: the lid and the grains, then the glass over them,
+        // its far side first, blended without writing depth.
+        _objectRenderer.DrawSeedJar(glass: false);
+        _gl.Enable(EnableCap.Blend);
+        _gl.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
+        _gl.DepthMask(false);
+        _objectShader.Set("uGlass", 1f);
+        _gl.CullFace(TriangleFace.Front);
+        _objectRenderer.DrawSeedJar(glass: true);
+        _gl.CullFace(TriangleFace.Back);
+        _objectRenderer.DrawSeedJar(glass: true);
+        _objectShader.Set("uGlass", 0f);
+        _gl.DepthMask(true);
+        _gl.Disable(EnableCap.Blend);
     }
 
     /// <summary>The interface: the materials column, the progress of a blow, messages and the menu.</summary>
@@ -1003,8 +1036,7 @@ public sealed class Game : IDisposable
         for (int i = 0; i < Inventory.SlotCount; i++)
             if (_inventory[i] is { } stack)
             {
-                // The flat seeds only sway a little (turning round, they would show their edge).
-                float turn = stack.Resource == Resource.Seeds ? 0.25f * MathF.Sin((float)_time * 0.8f + i) : (float)_time * 1.2f + i * 0.7f;
+                float turn = (float)_time * 1.2f + i * 0.7f;
                 _icons.Draw(stack.Resource, SlotX(i) + slotSize / 2f, SlotY(i) + slotSize / 2f - s, slotSize * 0.55f, turn);
             }
         _icons.End();
@@ -1229,7 +1261,12 @@ public sealed class Game : IDisposable
         _inventoryUsedAt = _time; // the inventory shows fully again
     }
 
-    private bool OptionOn(int option) => option == VSyncOption ? _window.VSync : _save.Options.SaveWorld;
+    private bool OptionOn(int option) => option switch
+    {
+        VSyncOption => _window.VSync,
+        FullscreenOption => _window.WindowState == WindowState.Fullscreen,
+        _ => _save.Options.SaveWorld,
+    };
 
     /// <summary>Switches an option of the menu, and saves the choice (or quits the game).</summary>
     private void ToggleOption(int option)
@@ -1240,7 +1277,8 @@ public sealed class Game : IDisposable
             return;
         }
         bool on = !OptionOn(option);
-        if (option == VSyncOption)
+        if (option == FullscreenOption) SetFullscreen(on); // not saved: the game starts windowed (for now, debugging)
+        else if (option == VSyncOption)
         {
             _window.VSync = on;
             _save.Options.VSync = on;

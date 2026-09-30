@@ -17,12 +17,23 @@ public sealed unsafe class ObjectRenderer : IDisposable
     private readonly GL _gl;
     private readonly (uint Vao, uint Vbo, int Count)[] _meshes;
     private readonly (uint Vao, uint Vbo, int Count)[] _items;
+    private readonly (uint Vao, uint Vbo, int Count) _jar, _jarGlass; // the seeds as held
 
     public ObjectRenderer(GL gl)
     {
         _gl = gl;
         _meshes = Enum.GetValues<ObjectKind>().Select(kind => Upload(BuildMesh(kind))).ToArray();
         _items = Enum.GetValues<Resource>().Select(r => Upload(ItemMeshes.Item(r))).ToArray();
+        var (jar, glass) = ItemMeshes.SeedJar();
+        (_jar, _jarGlass) = (Upload(jar), Upload(glass));
+    }
+
+    /// <summary>The seed jar as held (see <see cref="ItemMeshes.SeedJar"/>): its solid parts, or its glass.</summary>
+    public void DrawSeedJar(bool glass)
+    {
+        var (vao, _, count) = glass ? _jarGlass : _jar;
+        _gl.BindVertexArray(vao);
+        _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)count);
     }
 
     /// <summary>Draws the model of a material (one unit across, centred on the origin: see <see cref="ItemMeshes"/>).</summary>
@@ -85,7 +96,7 @@ public sealed unsafe class ObjectRenderer : IDisposable
 
     public void Dispose()
     {
-        foreach (var (vao, vbo, _) in _meshes.Concat(_items))
+        foreach (var (vao, vbo, _) in _meshes.Concat(_items).Append(_jar).Append(_jarGlass))
         {
             _gl.DeleteBuffer(vbo);
             _gl.DeleteVertexArray(vao);

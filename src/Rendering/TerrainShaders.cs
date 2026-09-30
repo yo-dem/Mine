@@ -283,6 +283,27 @@ public static class TerrainShaders
             }
             return vec4(color, 1.0);
         }
+
+        // Clear glass (blocks of glass, the seed jar, translucent crystals), premultiplied alpha:
+        // a faint tint lit like anything else, the sky mirrored more strongly toward the edges
+        // (Fresnel), a sharp glint of the sun or moon; `glow` makes it shine and more opaque (the
+        // edges of a block, streaks of light, a crystal's tip).
+        vec4 glassColor(vec3 pos, vec3 n, vec3 tint, float glow)
+        {
+            vec3 v = normalize(uCameraPos - pos);
+            if (dot(n, v) < 0.0) n = -n; // the far side, seen through the near one
+            float facing = clamp(dot(n, v), 0.0, 1.0);
+            float fresnel = pow(1.0 - facing, 3.0);
+            vec3 mirrored = skyColor(reflect(-v, n), false);
+            float glint = pow(max(dot(n, normalize(uLightDir + v)), 0.0), 90.0);
+            float alpha = clamp(mix(0.12, 0.7, fresnel) + 0.5 * glow, 0.0, 1.0);
+            vec3 body = litColor(tint, pos, n, 0.0) * 0.35;
+            vec3 color = body * alpha + mirrored * (0.15 + 0.6 * fresnel) + uLightColor * glint * 2.0
+                + tint * glow * mix(0.6, 1.2, uNight);
+            // Far away it fades into the fog like everything else.
+            float fog = smoothstep(uFogStart, uFogEnd, length(pos - uCameraPos));
+            return vec4(color, alpha) * (1.0 - fog);
+        }
         """;
 
     private const string FragmentHeader = "#version 330 core\n" + SkyRenderer.Glsl + IndoorMap.Glsl + Materials + Lighting;
@@ -380,6 +401,8 @@ public static class TerrainShaders
             float dist = length(vWorldPos - uCameraPos);
             vec3 albedo = terrainAlbedo(vWorldPos, vSlope, dist);
             albedo = mix(albedo, SnowColor, snowOn(vWorldPos, n.y)) * vAo * tileEdges(vWorldPos, n, dist);
+            // Sown ground looks watered: darker and a touch cooler on the tile's top, drying as the grass grows.
+            albedo *= mix(vec3(1.0), vec3(0.42, 0.40, 0.48), wetGround(vWorldPos) * step(0.7, n.y));
             vec3 color = litColor(albedo, vWorldPos, n, 0.0) + glitter(vWorldPos, n, vSlope, dist) * uMagic;
             FragColor = finishColor(color, vWorldPos, 1.0);
         }
@@ -486,6 +509,7 @@ public static class TerrainShaders
 
         uniform mat4 uViewProj;
         uniform float uTime;
+        uniform float uGlass; // 1 in the see-through pass: only the glass parts are drawn, 0: all but them
 
         out vec3 vWorldPos;
         out vec3 vNormal;
@@ -499,9 +523,13 @@ public static class TerrainShaders
             vWorldPos = world;
             vNormal = treeRotate(aNormal, aInstance.w);
             vColor = aColor;
-            vEmissive = aEmissive;
+            // Glass parts (translucent crystals) carry their glow as -1 - glow (TreeModels.Prism).
+            bool glass = aEmissive < -0.5;
+            vEmissive = glass ? -aEmissive - 1.0 : aEmissive;
             vFoliage = step(0.99, aSway);
             gl_Position = uViewProj * vec4(world, 1.0);
+            // Parts of the other pass are dropped (outside the clip volume, so no discard is needed).
+            if (glass != (uGlass > 0.5)) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         }
         """;
 
@@ -513,11 +541,18 @@ public static class TerrainShaders
         in float vEmissive;
         in float vFoliage;
 
+        uniform float uGlass; // the see-through pass (see TreeVertex)
+
         out vec4 FragColor;
 
         void main()
         {
             vec3 n = normalize(vNormal);
+            if (uGlass > 0.5)
+            {
+                FragColor = glassColor(vWorldPos, n, vColor, vEmissive);
+                return;
+            }
             vec3 rd = normalize(vWorldPos - uCameraPos);
             vec3 albedo = mix(vColor, SnowColor, snowOn(vWorldPos, n.y) * (1.0 - vEmissive));
             vec3 color = litColor(albedo, vWorldPos, n, vFoliage * 0.5);
@@ -901,12 +936,18 @@ public static class TerrainShaders
 
         uniform float uGlow;      // flicker of the object's own light
         uniform float uHighlight; // 1 while the player aims at the object
+        uniform float uGlass;     // 1 for glass: see-through, premultiplied alpha (glassColor)
 
         out vec4 FragColor;
 
         void main()
         {
             vec3 n = normalize(vNormal);
+            if (uGlass > 0.5)
+            {
+                FragColor = glassColor(vWorldPos, n, vColor, vEmissive);
+                return;
+            }
             vec3 albedo = mix(vColor, SnowColor, snowOn(vWorldPos, n.y) * (1.0 - vEmissive));
             vec3 color = litColor(albedo, vWorldPos, n, 0.0);
             // Glowing parts shine with their own colour, brighter at night.

@@ -18,9 +18,9 @@ public sealed class Debris
 
     private const float Gravity = 14f;
     private const float DropSize = 0.28f;
-    private const float AttractRadius = 5f;   // from the player's chest
+    private const float AttractRadius = 2f;   // from the player's chest
     private const float CollectRadius = 1.1f;
-    private const float AttractSpeed = 18f;
+    private const float AttractSpeed = 9f;
 
     private struct Chip
     {

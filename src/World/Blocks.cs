@@ -88,6 +88,36 @@ public sealed class Blocks
     /// <summary>Changes whenever a block is added or removed.</summary>
     public int Version { get; private set; }
 
+    /// <summary>Changes whenever grass is planted or torn up (see <see cref="Plantings"/>).</summary>
+    public int PlantingsVersion { get; private set; }
+
+    // Just sown, the ground looks watered for WetSeconds, then dries by DrySeconds.
+    private const float WetSeconds = 3f, DrySeconds = 9f;
+
+    /// <summary>Whether some sown ground is still wet (see <see cref="Plantings"/>).</summary>
+    public bool GroundDrying
+    {
+        get
+        {
+            long now = UnixNow, planted = now - (long)(DrySeconds * 1000);
+            var all = _planted;
+            return _plantedGrowing.Any(c => all.TryGetValue(c, out long at) && at > planted);
+        }
+    }
+
+    /// <summary>How wet the ground of each planted column looks: dark as if watered just after sowing, soon dry.</summary>
+    public IEnumerable<((int X, int Z) Column, float Wet)> Plantings()
+    {
+        long now = UnixNow;
+        return _planted.Select(p => (p.Key, 1f - SmoothStep(WetSeconds, DrySeconds, (now - p.Value) / 1000f)));
+    }
+
+    private static float SmoothStep(float a, float b, float x)
+    {
+        float t = Math.Clamp((x - a) / (b - a), 0f, 1f);
+        return t * t * (3f - 2f * t);
+    }
+
     public int Count => _blocks.Count;
 
     public IEnumerable<KeyValuePair<BlockPos, Resource>> All => _blocks;
@@ -339,6 +369,7 @@ public sealed class Blocks
         }
         if (withGrass == 0) return 0;
         (_torn, _planted, _regrowing) = (torn, planted, regrowing);
+        PlantingsVersion++;
         RaiseGroundChanged(changed);
         return withGrass;
     }
@@ -362,6 +393,7 @@ public sealed class Blocks
         }
         if (changed.Count == 0) return 0;
         _planted = planted;
+        PlantingsVersion++;
         _nextRegrowTick = 0;
         RaiseGroundChanged(changed);
         return changed.Count;
@@ -378,6 +410,7 @@ public sealed class Blocks
         _plantedGrowing.Clear();
         foreach (var (column, at) in _planted)
             if (PlantedGrowth(at) < 1f) _plantedGrowing.Add(column);
+        PlantingsVersion++;
     }
 
     // One GroundChanged per 32 m cell (the size of the grass tiles and of the tree cells, which
