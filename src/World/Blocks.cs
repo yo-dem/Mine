@@ -39,7 +39,8 @@ public readonly record struct BlockPlan(BlockPos Position, Vector3 Normal, strin
 /// under a roof, where nothing from outside gets (<see cref="Indoors"/>).
 /// The rock spires are natural stone blocks too (<see cref="UpdateSpires"/>): laid within
 /// <see cref="SpireRadius"/> of the player, solid through, all on one 1 m grid, and dug like any
-/// block; only the blocks dug out of them are saved.
+/// block; only the blocks dug out of them are saved. Veins of glass and of glowing crystal wind
+/// through them (<see cref="VeinAt"/>): the only place those materials are found.
 /// </summary>
 public sealed class Blocks
 {
@@ -61,6 +62,7 @@ public sealed class Blocks
     // each spire laid (by its centre), the ground under each column (cached: noise is slow), the
     // columns holding blocks the player placed, and where the spires were last looked for.
     private readonly HashSet<BlockPos> _natural = new();
+    private readonly Dictionary<BlockPos, Resource> _veins = new(); // the natural blocks holding glass or crystal
     private readonly HashSet<BlockPos> _dug = new();
     private readonly Dictionary<(float X, float Z), List<BlockPos>> _spires = new();
     private readonly Dictionary<(int X, int Z), float> _ground = new();
@@ -153,7 +155,11 @@ public sealed class Blocks
     public Resource? Remove(BlockPos p)
     {
         if (Delete(p) is not { } resource) return null;
-        if (_natural.Remove(p)) _dug.Add(p);
+        if (_natural.Remove(p))
+        {
+            _dug.Add(p);
+            if (_veins.Remove(p, out var ore)) resource = ore; // a vein gives its mineral
+        }
         else if (_placed.TryGetValue((p.X, p.Z), out int placed))
         {
             if (placed <= 1) _placed.Remove((p.X, p.Z));
@@ -165,6 +171,12 @@ public sealed class Blocks
 
     /// <summary>Whether a block belongs to a rock spire.</summary>
     public bool IsNatural(BlockPos p) => _natural.Contains(p);
+
+    /// <summary>The mineral a spire's block holds (glass or crystal), if it is part of a vein.</summary>
+    public Resource? VeinAt(BlockPos p) => _veins.TryGetValue(p, out var r) ? r : null;
+
+    /// <summary>What breaking the block gives: its mineral for a vein, else its own material.</summary>
+    public Resource? MaterialAt(BlockPos p) => VeinAt(p) ?? At(p);
 
     private void Insert(BlockPos p, Resource resource)
     {
@@ -213,6 +225,7 @@ public sealed class Blocks
             if (Vector2.Distance(new Vector2(key.X, key.Z), at) < SpireForget) continue;
             foreach (var p in _spires[key])
                 if (_natural.Remove(p) && Delete(p) is not null) MarkDirty(p);
+            foreach (var p in _spires[key]) _veins.Remove(p);
             _spires.Remove(key);
             changed = true;
         }
@@ -235,6 +248,7 @@ public sealed class Blocks
                     if (_dug.Contains(p) || Overlaps(p)) continue;
                     Insert(p, Resource.Stone);
                     _natural.Add(p);
+                    if (Vein(p) is { } ore) _veins[p] = ore;
                     laid.Add(p);
                 }
             }
@@ -243,6 +257,45 @@ public sealed class Blocks
             changed = true;
         }
         if (changed) Version++;
+    }
+
+    // Veins: thin sheets winding through the rock where a 3D noise crosses zero, broken into patches
+    // by a second noise; crystal veins are thinner and rarer than glass ones, and win where they cross.
+    private const float VeinScale = 0.11f;                      // per metre: sheets a few metres apart
+    private const float GlassVeinWidth = 0.09f, CrystalVeinWidth = 0.02f;
+
+    private static Resource? Vein(BlockPos p)
+    {
+        float x = p.X + 0.5f, y = p.Bottom + Size / 2, z = p.Z + 0.5f;
+        bool Sheet(int seed, float width, float patches) =>
+            MathF.Abs(ValueNoise(x * VeinScale, y * VeinScale, z * VeinScale, seed)) < width
+            && ValueNoise(x * 0.05f, y * 0.05f, z * 0.05f, seed + 1) > patches;
+        if (Sheet(71, CrystalVeinWidth, 0.25f)) return Resource.Crystal;
+        if (Sheet(37, GlassVeinWidth, -0.2f)) return Resource.Glass;
+        return null;
+    }
+
+    // Smooth 3D value noise in [-1, 1].
+    private static float ValueNoise(float x, float y, float z, int seed)
+    {
+        int x0 = (int)MathF.Floor(x), y0 = (int)MathF.Floor(y), z0 = (int)MathF.Floor(z);
+        float fx = x - x0, fy = y - y0, fz = z - z0;
+        fx *= fx * (3 - 2 * fx);
+        fy *= fy * (3 - 2 * fy);
+        fz *= fz * (3 - 2 * fz);
+        float Corner(int i, int j, int k)
+        {
+            unchecked
+            {
+                uint h = (uint)((x0 + i) * 374761393 + (y0 + j) * 668265263 + (z0 + k) * 1274126177 + seed * 1442695041);
+                h = (h ^ (h >> 13)) * 1274126177u;
+                return ((h ^ (h >> 16)) & 0xFFFF) / 32767.5f - 1f;
+            }
+        }
+        float Lerp(float a, float b, float t) => a + (b - a) * t;
+        return Lerp(
+            Lerp(Lerp(Corner(0, 0, 0), Corner(1, 0, 0), fx), Lerp(Corner(0, 1, 0), Corner(1, 1, 0), fx), fy),
+            Lerp(Lerp(Corner(0, 0, 1), Corner(1, 0, 1), fx), Lerp(Corner(0, 1, 1), Corner(1, 1, 1), fx), fy), fz);
     }
 
     public List<DugSave> SaveDug() => _dug.Select(p => new DugSave(p.X, p.Y, p.Z)).ToList();

@@ -730,6 +730,8 @@ public sealed class Game : IDisposable
         {
             var material = _blocks.At(block.Block) ?? Resource.Wood;
             (chip, chip2) = ChipsOf(material);
+            // A vein is broken like the rock around it, but its chips glint with the mineral.
+            if (_blocks.VeinAt(block.Block) is { } ore) chip2 = ChipsOf(ore).Item1;
             seconds = BreakSeconds(material);
             hit = block.Point - look * 0.05f;
         }

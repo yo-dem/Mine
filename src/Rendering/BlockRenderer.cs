@@ -11,7 +11,8 @@ namespace Mine.Rendering;
 /// 4×4 grid of little squares shaded like the material cubes (<see cref="ItemMeshes"/>): bark with
 /// rings on the ends for wood, speckled lilac grey for stone, glowing violet glass for crystal.
 /// The natural stone of the rock spires is the terrain's sandstone with its strata, in a coarser
-/// 2×2 grid (spires are big: this keeps their meshes light). Glass blocks go into a second mesh per
+/// 2×2 grid (spires are big: this keeps their meshes light); a block of a vein keeps the 4×4 grid,
+/// half its squares nuggets (<see cref="Vein"/>: cold pale glass, or glowing violet crystal in violet-stained rock). Glass blocks go into a second mesh per
 /// chunk, drawn in the see-through pass (<see cref="DrawGlass"/>, not into the shadow map): a clear
 /// pane in each face within a slightly frosted, faintly glowing border, so a wall of glass reads as
 /// panes; glass hides no face of the blocks behind it, and faces between glass blocks are left out.
@@ -38,8 +39,8 @@ public sealed unsafe class BlockRenderer : IDisposable
             foreach (var (p, resource) in blocks.InChunk(chunk))
             {
                 bool isGlass = resource == Resource.Glass;
-                if (isGlass) GlassBlock(glass, p, face => !Covered(blocks, p, face, true));
-                else Block(m, p, resource, blocks.IsNatural(p), face => !Covered(blocks, p, face, false));
+                if (isGlass) GlassBlock(glass, blocks, p);
+                else Block(m, p, resource, blocks.IsNatural(p), blocks.VeinAt(p), (face, half) => !Covered(blocks, p, face, half, false));
             }
             Store(_chunks, chunk, m.Vertices);
             Store(_glassChunks, chunk, glass.Vertices);
@@ -78,51 +79,76 @@ public sealed unsafe class BlockRenderer : IDisposable
         }
     }
 
-    // A face is hidden when a block sits right against it (exactly level with it, for the sides),
-    // or when it is buried: a bottom at or under the ground, a side under the neighbouring ground.
-    // Glass hides only glass faces (a solid block's face shows through it).
-    private static bool Covered(Blocks blocks, BlockPos p, int face, bool glass)
+    // A face is hidden when a block sits right against it or when it is buried. A side face is
+    // judged by halves (a block is two steps tall and its neighbours may sit a step higher or lower):
+    // a half is hidden by a block in the next column spanning it, or by that column's ground reaching
+    // its top; otherwise faces a step apart would lie in one plane and flicker (z-fighting, seen
+    // through glass). The top and bottom (half ignored) only by the block right above or below, the
+    // bottom also by the ground. Glass hides only glass faces (a solid block's face shows through it).
+    private static bool Covered(Blocks blocks, BlockPos p, int face, int half, bool glass)
     {
         bool Hides(BlockPos n) => blocks.At(n) is { } r && (glass || r != Resource.Glass);
-        return face switch
-        {
-            0 => Hides(p with { X = p.X + 1 }) || blocks.GroundAt(p.X + 1, p.Z) >= p.Top,
-            1 => Hides(p with { X = p.X - 1 }) || blocks.GroundAt(p.X - 1, p.Z) >= p.Top,
-            2 => Hides(p with { Y = p.Y + Blocks.Tall }),
-            3 => Hides(p with { Y = p.Y - Blocks.Tall }) || blocks.GroundAt(p.X, p.Z) >= p.Bottom,
-            4 => Hides(p with { Z = p.Z + 1 }) || blocks.GroundAt(p.X, p.Z + 1) >= p.Top,
-            _ => Hides(p with { Z = p.Z - 1 }) || blocks.GroundAt(p.X, p.Z - 1) >= p.Top,
-        };
+        if (face == 2) return Hides(p with { Y = p.Y + Blocks.Tall });
+        if (face == 3) return Hides(p with { Y = p.Y - Blocks.Tall }) || blocks.GroundAt(p.X, p.Z) >= p.Bottom;
+        var (dx, dz) = face switch { 0 => (1, 0), 1 => (-1, 0), 4 => (0, 1), _ => (0, -1) };
+        int x = p.X + dx, z = p.Z + dz, y = p.Y + half; // the half spans steps y..y+1
+        return Hides(new BlockPos(x, y, z)) || Hides(new BlockPos(x, y - 1, z))
+            || blocks.GroundAt(x, z) >= (y + 1) * Blocks.Step - 0.001f;
     }
+
+    // A face is shown if any part of it is.
+    private static bool Covered(Blocks blocks, BlockPos p, int face, bool glass) =>
+        Covered(blocks, p, face, 0, glass) && Covered(blocks, p, face, 1, glass);
 
     private static readonly Vector3 GlassTint = new(0.82f, 0.93f, 1.0f);
     private const float GlassBorder = 0.07f; // the frosted rim round each pane
 
-    /// <summary>A glass block's visible faces: a clear pane within a frosted, faintly glowing rim.</summary>
-    private static void GlassBlock(MeshBuilder m, BlockPos p, Func<int, bool> visible)
+    /// <summary>
+    /// A glass block's visible faces: a clear pane within a frosted, faintly glowing rim. Where the
+    /// face goes on flush into the same face of a neighbouring glass block, that side has no rim, so
+    /// glass blocks joined together read as one piece of glass (breaking one brings the rims back:
+    /// the chunks around a change are remeshed).
+    /// </summary>
+    private static void GlassBlock(MeshBuilder m, Blocks blocks, BlockPos p)
     {
         var center = p.Center;
-        const float half = Blocks.Size / 2, b = GlassBorder;
+        const float half = Blocks.Size / 2, b = GlassBorder, s = Blocks.Size, rim = 0.22f;
+        // Each face as a 3×3 layout: the rim's strips and corners round the pane in the middle.
+        // Rows split at mid-height too, so each half of a side face can be left out on its own.
+        ReadOnlySpan<float> cuts = [0, b, s - b, s], rows = [0, b, s / 2, s - b, s];
         for (int f = 0; f < 6; f++)
         {
-            if (!visible(f)) continue;
             var (n, u, v) = Faces[f];
             var corner = center + n * half - u * half - v * half;
-            void Quad(float u0, float v0, float u1, float v1, float glow)
+            // Whether the face goes on into the neighbour at (du, dv) steps along u and v.
+            bool Joins(int du, int dv)
             {
-                var a = corner + u * u0 + v * v0;
-                var bb = corner + u * u1 + v * v0;
-                var c = corner + u * u1 + v * v1;
-                var d = corner + u * u0 + v * v1;
+                var d = u * du + v * dv;
+                var q = new BlockPos(p.X + (int)d.X, p.Y + (int)d.Y * Blocks.Tall, p.Z + (int)d.Z);
+                return blocks.At(q) == Resource.Glass && !Covered(blocks, q, f, true);
+            }
+            for (int j = 0; j < 4; j++)
+            for (int i = 0; i < 3; i++)
+            {
+                if (Covered(blocks, p, f, j / 2, true)) continue; // the lower or upper half (v is up on the sides)
+                int du = i - 1, dv = j == 0 ? -1 : j == 3 ? 1 : 0;
+                // The pane in the middle; a side strip is rim unless the face goes on that way; a
+                // corner is rim unless the face goes on along both sides and across the corner.
+                bool isRim = (du, dv) switch
+                {
+                    (0, 0) => false,
+                    (0, _) => !Joins(0, dv),
+                    (_, 0) => !Joins(du, 0),
+                    _ => !(Joins(du, 0) && Joins(0, dv) && Joins(du, dv)),
+                };
+                var a = corner + u * cuts[i] + v * rows[j];
+                var bb = corner + u * cuts[i + 1] + v * rows[j];
+                var c = corner + u * cuts[i + 1] + v * rows[j + 1];
+                var d = corner + u * cuts[i] + v * rows[j + 1];
+                float glow = isRim ? rim : 0f;
                 m.Triangle(a, bb, c, GlassTint, glow);
                 m.Triangle(a, c, d, GlassTint, glow);
             }
-            const float s = Blocks.Size, rim = 0.22f;
-            Quad(b, b, s - b, s - b, 0f);      // the pane
-            Quad(0, 0, s, b, rim);             // the rim: bottom, top, left, right
-            Quad(0, s - b, s, s, rim);
-            Quad(0, b, b, s - b, rim);
-            Quad(s - b, b, s, s - b, rim);
         }
     }
 
@@ -141,27 +167,29 @@ public sealed unsafe class BlockRenderer : IDisposable
     private static readonly Vector3 RockDark = new(0.30f, 0.23f, 0.36f), RockLight = new(0.46f, 0.35f, 0.50f);
 
     /// <summary>A block's visible faces, each a grid of little shaded squares.</summary>
-    private static void Block(MeshBuilder m, BlockPos p, Resource resource, bool natural, Func<int, bool> visible)
+    private static void Block(MeshBuilder m, BlockPos p, Resource resource, bool natural, Resource? vein, Func<int, int, bool> visible)
     {
         var center = p.Center;
         const float half = Blocks.Size / 2;
-        int grid = natural ? NaturalGrid : Grid;
+        int grid = natural && vein is null ? NaturalGrid : Grid; // veins in the fine grid: their nuggets are small
         float size = Blocks.Size / grid;
         // The spires' strata: bands a couple of metres tall, wavering around the spire.
         float strata = 0.5f + 0.5f * MathF.Sin(p.Bottom * 0.45f + 0.6f * MathF.Sin(p.X * 0.11f) + 0.6f * MathF.Sin(p.Z * 0.13f));
         for (int f = 0; f < 6; f++)
         {
-            if (!visible(f)) continue;
+            if (!visible(f, 0) && !visible(f, 1)) continue;
             var (n, u, v) = Faces[f];
             bool end = f is 2 or 3; // the top and bottom (the log's rings)
             var corner = center + n * half - u * half - v * half;
             for (int j = 0; j < grid; j++)
             for (int i = 0; i < grid; i++)
             {
+                if (!visible(f, 2 * j / grid)) continue; // the lower or upper half (v is up on the sides)
                 float h = Hash(p.X * 7 + f * 131 + i * 17, p.Y * 13 + j * 29, p.Z * 11 + i * j);
-                var (color, emissive) = natural
-                    ? (Vector3.Lerp(RockDark, RockLight, 0.3f + 0.45f * strata) * (0.86f + 0.22f * h) * (f == 2 ? 1.08f : 1f), 0f)
-                    : Shade(resource, end, i, j, h);
+                var rock = Vector3.Lerp(RockDark, RockLight, 0.3f + 0.45f * strata) * (0.86f + 0.22f * h) * (f == 2 ? 1.08f : 1f);
+                var (color, emissive) = !natural ? Shade(resource, end, i, j, h)
+                    : vein is { } ore ? Vein(ore, rock, Hash(p.X * 5 + f * 97 + i * 31, p.Y * 19 + j * 43, p.Z * 3 + i * 7 + j), h)
+                    : (rock, 0f);
                 var a = corner + u * (i * size) + v * (j * size);
                 var b = a + u * size;
                 var c = b + v * size;
@@ -170,6 +198,21 @@ public sealed unsafe class BlockRenderer : IDisposable
                 m.Triangle(a, c, d, color, emissive);
             }
         }
+    }
+
+    // Veins, told apart at a glance: glass is cold, clear and lit only by the world (pale cyan
+    // nuggets, some catching a white glint, in a paler, greyer rock); crystal glows (hot violet
+    // nuggets shining in the dark, the rock around them stained violet and glowing faintly).
+    private static readonly Vector3 GlassNugget = new(0.62f, 0.86f, 0.95f), GlassGlint = new(0.95f, 0.98f, 1.0f);
+    private static readonly Vector3 CrystalNugget = new(0.80f, 0.36f, 1.0f), CrystalStain = new(0.42f, 0.20f, 0.55f);
+
+    /// <summary>A little square of a vein block: a nugget of its mineral (<paramref name="pick"/> under its share) or the rock around it.</summary>
+    private static (Vector3 Color, float Emissive) Vein(Resource ore, Vector3 rock, float pick, float h)
+    {
+        if (ore == Resource.Crystal)
+            return pick < 0.55f ? (CrystalNugget * (0.85f + 0.3f * h), 1.3f) : (Vector3.Lerp(rock, CrystalStain, 0.6f), 0.12f);
+        if (pick < 0.12f) return (GlassGlint, 0.05f);
+        return pick < 0.5f ? (GlassNugget * (0.8f + 0.25f * h), 0f) : (Vector3.Lerp(rock, new Vector3(0.62f), 0.3f), 0f);
     }
 
     private static (Vector3 Color, float Emissive) Shade(Resource resource, bool end, int i, int j, float h)

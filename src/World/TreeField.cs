@@ -10,7 +10,7 @@ public readonly record struct TreeInstance(Vector3 Position, float Yaw, float Sc
 /// <summary>
 /// Where the trees grow (forests and lone trees, placed deterministically per 32 m cell on gentle,
 /// grassy ground) and where the glowing decorations sit: lotus flowers floating in the shallows,
-/// crystal clusters and dark rocks along the shores, glowing bells in patches on the meadows. The
+/// palms along the shores, glowing bells in patches on the meadows. The
 /// biomes (<see cref="GroundMaterials.Biome"/>) pick the family of tree models and the flowers of a
 /// region: indigo woods, pink woods, turquoise woods, and deserts of dry trees. Cells around the player are
 /// generated on the thread pool; <see cref="Version"/> changes whenever the set of trees does.
@@ -188,7 +188,7 @@ public sealed class TreeField
         return false;
     }
 
-    /// <summary>Point lights for the glowing decorations (crystal clusters) within <paramref name="radius"/>.</summary>
+    /// <summary>Point lights for the glowing decorations (<see cref="TreeModels.GlowColor"/>) within <paramref name="radius"/>.</summary>
     public IEnumerable<PointLight> GlowingLights(Vector3 center, float radius)
     {
         int reach = (int)MathF.Ceiling(radius / CellSize);
@@ -529,34 +529,6 @@ public sealed class TreeField
         return DesertBiome;
     }
 
-    // Giant crystal clusters are rare finds: this share of the sampled points on shores, desert
-    // sand and rocky slopes tries one (see TryCrystal, which turns many of them down).
-    private const float CrystalChance = 0.006f;
-    private const float ClearShare = 0.45f; // of them translucent (glass), picked by place
-
-    /// <summary>
-    /// A crystal cluster at (x, z), only where it touches no terrain but the ground it stands on:
-    /// the ground under its base must be one flat tile top (it stands on it, never sunk), and no
-    /// ground within the reach of its leaning crystals may rise above it.
-    /// </summary>
-    private void TryCrystal(List<TreeInstance> list, float x, float y, float z, float yaw, float scale, int variant)
-    {
-        // Some are translucent, whatever the biome (chosen by the place, so no random number is drawn).
-        uint place = unchecked((uint)((int)MathF.Floor(x * 8f) * 73856093 ^ (int)MathF.Floor(z * 8f) * 19349663));
-        place = unchecked((place ^ (place >> 13)) * 1274126177u);
-        if ((place >> 16) % 1000 < ClearShare * 1000) variant = TreeModels.VariantOf(TreeModels.Decoration.ClearCrystals);
-        float baseRadius = (TreeModels.CrystalBaseRadius + 0.2f) * scale, reach = TreeModels.CrystalReach * scale;
-        for (float dz = -reach; dz <= reach; dz += 0.5f)
-        for (float dx = -reach; dx <= reach; dx += 0.5f)
-        {
-            float d2 = dx * dx + dz * dz;
-            if (d2 > reach * reach) continue;
-            float h = _terrain.Height(x + dx, z + dz);
-            if (d2 <= baseRadius * baseRadius ? h != y : h > y) return;
-        }
-        list.Add(new TreeInstance(new Vector3(x, y, z), yaw, scale, variant));
-    }
-
     /// <summary>Samples a few points of the cell and decorates each according to the ground there.</summary>
     private void AddDecorations(List<TreeInstance> list, int cx, int cz, Random random)
     {
@@ -565,10 +537,7 @@ public sealed class TreeField
         AddFlowers(list, cx, cz, random);
         AddLightGardens(list, cx, cz, random);
         const float water = TerrainField.WaterLevel;
-        var weights = GroundMaterials.Biome((cx + 0.5f) * CellSize, (cz + 0.5f) * CellSize);
-        // Cyan crystals by the turquoise woods, violet ones elsewhere.
-        var crystals = TreeModels.VariantOf(weights.Z > 0.5f ? TreeModels.Decoration.CyanCrystals : TreeModels.Decoration.VioletCrystals);
-        bool desert = weights.W > 0.5f;
+        bool desert = GroundMaterials.Biome((cx + 0.5f) * CellSize, (cz + 0.5f) * CellSize).W > 0.5f;
         for (int i = 0; i < 20; i++)
         {
             float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.4f);
@@ -586,33 +555,16 @@ public sealed class TreeField
             }
             else if (y >= water - 1f && y < water + 4f)
             {
-                // The shore: palms, and a rare crystal cluster.
+                // The shore: palms.
                 if (roll < 0.03f && y > water + 0.8f)
                     list.Add(RandomPalm(x, y, z, yaw, random));
-                else if (roll < 0.03f + CrystalChance)
-                    TryCrystal(list, x, y, z, yaw, 0.7f + 1.5f * random.NextSingle(), crystals);
             }
-            else if (y >= water + 2f)
+            else if (y >= water + 2f && !desert && roll < 0.3f && _terrain.Normal(x, z, 1f).Y >= 0.75f
+                && _forest.Fractal(x * 0.02f + 40f, z * 0.02f, 2) > 0.0f)
             {
-                float normalY = _terrain.Normal(x, z, 1f).Y;
-                if (desert)
-                {
-                    // A rare crystal cluster rising from the desert sand.
-                    if (roll < CrystalChance)
-                        TryCrystal(list, x, y, z, yaw, 0.7f + 1.6f * random.NextSingle(), crystals);
-                }
-                else if (normalY < 0.75f)
-                {
-                    // Rocky slopes: a rare crystal cluster (where a ledge is flat and wide enough).
-                    if (roll < CrystalChance)
-                        TryCrystal(list, x, y, z, yaw, 0.6f + 1.2f * random.NextSingle(), crystals);
-                }
-                else if (roll < 0.3f && _forest.Fractal(x * 0.02f + 40f, z * 0.02f, 2) > 0.0f)
-                {
-                    // Meadows: glowing bells, in patches.
-                    list.Add(new TreeInstance(new Vector3(x, y - 0.05f, z), yaw, 0.8f + 0.6f * random.NextSingle(),
-                        TreeModels.VariantOf(TreeModels.Decoration.GlowBells)));
-                }
+                // Meadows: glowing bells, in patches.
+                list.Add(new TreeInstance(new Vector3(x, y - 0.05f, z), yaw, 0.8f + 0.6f * random.NextSingle(),
+                    TreeModels.VariantOf(TreeModels.Decoration.GlowBells)));
             }
         }
     }

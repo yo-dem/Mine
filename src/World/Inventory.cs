@@ -5,9 +5,9 @@ public enum Resource
 {
     Wood,    // cubes of wood, from trees and palms
     Stone,   // cubes of stone, from rocks
-    Crystal, // cubes of crystal, from the giant crystal clusters
+    Crystal, // cubes of glowing crystal, from the veins in the rock spires
     Seeds,   // grass seeds, from tearing up meadows: sown elsewhere, where grass springs up (not a block)
-    Glass,   // blocks of clear glass, from the translucent crystal clusters: windows
+    Glass,   // blocks of clear glass, from the veins in the rock spires: windows
 }
 
 /// <summary>A quantity of one material: a line of a recipe or of a harvest.</summary>
