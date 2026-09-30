@@ -93,6 +93,16 @@ public sealed unsafe class Hud : IDisposable
         Rect(x + w - thickness, y + thickness, thickness, h - 2 * thickness, color);
     }
 
+    /// <summary>Whether pixel (column, row) of a character's 5×7 glyph is lit (row 0 at the top).</summary>
+    public static bool GlyphPixel(char c, int column, int row) =>
+        Glyph.TryGetValue(c, out var rows) && row >= 0 && row < GlyphHeight && column >= 0 && column < GlyphWidth && rows[row][column] == '#';
+
+    /// <summary>The width of a string in glyph pixels (the advance between letters included, none after the last).</summary>
+    public static int TextPixels(string text) => Math.Max(0, text.Length * Advance - 1);
+
+    /// <summary>The distance between the starts of two letters, in glyph pixels.</summary>
+    public const int LetterAdvance = Advance;
+
     public static float TextWidth(string text, int scale) => Math.Max(0, Clean(text).Length * Advance - 1) * scale;
 
     /// <summary>Writes <paramref name="text"/> with its top left at (x, y), over a soft dark shadow; returns its width.</summary>
