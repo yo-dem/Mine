@@ -219,18 +219,27 @@ public static class TerrainShaders
             return 1.0 - 0.7 * smoothstep(0.0, 0.6, d);
         }
 
+        // The sky light a surface facing n picks up (see litColorSky).
+        vec3 skyFill(vec3 n) { return skyGradient(normalize(n + vec3(0.0, 0.6, 0.0))); }
+
         // wrap > 0 lets light bend around soft shapes (foliage, grass) instead of cutting off at 90 degrees.
-        vec3 litColor(vec3 albedo, vec3 pos, vec3 n, float wrap)
+        // skyLight is skyFill(n) and shadow shadowAt(pos, n), passed in (the grass computes the
+        // sky light per vertex, and reuses the shadow).
+        vec3 litColorSky(vec3 albedo, vec3 pos, vec3 n, float wrap, vec3 skyLight, float shadow)
         {
             float diffuse = max((dot(n, uLightDir) + wrap) / (1.0 + wrap), 0.0);
             // Sky light: surfaces pick up the colour of the sky they face; generous, so slopes
             // turned away from the sun stay readable and colourful.
-            vec3 skyLight = skyColor(normalize(n + vec3(0.0, 0.6, 0.0)), false);
             // By day, warm the sky's fill: the bright blue-violet overhead would cool everything down.
             skyLight = mix(skyLight, dot(skyLight, vec3(0.3, 0.59, 0.11)) * vec3(1.15, 0.95, 0.8), 0.5 * (1.0 - uNight));
             vec3 ambient = mix(uAmbient + uFlash * (1.0 - indoors(pos)), skyLight, 0.35) * (0.9 + 0.2 * n.y) * 1.25;
-            vec3 direct = uLightColor * diffuse * shadowAt(pos, n) * cloudShadow(pos);
+            vec3 direct = uLightColor * diffuse * shadow * cloudShadow(pos);
             return albedo * (ambient + direct + pointLighting(pos, n));
+        }
+
+        vec3 litColor(vec3 albedo, vec3 pos, vec3 n, float wrap)
+        {
+            return litColorSky(albedo, pos, n, wrap, skyFill(n), shadowAt(pos, n));
         }
 
         // Gentle aerial haze with a faint, slowly drifting variation.
@@ -245,13 +254,13 @@ public static class TerrainShaders
         }
 
         // cutThrough < 1 lets glowing things shine through the haze and fog. The result is HDR:
-        // tone mapping happens in the post-process pass.
-        vec4 finishColor(vec3 color, vec3 pos, float cutThrough)
+        // tone mapping happens in the post-process pass. sky is skyGradient toward the point,
+        // passed in (the grass computes it per vertex).
+        vec4 finishColorSky(vec3 color, vec3 pos, float cutThrough, vec3 sky)
         {
             vec3 toFragment = pos - uCameraPos;
             float dist = length(toFragment);
             vec3 rd = toFragment / dist;
-            vec3 sky = skyColor(rd, false);
 
             // Soft haze: tints distance with the hue of the air but keeps brightness.
             const vec3 luma = vec3(0.3, 0.59, 0.11);
@@ -282,6 +291,11 @@ public static class TerrainShaders
                 color = mix(color * vec3(0.7, 0.9, 1.1), murk, (1.0 - exp(-dist * 0.07)) * (1.0 - 0.5 * (1.0 - cutThrough)));
             }
             return vec4(color, 1.0);
+        }
+
+        vec4 finishColor(vec3 color, vec3 pos, float cutThrough)
+        {
+            return finishColorSky(color, pos, cutThrough, skyGradient(normalize(pos - uCameraPos)));
         }
 
         // Clear glass (blocks of glass, the seed jar, translucent crystals), premultiplied alpha:
@@ -414,9 +428,8 @@ public static class TerrainShaders
     /// One instance per blade; colour and grass coverage are worked out on the CPU (GroundMaterials).
     /// Blades thin out with distance (each survivor gets wider) and vanish past <c>uGrassRadius</c>.
     /// </summary>
-    public const string GrassVertex = "#version 330 core\n" + Wind + """
+    public const string GrassVertex = "#version 330 core\n" + Wind + SkyRenderer.SkyGradient + """
 
-        layout(location = 0) in vec2 aBlade; // x: -1..1 across the blade, y: 0 at the root .. 1 at the tip
         layout(location = 1) in vec4 aBase;  // root position, bend
         layout(location = 2) in vec4 aShape; // facing angle, height, thinning key, colour variation
         layout(location = 3) in vec3 aColor; // ground grass colour at the root
@@ -425,14 +438,23 @@ public static class TerrainShaders
         uniform vec3 uCameraPos;
         uniform float uGrassRadius;
         uniform float uTime;
+        uniform int uBladeVertices; // 7, 5 or 3: fewer segments for far blades (GrassRenderer.Draw)
 
         out vec3 vWorldPos;
         out vec3 vNormal;
         out vec3 vColor;
         out float vTip;
+        out vec3 vSkyFill; // the sky light of the blade's face (turned toward the camera) and
+        out vec3 vFogSky;  // the sky toward the vertex, for the fog: per vertex, as they vary slowly
 
         void main()
         {
+            // The blade as a triangle strip: pairs of vertices across it (x -1 and 1) climbing in
+            // equal steps, and the tip (x 0, y 1) last.
+            int segments = (uBladeVertices - 1) / 2;
+            vec2 blade = gl_VertexID == uBladeVertices - 1
+                ? vec2(0.0, 1.0)
+                : vec2((gl_VertexID & 1) == 0 ? -1.0 : 1.0, float(gl_VertexID / 2) / float(segments));
             vec3 root = aBase.xyz;
             float dist = distance(root.xz, uCameraPos.xz);
             // The grass is dense: thin it out soon, the survivors growing wider to keep the ground covered.
@@ -443,6 +465,7 @@ public static class TerrainShaders
             vNormal = vec3(0.0, 1.0, 0.0);
             vColor = vec3(0.0);
             vTip = 0.0;
+            vSkyFill = vFogSky = vec3(0.0);
             if (aShape.z > keep || dist > uGrassRadius)
             {
                 gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // outside the clip volume: dropped
@@ -451,13 +474,13 @@ public static class TerrainShaders
 
             // Full height up to the last stretch before the edge of the grass, then fading out.
             float height = aShape.y * smoothstep(uGrassRadius, uGrassRadius * 0.92, dist);
-            float t = aBlade.y;
+            float t = blade.y;
             vec3 facing = vec3(cos(aShape.x), 0.0, sin(aShape.x));
             vec3 across = vec3(-facing.z, 0.0, facing.x);
             // Taller blades are also broader, so tall grass reads as thick stalks, not threads.
             float width = 0.03 * (1.0 - t * 0.85) * min(inversesqrt(keep), 3.2) * clamp(aShape.y / 0.5, 1.0, 2.6);
             vec3 lean = facing * (0.15 + aBase.w * 0.45) * height + windOffset(root, uTime) * 0.25 * height;
-            vec3 pos = root + across * aBlade.x * width + vec3(0.0, height * t, 0.0) + lean * t * t;
+            vec3 pos = root + across * blade.x * width + vec3(0.0, height * t, 0.0) + lean * t * t;
 
             // Roots match the ground, tips are lighter and sometimes sun-bleached.
             vec3 tip = mix(aColor * 1.3, aColor * vec3(1.35, 1.25, 0.8), aShape.w);
@@ -465,6 +488,11 @@ public static class TerrainShaders
             vNormal = normalize(facing * 0.6 + vec3(0.0, 0.8, 0.0));
             vWorldPos = pos;
             vTip = t;
+            // The same turn toward the camera as the fragment shader's, for the sky light.
+            vec3 n = vNormal;
+            if (dot(n.xz, uCameraPos.xz - pos.xz) < 0.0) n.xz = -n.xz;
+            vSkyFill = skyGradient(normalize(n + vec3(0.0, 0.6, 0.0)));
+            vFogSky = skyGradient(normalize(pos - uCameraPos));
             gl_Position = uViewProj * vec4(pos, 1.0);
         }
         """;
@@ -476,6 +504,8 @@ public static class TerrainShaders
         in vec3 vNormal;
         in vec3 vColor;
         in float vTip;
+        in vec3 vSkyFill;
+        in vec3 vFogSky;
 
         out vec4 FragColor;
 
@@ -486,12 +516,13 @@ public static class TerrainShaders
             // Blades are seen from both sides: turn the normal toward the camera, but keep it pointing up.
             if (dot(n.xz, toCamera.xz) < 0.0) n.xz = -n.xz;
             vec3 albedo = mix(vColor, SnowColor, snowOn(vWorldPos, 1.0) * 0.85);
-            vec3 color = litColor(albedo, vWorldPos, n, 0.6);
+            float shadow = shadowAt(vWorldPos, n);
+            vec3 color = litColorSky(albedo, vWorldPos, n, 0.6, vSkyFill, shadow);
             // Sunlight shining through the blades when looking toward the sun.
             vec3 rd = normalize(-toCamera);
             float through = pow(max(dot(rd, uLightDir), 0.0), 3.0) * vTip;
-            color += vColor * uLightColor * through * 0.6 * shadowAt(vWorldPos, n);
-            FragColor = finishColor(color, vWorldPos, 1.0);
+            color += vColor * uLightColor * through * 0.6 * shadow;
+            FragColor = finishColorSky(color, vWorldPos, 1.0, vFogSky);
         }
         """;
 

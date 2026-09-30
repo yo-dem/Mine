@@ -28,23 +28,77 @@ public sealed class SkyRenderer : IDisposable
         """;
 
     /// <summary>
-    /// Uniforms, <see cref="Hash"/>, <c>skyColor(dir, bodies)</c> and <c>cloudDensity(p, detail)</c>,
+    /// The sky's colour in a direction without the sky bodies (<c>skyGradient(dir)</c>, what
+    /// <c>skyColor(dir, false)</c> returns) with the uniforms it reads. Usable in any shader stage:
+    /// the grass computes it per vertex. Part of <see cref="Glsl"/>.
+    /// </summary>
+    public const string SkyGradient = """
+        uniform float uRain;      // 0 = clear .. 1 = full rain: the clouds close in
+        uniform float uSnow;      // 0 = clear .. 1 = full snowfall: overcast and cold
+        uniform float uStorm;     // 0..1: how much of the rain is a storm
+        uniform float uBlizzard;  // 0..1: how much of the snow is a blizzard
+        uniform float uLightning; // brightness of the current lightning flash
+        uniform vec3 uZenith;
+        uniform vec3 uHorizon;
+        uniform vec3 uSunHorizon;
+        uniform vec3 uSunDir;
+        uniform vec3 uMoonDir;
+        uniform vec3 uSunGlow;
+        uniform float uHaze;
+        uniform float uNight;
+
+        vec3 skyGradient(vec3 d)
+        {
+            float up = clamp(d.y, 0.0, 1.0);
+
+            // The horizon is warmer toward the sun and cooler on the opposite side.
+            vec2 flatDir = normalize(d.xz + vec2(1e-5, 0.0));
+            vec2 flatSun = normalize(uSunDir.xz + vec2(1e-5, 0.0));
+            float sunSide = pow(clamp(0.5 + 0.5 * dot(flatDir, flatSun), 0.0, 1.0), 2.5);
+            vec3 horizon = mix(uHorizon, uSunHorizon, sunSide);
+            vec3 c = mix(horizon, uZenith, pow(up, 0.45));
+
+            // A warm band hugging the horizon on the sun side, thicker when the air is hazy.
+            c += uSunHorizon * exp(-up * 9.0) * sunSide * 0.5 * uHaze;
+            // Opposite the sun at dawn/dusk: the dark shadow of the earth low on the horizon,
+            // with a faint pink belt just above it.
+            float belt = smoothstep(0.04, 0.1, up) * smoothstep(0.32, 0.12, up);
+            c += vec3(0.5, 0.28, 0.38) * belt * (1.0 - sunSide) * uHaze * 0.3;
+            // Rain dims the sky toward a deep, glowing indigo (never a dull grey).
+            c = mix(c, c * 0.55 + vec3(0.05, 0.035, 0.12), uRain * 0.6);
+            // Snow turns the sky a cold, pale blue-grey (a deep slate at night).
+            c = mix(c, vec3(0.58, 0.63, 0.75) * mix(1.0, 0.16, uNight) + c * 0.15, uSnow * 0.6);
+            // A storm darkens it further; a blizzard fills it with blowing white.
+            c *= 1.0 - 0.3 * uStorm;
+            c = mix(c, vec3(0.74, 0.78, 0.86) * mix(1.0, 0.18, uNight), uBlizzard * 0.7);
+            // Lightning lights up the whole sky.
+            c += vec3(0.75, 0.8, 1.0) * uLightning * (0.3 + 0.4 * up);
+            // Below the horizon (distant fog) fade to a slightly darker horizon.
+            c = mix(c, horizon * 0.85, clamp(-d.y * 4.0, 0.0, 1.0));
+
+            float sd = max(dot(d, uSunDir), 0.0);
+            c += uSunGlow * (pow(sd, 4.0) * (0.12 + 0.3 * uHaze) + pow(sd, 32.0) * 0.4 + pow(sd, 300.0) * 0.6);
+            float md = max(dot(d, uMoonDir), 0.0);
+            c += vec3(0.35, 0.45, 0.8) * (pow(md, 12.0) * 0.25 + pow(md, 80.0) * 0.3) * uNight;
+
+            return c;
+        }
+
+        """;
+
+    /// <summary>
+    /// Uniforms, <see cref="Hash"/>, <see cref="SkyGradient"/>, <c>skyColor(dir, bodies)</c> and <c>cloudDensity(p, detail)</c>,
     /// to paste after <c>#version</c> in fragment shaders (it uses <c>fwidth</c>). The cloud noise
     /// texture must be bound to unit <see cref="CloudNoiseUnit"/>.
     /// </summary>
-    public const string Glsl = Hash + """
+    public const string Glsl = Hash + SkyGradient + """
         uniform sampler3D uCloudNoise;
         uniform float uCloudTime; // game seconds, so clouds speed up with the clock
-        uniform float uRain;      // 0 = clear .. 1 = full rain: the clouds close in
-        uniform float uSnow;      // 0 = clear .. 1 = full snowfall: overcast and cold
         uniform float uSnowCover; // snow lying on the world: 0 = none .. 1 = everything white
         uniform float uClearSky;  // 0 = the usual clouds .. 1 = hardly any (WorldPreset.ClearSky)
         uniform float uPlainNight;
         uniform float uPlanetRim; // 1: the planet's shadow keeps a glowing rim (WorldPreset.PlanetRim) // 1: the planet only as a shadow, no auroras, galaxy or nebulae
         uniform float uMagic;     // 1 = the full magical night and bioluminescence, lower = more modest (WorldPreset.Magic)
-        uniform float uStorm;     // 0..1: how much of the rain is a storm
-        uniform float uBlizzard;  // 0..1: how much of the snow is a blizzard
-        uniform float uLightning; // brightness of the current lightning flash
         uniform vec2 uLightningBolt; // azimuth of the bolt (radians), seed of its shape
 
         const vec3 SnowColor = vec3(0.9, 0.93, 1.0);
@@ -94,14 +148,6 @@ public sealed class SkyRenderer : IDisposable
             return clamp(cloudDensityRaw(p, detail, lod, cloudThreshold(p, lod)), 0.0, 1.0);
         }
 
-        uniform vec3 uZenith;
-        uniform vec3 uHorizon;
-        uniform vec3 uSunHorizon;
-        uniform vec3 uSunDir;
-        uniform vec3 uMoonDir;
-        uniform vec3 uSunGlow;
-        uniform float uHaze;
-        uniform float uNight;
         uniform float uSkyAngle;
         uniform vec3 uGalaxyDir;
         uniform float uGalaxyGlow;
@@ -345,40 +391,10 @@ public sealed class SkyRenderer : IDisposable
         // bodies = false leaves out sun, moon and stars (used for fog and sky light).
         vec3 skyColor(vec3 d, bool bodies)
         {
-            float up = clamp(d.y, 0.0, 1.0);
-
-            // The horizon is warmer toward the sun and cooler on the opposite side.
-            vec2 flatDir = normalize(d.xz + vec2(1e-5, 0.0));
-            vec2 flatSun = normalize(uSunDir.xz + vec2(1e-5, 0.0));
-            float sunSide = pow(clamp(0.5 + 0.5 * dot(flatDir, flatSun), 0.0, 1.0), 2.5);
-            vec3 horizon = mix(uHorizon, uSunHorizon, sunSide);
-            vec3 c = mix(horizon, uZenith, pow(up, 0.45));
-
-            // A warm band hugging the horizon on the sun side, thicker when the air is hazy.
-            c += uSunHorizon * exp(-up * 9.0) * sunSide * 0.5 * uHaze;
-            // Opposite the sun at dawn/dusk: the dark shadow of the earth low on the horizon,
-            // with a faint pink belt just above it.
-            float belt = smoothstep(0.04, 0.1, up) * smoothstep(0.32, 0.12, up);
-            c += vec3(0.5, 0.28, 0.38) * belt * (1.0 - sunSide) * uHaze * 0.3;
-            // Rain dims the sky toward a deep, glowing indigo (never a dull grey).
-            c = mix(c, c * 0.55 + vec3(0.05, 0.035, 0.12), uRain * 0.6);
-            // Snow turns the sky a cold, pale blue-grey (a deep slate at night).
-            c = mix(c, vec3(0.58, 0.63, 0.75) * mix(1.0, 0.16, uNight) + c * 0.15, uSnow * 0.6);
-            // A storm darkens it further; a blizzard fills it with blowing white.
-            c *= 1.0 - 0.3 * uStorm;
-            c = mix(c, vec3(0.74, 0.78, 0.86) * mix(1.0, 0.18, uNight), uBlizzard * 0.7);
-            // Lightning lights up the whole sky.
-            c += vec3(0.75, 0.8, 1.0) * uLightning * (0.3 + 0.4 * up);
-            // Below the horizon (distant fog) fade to a slightly darker horizon.
-            c = mix(c, horizon * 0.85, clamp(-d.y * 4.0, 0.0, 1.0));
-
-            float sd = max(dot(d, uSunDir), 0.0);
-            c += uSunGlow * (pow(sd, 4.0) * (0.12 + 0.3 * uHaze) + pow(sd, 32.0) * 0.4 + pow(sd, 300.0) * 0.6);
-            float md = max(dot(d, uMoonDir), 0.0);
-            c += vec3(0.35, 0.45, 0.8) * (pow(md, 12.0) * 0.25 + pow(md, 80.0) * 0.3) * uNight;
-
+            vec3 c = skyGradient(d);
             if (!bodies) return c;
 
+            float up = clamp(d.y, 0.0, 1.0);
             float aboveHorizon = smoothstep(-0.02, 0.03, d.y);
 
             // Stars show wherever the sky is dark enough, so at dusk they come out

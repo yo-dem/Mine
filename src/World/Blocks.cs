@@ -466,8 +466,8 @@ public sealed class Blocks
         PlantingsVersion++;
     }
 
-    // One GroundChanged per 32 m cell (the size of the grass tiles and of the tree cells, which
-    // rebuild whole): a mown patch or a stretch of grass grown back spans only a few.
+    // One GroundChanged per 32 m cell (the size of the tree cells, which rebuild whole; the grass
+    // rebuilds its tiles in the cell): a mown patch or a stretch of grass grown back spans only a few.
     private void RaiseGroundChanged(IEnumerable<(int X, int Z)> columns)
     {
         const int cell = 32;

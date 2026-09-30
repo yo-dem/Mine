@@ -16,7 +16,10 @@ namespace Mine.Rendering;
 public sealed unsafe class GrassRenderer : IDisposable
 {
     public const float Radius = 70f;
-    private const float TileSize = 32f;
+    // Small tiles: Draw sends only the blades that can survive the thinning at a tile's nearest
+    // point, so the smaller the tile the fewer are sent in vain (32 m tiles sent 2.2 times the
+    // survivors, 8 m ones 1.26 times).
+    private const float TileSize = 8f;
     private const float BladesPerSquareMetre = 42f;
     // Every blade is at least this tall; the tallest reach MaxHeight on ordinary ground, and much
     // more in the tall grass meadows (see GroundMaterials.TallGrass).
@@ -38,11 +41,11 @@ public sealed unsafe class GrassRenderer : IDisposable
         // The blades are sorted by thinning key: Keys[i] is blade i's, so the blades that survive
         // the thinning at a given distance are a prefix (see Draw).
         public float[] Keys = [];
+        public float MinY, MaxY; // from the lowest root to the highest tip (for frustum culling)
     }
 
     private readonly GL _gl;
     private readonly TerrainField _terrain;
-    private readonly uint _bladeVbo;
     private readonly Dictionary<(int X, int Z), Tile> _tiles = new();
     private readonly ConcurrentQueue<((int X, int Z) Key, (float[] Blades, float[] Keys) Built)> _done = new();
     private readonly List<(int X, int Z)> _toRemove = new();
@@ -51,13 +54,6 @@ public sealed unsafe class GrassRenderer : IDisposable
     {
         _gl = gl;
         _terrain = terrain;
-
-        // Across (-1..1) and up (0..1) coordinates of a tapering blade, as a triangle strip.
-        float[] blade = [-1, 0, 1, 0, -1, 0.35f, 1, 0.35f, -1, 0.7f, 1, 0.7f, 0, 1];
-        _bladeVbo = gl.GenBuffer();
-        gl.BindBuffer(BufferTargetARB.ArrayBuffer, _bladeVbo);
-        fixed (float* p = blade)
-            gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(blade.Length * sizeof(float)), p, BufferUsageARB.StaticDraw);
     }
 
     /// <summary>
@@ -72,12 +68,21 @@ public sealed unsafe class GrassRenderer : IDisposable
     // Tiles being rebuilt (so a burst of requests for one tile builds it once).
     private readonly HashSet<(int X, int Z)> _rebuilding = new();
 
-    /// <summary>Rebuilds the grass tile around (x, z) (after the ground was cleared or while it grows back); the old blades stay until then.</summary>
+    /// <summary>Rebuilds the grass tile around (x, z) (while planted grass grows); the old blades stay until then.</summary>
     public void Invalidate(float x, float z)
     {
         var key = ((int)MathF.Floor(x / TileSize), (int)MathF.Floor(z / TileSize));
         if (!_tiles.ContainsKey(key) || !_rebuilding.Add(key)) return;
         ThreadPool.QueueUserWorkItem(_ => _done.Enqueue((key, BuildBlades(key.Item1, key.Item2))));
+    }
+
+    /// <summary>Rebuilds every grass tile in the square <paramref name="cell"/> metres wide holding (x, z) (the ground changed somewhere in it).</summary>
+    public void InvalidateCell(float x, float z, float cell)
+    {
+        float x0 = MathF.Floor(x / cell) * cell, z0 = MathF.Floor(z / cell) * cell;
+        for (float tz = z0 + TileSize / 2; tz < z0 + cell; tz += TileSize)
+        for (float tx = x0 + TileSize / 2; tx < x0 + cell; tx += TileSize)
+            Invalidate(tx, tz);
     }
 
     public void Update(Vector3 camera)
@@ -111,24 +116,62 @@ public sealed unsafe class GrassRenderer : IDisposable
         }
     }
 
-    public void Draw(Vector3 camera, Vector3 forward)
+    /// <summary>How many blades the last <see cref="Draw"/> sent to the GPU (for measuring).</summary>
+    public int DrawnBlades { get; private set; }
+
+    private readonly List<(float Distance, Tile Tile, (int X, int Z) Key)> _order = new();
+
+    // Blades are shaped in the vertex shader from gl_VertexID (no vertex data): 7 vertices (three
+    // segments) near, 5 farther, 3 (a plain triangle) far away, where the curve no longer shows.
+    private const float FiveVertexDistance = 12f, ThreeVertexDistance = 28f;
+
+    // Blades lean and sway out of their tile by up to this much.
+    private const float LeanMargin = 1.5f;
+
+    public void Draw(Vector3 camera, Matrix4x4 viewProj, Shader shader)
     {
-        var flatForward = new Vector2(forward.X, forward.Z);
-        if (flatForward.LengthSquared() > 1e-4f) flatForward = Vector2.Normalize(flatForward);
-        foreach (var (key, tile) in _tiles)
+        // The four side planes of the view frustum (row-vector matrices: clip = v * M, so plane j
+        // of the clip volume is column 3 plus or minus column j), each as (normal, distance).
+        var c0 = new Vector4(viewProj.M11, viewProj.M21, viewProj.M31, viewProj.M41);
+        var c1 = new Vector4(viewProj.M12, viewProj.M22, viewProj.M32, viewProj.M42);
+        var c3 = new Vector4(viewProj.M14, viewProj.M24, viewProj.M34, viewProj.M44);
+        Span<Vector4> planes = [c3 + c0, c3 - c0, c3 + c1, c3 - c1];
+        // Nearest tiles first: the near blades fill the depth buffer, so the fragments of the far
+        // ones behind them are rejected before shading.
+        _order.Clear();
+        foreach (var (key, tile) in _tiles) _order.Add((DistanceToTile(camera, key.X, key.Z), tile, key));
+        _order.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+        DrawnBlades = 0;
+        int lastVertices = 0;
+        foreach (var (distance, tile, key) in _order)
         {
-            if (!tile.Ready || tile.Count == 0 || DistanceToTile(camera, key.X, key.Z) > Radius) continue;
-            var center = new Vector2((key.X + 0.5f) * TileSize - camera.X, (key.Z + 0.5f) * TileSize - camera.Z);
-            if (Vector2.Dot(center, flatForward) < -TileSize * 0.75f && MathF.Abs(forward.Y) < 0.9f) continue;
+            if (!tile.Ready || tile.Count == 0 || distance > Radius) continue;
+            var min = new Vector3(key.X * TileSize - LeanMargin, tile.MinY, key.Z * TileSize - LeanMargin);
+            var max = new Vector3((key.X + 1) * TileSize + LeanMargin, tile.MaxY, (key.Z + 1) * TileSize + LeanMargin);
+            if (OutsideFrustum(planes, min, max)) continue;
             // The vertex shader drops the blades whose key is above the share kept at their distance
             // (the same formula as there): none nearer than the tile's nearest point survives, so
             // only that prefix of the sorted blades is drawn. Far tiles skip most of their blades.
-            float kept = float.Lerp(1f, 0.07f, SmoothStep(8f, Radius * 0.85f, DistanceToTile(camera, key.X, key.Z)));
+            float kept = float.Lerp(1f, 0.07f, SmoothStep(8f, Radius * 0.85f, distance));
             int count = UpperBound(tile.Keys, kept);
             if (count == 0) continue;
+            DrawnBlades += count;
+            int vertices = distance < FiveVertexDistance ? 7 : distance < ThreeVertexDistance ? 5 : 3;
+            if (vertices != lastVertices) shader.Set("uBladeVertices", lastVertices = vertices);
             _gl.BindVertexArray(tile.Vao);
-            _gl.DrawArraysInstanced(PrimitiveType.TriangleStrip, 0, 7, (uint)count);
+            _gl.DrawArraysInstanced(PrimitiveType.TriangleStrip, 0, (uint)vertices, (uint)count);
         }
+    }
+
+    // Whether the box lies wholly outside one of the planes (its corner farthest along the plane's normal is behind it).
+    private static bool OutsideFrustum(ReadOnlySpan<Vector4> planes, Vector3 min, Vector3 max)
+    {
+        foreach (var p in planes)
+        {
+            var corner = new Vector3(p.X > 0 ? max.X : min.X, p.Y > 0 ? max.Y : min.Y, p.Z > 0 ? max.Z : min.Z);
+            if (p.X * corner.X + p.Y * corner.Y + p.Z * corner.Z + p.W < 0) return true;
+        }
+        return false;
     }
 
     private static float SmoothStep(float edge0, float edge1, float x)
@@ -271,10 +314,6 @@ public sealed unsafe class GrassRenderer : IDisposable
         tile.Vbo = _gl.GenBuffer();
         _gl.BindVertexArray(tile.Vao);
 
-        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _bladeVbo);
-        _gl.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, 2 * sizeof(float), (void*)0);
-        _gl.EnableVertexAttribArray(0);
-
         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, tile.Vbo);
         fixed (float* p = blades)
             _gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(blades.Length * sizeof(float)), p, BufferUsageARB.StaticDraw);
@@ -292,6 +331,13 @@ public sealed unsafe class GrassRenderer : IDisposable
         _gl.BindVertexArray(0);
         tile.Count = blades.Length / FloatsPerBlade;
         tile.Keys = keys;
+        tile.MinY = float.MaxValue;
+        tile.MaxY = float.MinValue;
+        for (int at = 0; at < blades.Length; at += FloatsPerBlade)
+        {
+            tile.MinY = MathF.Min(tile.MinY, blades[at + 1]);
+            tile.MaxY = MathF.Max(tile.MaxY, blades[at + 1] + blades[at + 5]);
+        }
         tile.Ready = true;
     }
 
@@ -311,6 +357,5 @@ public sealed unsafe class GrassRenderer : IDisposable
             _gl.DeleteVertexArray(tile.Vao);
         }
         _tiles.Clear();
-        _gl.DeleteBuffer(_bladeVbo);
     }
 }

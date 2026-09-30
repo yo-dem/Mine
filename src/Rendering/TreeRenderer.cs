@@ -100,6 +100,10 @@ public sealed unsafe class TreeRenderer : IDisposable
 
     private readonly bool[] _visible = new bool[Sectors];
 
+    /// <summary>Per detail level, the instances and vertices the last <see cref="Draw"/> (not the see-through pass) sent (for measuring).</summary>
+    public readonly (int Instances, long Vertices)[] Drawn = new (int, long)[TreeModels.LodCount];
+    private int _drawingLod = -1;
+
     /// <summary>
     /// Draws the trees in view: <paramref name="look"/> is the view direction, the field of view
     /// vertical. With <paramref name="translucent"/>, only the variants with glass parts
@@ -120,10 +124,12 @@ public sealed unsafe class TreeRenderer : IDisposable
             _visible[s] = all || delta <= halfView + MathF.PI / Sectors;
         }
 
+        if (!translucent) Array.Clear(Drawn);
         for (int v = 0; v < _batches.GetLength(0); v++)
         for (int lod = 0; lod < _batches.GetLength(1); lod++)
         {
             var batch = _batches[v, lod];
+            _drawingLod = translucent ? -1 : lod;
             if (batch.InstanceCount == 0 || (translucent && !TreeModels.Translucent(v))) continue;
             // The near group, then each run of visible slices in one draw (the groups are contiguous).
             int runStart = 0, runEnd = batch.GroupStart[1];
@@ -139,6 +145,7 @@ public sealed unsafe class TreeRenderer : IDisposable
             }
             DrawRange(batch, runStart, runEnd - runStart);
         }
+        _drawingLod = -1;
     }
 
     /// <summary>The trees near the camera, for the shadow map (same vertex layout, read by its instanced path).</summary>
@@ -159,6 +166,7 @@ public sealed unsafe class TreeRenderer : IDisposable
     private void DrawRange(Batch batch, int first, int count)
     {
         if (count <= 0) return;
+        if (_drawingLod >= 0) Drawn[_drawingLod] = (Drawn[_drawingLod].Instances + count, Drawn[_drawingLod].Vertices + (long)count * batch.VertexCount);
         _gl.BindVertexArray(batch.Vao);
         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, batch.InstanceVbo);
         uint stride = FloatsPerInstance * sizeof(float);
