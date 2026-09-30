@@ -4,7 +4,7 @@ namespace Mine.Rendering;
 
 /// <summary>
 /// The title in the black at the start: "Alone" as holes in the black through which the world
-/// shows. Its own pixel lettering: a big, thick A with flared feet, then "lone" in smaller letters,
+/// shows. Its own pixel lettering: a big, lopsided A, then "lone" in much smaller letters,
 /// each set a little higher or lower than the last and floating gently. The holes open pixel by
 /// pixel, as if the word were being written left to right (<see cref="WriteStart"/> ..
 /// <see cref="Written"/>). Drawn with the HUD's rectangles: the black is everything but the title's
@@ -19,27 +19,35 @@ public static class TitleCard
 
     private readonly record struct Letter(string[] Rows, int X, int Baseline, float Start, float Duration);
 
-    // The glyphs, row 0 at the top ('#' lit). The A is 18 rows tall, the others 9.
+    // The glyphs, row 0 at the top ('#' lit). The A is 24 rows tall, the others 9.
+    // A big, lopsided A: the apex leans right, the left leg is thin and sweeps far out, the right
+    // one thick and nearly upright on a broad foot, the crossbar swings out past the left leg.
     private static readonly string[] A =
     [
-        ".......#.......",
-        "......###......",
-        "......###......",
-        ".....#####.....",
-        ".....##.##.....",
-        "....###.###....",
-        "....###.###....",
-        "...###...###...",
-        "...###...###...",
-        "..###.....###..",
-        "..###########..",
-        ".#############.",
-        ".###.......###.",
-        ".###.......###.",
-        "###.........###",
-        "###.........###",
-        "###.........###",
-        "#####.....#####",
+        ".............###......",
+        "............####......",
+        "............####......",
+        "...........##.##......",
+        "...........##..##.....",
+        "..........##...###....",
+        "..........##...###....",
+        ".........##....###....",
+        ".........##....###....",
+        "........##.....###....",
+        "........##.....###....",
+        ".......##......###....",
+        "......##........###...",
+        "..#...##........###...",
+        "..#################...",
+        "..##################..",
+        ".##.##..........####..",
+        "....##..........####..",
+        "...##...........####..",
+        "...##...........####..",
+        "..##.............####.",
+        "..##.............####.",
+        "###..............#####",
+        "##.............#######",
     ];
     private static readonly string[] L =
     [
@@ -96,12 +104,12 @@ public static class TitleCard
     private static readonly Letter[] Letters =
     [
         new(A, 0, 0, 0f, 0.8f),
-        new(L, 17, 1, 0.75f, 0.35f),
-        new(O, 25, 4, 1.05f, 0.35f),
-        new(N, 34, 0, 1.35f, 0.35f),
-        new(E, 43, 3, 1.65f, 0.35f),
+        new(L, 24, 1, 0.75f, 0.35f),
+        new(O, 32, 4, 1.05f, 0.35f),
+        new(N, 41, 0, 1.35f, 0.35f),
+        new(E, 50, 3, 1.65f, 0.35f),
     ];
-    private const int WidthPixels = 50;
+    private const int WidthPixels = 57;
 
     private readonly record struct Cell(int X, int Y, int Size, float Open);
 
@@ -117,7 +125,7 @@ public static class TitleCard
         var dark = new Vector4(0f, 0f, 0f, black);
         int size = Math.Max(2, (int)(width * 0.55f / WidthPixels));
         int left = (width - WidthPixels * size) / 2;
-        int bottom = (height + 18 * size) / 2; // the A's baseline, the A centred
+        int bottom = (height + 24 * size) / 2; // the A's baseline, the A centred
 
         Cells.Clear();
         for (int k = 0; k < Letters.Length; k++)
