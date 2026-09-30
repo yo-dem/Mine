@@ -476,7 +476,7 @@ public sealed class Game : IDisposable
 
         bool fastTime = playing && _keyboard.IsKeyPressed(Key.T);
         _dayCycle.Update((float)deltaTime * (fastTime ? FastTimeScale : 1f));
-        _weather.Update(dt, GroundMaterials.Snow(_player.Position.X, _player.Position.Z));
+        _weather.Update(dt, GroundMaterials.Snow(_player.Position.X, _player.Position.Z), GroundMaterials.Desert(_player.Position.X, _player.Position.Z));
         SkyRenderer.Rain = _weather.Rain;
         SkyRenderer.Snow = _weather.Snow;
         SkyRenderer.SnowCover = _weather.SnowCover;
@@ -1413,7 +1413,7 @@ public sealed class Game : IDisposable
         var p = _player.Position;
         var (hours, minutes) = _dayCycle.Clock;
         string weather = _weather.Storm > 0.5f ? "temporale" : _weather.Blizzard > 0.5f ? "bufera di neve"
-            : _weather.Raining ? "pioggia" : _weather.Snow > 0.5f ? "neve" : "sereno";
+            : _weather.Rain > 0.5f ? "pioggia" : _weather.Snow > 0.5f ? "neve" : "sereno";
         _info =
         [
             $"Posizione: {p.X:0} {p.Y:0} {p.Z:0}",

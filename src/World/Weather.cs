@@ -10,6 +10,8 @@ namespace Mine.World;
 /// In the snowy lands it snows by itself most of the time (<see cref="Update"/>): spells of snow with
 /// calmer breaks, which stop when the player walks out of them. That snow lays no cover of its own:
 /// the snowy lands are always white (the shaders' snowCover), and the rest of the world stays as it is.
+/// Now and then, rarely, a shower passes by itself anywhere but the snowy lands (seldom over the
+/// desert): see <see cref="Update"/>.
 /// </summary>
 public sealed class Weather
 {
@@ -36,6 +38,12 @@ public sealed class Weather
 
     // In the snowy lands: snow falls for SnowSpell seconds of every SnowCycle.
     private const float SnowCycle = 330f, SnowSpell = 250f;
+
+    // Showers: one may come every ShowerGapMin..ShowerGapMax seconds of play, lasting
+    // ShowerMin..ShowerMax; over the desert most pass it by (DesertShowers of them fall there).
+    private const float ShowerGapMin = 900f, ShowerGapMax = 2100f, ShowerMin = 100f, ShowerMax = 220f, DesertShowers = 0.15f;
+    private float _nextShower = float.NaN, _showerEnd;
+    private bool _localRain; // raining by itself, a passing shower
     private float _clock, _strikeStart = -100f, _nextStrike;
 
     /// <summary>0 = clear, 1 = full rain.</summary>
@@ -49,7 +57,8 @@ public sealed class Weather
 
     public void Toggle()
     {
-        Raining = !Raining;
+        Raining = !(Raining || _localRain); // stopping a passing shower by hand, too
+        _localRain = false;
         Storming = false;
         if (Raining) Snowing = Blizzarding = false;
     }
@@ -58,7 +67,7 @@ public sealed class Weather
     {
         Snowing = !Snowing;
         Blizzarding = false;
-        if (Snowing) Raining = Storming = false;
+        if (Snowing) Raining = Storming = _localRain = false;
     }
 
     /// <summary>Heavy rain with lightning (the rain starts if it was not falling).</summary>
@@ -73,14 +82,14 @@ public sealed class Weather
     public void StartBlizzard()
     {
         Snowing = Blizzarding = true;
-        Raining = Storming = false;
+        Raining = Storming = _localRain = false;
     }
 
     /// <summary>Debug: snowing at full strength (a blizzard if asked) with the snow already lying everywhere.</summary>
     public void StartSnowed(bool blizzard = false)
     {
         Snowing = true;
-        Raining = Storming = false;
+        Raining = Storming = _localRain = false;
         Blizzarding = blizzard;
         Snow = 1f;
         Blizzard = blizzard ? 1f : 0f;
@@ -88,15 +97,30 @@ public sealed class Weather
     }
 
     /// <summary>
-    /// Moves the weather on; <paramref name="snowyLands"/> is how much the player stands in the
-    /// snowy lands (0..1), where it snows by itself in spells (unless it rains by hand).
+    /// Moves the weather on; <paramref name="snowyLands"/> and <paramref name="desert"/> are how much
+    /// the player stands in the snowy lands and in the desert (0..1). In the snowy lands it snows by
+    /// itself in spells (unless it rains by hand); elsewhere a shower comes now and then, rarely,
+    /// and over the desert seldom (never starting in the snow, and stopping as the player walks in).
     /// </summary>
-    public void Update(float dt, float snowyLands)
+    public void Update(float dt, float snowyLands, float desert)
     {
         _clock += dt;
+        if (float.IsNaN(_nextShower)) _nextShower = _clock + float.Lerp(ShowerGapMin, ShowerGapMax, _random.NextSingle());
+        if (!_localRain && _clock >= _nextShower)
+        {
+            _nextShower = _clock + float.Lerp(ShowerGapMin, ShowerGapMax, _random.NextSingle());
+            if (snowyLands < 0.3f && !Snowing && _random.NextSingle() < float.Lerp(1f, DesertShowers, desert))
+            {
+                _localRain = true;
+                _showerEnd = _clock + float.Lerp(ShowerMin, ShowerMax, _random.NextSingle());
+            }
+        }
+        if (_localRain && (_clock >= _showerEnd || snowyLands > 0.55f)) _localRain = false;
+        bool raining = Raining || _localRain;
+
         bool spell = _clock % SnowCycle < SnowSpell;
-        _localSnow = spell && !Raining && (_localSnow ? snowyLands > 0.45f : snowyLands > 0.55f);
-        Rain = Ease(Rain, Raining, dt);
+        _localSnow = spell && !raining && (_localSnow ? snowyLands > 0.45f : snowyLands > 0.55f);
+        Rain = Ease(Rain, raining, dt);
         Snow = Ease(Snow, Snowing || _localSnow, dt);
         Storm = Ease(Storm, Storming && Raining, dt);
         Blizzard = Ease(Blizzard, Blizzarding && Snowing, dt);
