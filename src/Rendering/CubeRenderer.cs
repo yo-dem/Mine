@@ -6,7 +6,9 @@ namespace Mine.Rendering;
 /// <summary>
 /// Draws the debris (<see cref="DebrisCube"/>: chips and material cubes) instanced, one draw per
 /// model: the chip cube and each material's model (<see cref="ItemMeshes"/>), with
-/// <see cref="TerrainShaders.CubeVertex"/> and the object fragment shader.
+/// <see cref="TerrainShaders.CubeVertex"/> and the object fragment shader. Models with glass
+/// (<see cref="ItemMeshes.GlassOf"/>: the glass cubes' panes) draw it later, in the see-through pass
+/// (<see cref="DrawGlass"/>, with the instances uploaded by <see cref="Draw"/>).
 /// </summary>
 public sealed unsafe class CubeRenderer : IDisposable
 {
@@ -16,6 +18,7 @@ public sealed unsafe class CubeRenderer : IDisposable
     private readonly GL _gl;
     private readonly (uint Vao, uint Mesh, uint Instances, int Count)[] _models;
     private readonly List<float>[] _batches;
+    private readonly (uint Vao, uint Mesh, int Count)?[] _glass; // per model, sharing its instance buffer
 
     public CubeRenderer(GL gl)
     {
@@ -24,6 +27,24 @@ public sealed unsafe class CubeRenderer : IDisposable
         meshes.AddRange(Enum.GetValues<Resource>().Select(ItemMeshes.Item));
         _models = meshes.Select(Create).ToArray();
         _batches = _models.Select(_ => new List<float>()).ToArray();
+        _glass = new (uint, uint, int)?[_models.Length];
+        foreach (var r in Enum.GetValues<Resource>())
+            if (ItemMeshes.GlassOf(r, carried: false) is { } glass)
+            {
+                var (vao, mesh, _, count) = Create(glass, _models[1 + (int)r].Instances);
+                _glass[1 + (int)r] = (vao, mesh, count);
+            }
+    }
+
+    /// <summary>The see-through parts of the cubes drawn by the last <see cref="Draw"/>.</summary>
+    public void DrawGlass()
+    {
+        for (int i = 0; i < _models.Length; i++)
+        {
+            if (_glass[i] is not var (vao, _, count) || _batches[i].Count == 0) continue;
+            _gl.BindVertexArray(vao);
+            _gl.DrawArraysInstanced(PrimitiveType.Triangles, 0, (uint)count, (uint)(_batches[i].Count / FloatsPerInstance));
+        }
     }
 
     public void Draw(IReadOnlyList<DebrisCube> cubes)
@@ -49,9 +70,11 @@ public sealed unsafe class CubeRenderer : IDisposable
         }
     }
 
-    private (uint, uint, uint, int) Create(List<float> mesh)
+    private (uint Vao, uint Mesh, uint Instances, int Count) Create(List<float> mesh) => Create(mesh, _gl.GenBuffer());
+
+    private (uint Vao, uint Mesh, uint Instances, int Count) Create(List<float> mesh, uint instances)
     {
-        uint vao = _gl.GenVertexArray(), vbo = _gl.GenBuffer(), instances = _gl.GenBuffer();
+        uint vao = _gl.GenVertexArray(), vbo = _gl.GenBuffer();
         _gl.BindVertexArray(vao);
         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, vbo);
         var data = mesh.ToArray();
@@ -86,6 +109,11 @@ public sealed unsafe class CubeRenderer : IDisposable
         {
             _gl.DeleteBuffer(mesh);
             _gl.DeleteBuffer(instances);
+            _gl.DeleteVertexArray(vao);
+        }
+        foreach (var (vao, mesh, _) in _glass.OfType<(uint, uint, int)>())
+        {
+            _gl.DeleteBuffer(mesh);
             _gl.DeleteVertexArray(vao);
         }
     }

@@ -18,6 +18,29 @@ internal static class ItemMeshes
         return m.Vertices;
     }
 
+    /// <summary>A material's model as it is held and in the inventory: the seeds in their jar, the others as <see cref="Item"/>.</summary>
+    public static List<float> Carried(Resource resource) => resource == Resource.Seeds ? Jar.Value.Solid : Item(resource);
+
+    /// <summary>
+    /// The see-through part of a material's model, drawn after its solid part with the glass shading
+    /// (or null): the glass block's panes, and, when <paramref name="carried"/>, the seed jar's glass.
+    /// </summary>
+    public static List<float>? GlassOf(Resource resource, bool carried) => resource switch
+    {
+        Resource.Glass => GlassPanes(),
+        Resource.Seeds when carried => Jar.Value.Glass,
+        _ => null,
+    };
+
+    private static readonly Lazy<(List<float> Solid, List<float> Glass)> Jar = new(SeedJar);
+
+    private static List<float> GlassPanes()
+    {
+        var m = new MeshBuilder();
+        m.Box(new Vector3(-0.47f), new Vector3(0.47f), new Vector3(0.82f, 0.93f, 1.0f));
+        return m.Vertices;
+    }
+
     public static List<float> Item(Resource resource)
     {
         var m = new MeshBuilder();
@@ -46,6 +69,20 @@ internal static class ItemMeshes
             case Resource.Seeds:
                 Seeds(m);
                 break;
+            case Resource.Glass:
+            {
+                // A pale frame along the edges; the panes are glass (GlassOf).
+                const float t = 0.07f;
+                var frame = new Vector3(0.78f, 0.86f, 0.96f);
+                foreach (float a in (ReadOnlySpan<float>)[-0.5f, 0.5f - t])
+                foreach (float b in (ReadOnlySpan<float>)[-0.5f, 0.5f - t])
+                {
+                    m.Box(new Vector3(-0.5f, a, b), new Vector3(0.5f, a + t, b + t), frame, 0.15f);
+                    m.Box(new Vector3(a, -0.5f, b), new Vector3(a + t, 0.5f, b + t), frame, 0.15f);
+                    m.Box(new Vector3(a, b, -0.5f), new Vector3(a + t, b + t, 0.5f), frame, 0.15f);
+                }
+                break;
+            }
             default:
             {
                 // The crystal block as it is placed: violet glass glowing brighter toward the middle

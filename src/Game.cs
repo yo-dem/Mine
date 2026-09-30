@@ -410,7 +410,7 @@ public sealed class Game : IDisposable
             {
                 bool door = x == x0 && (z == z0 + 2 || z == z0 + 3);
                 bool window = h == 2 && (z == z0 + size - 1 || x == x0 + size - 1) && (x == x0 + 2 || x == x0 + 3 || z == z0 + 2 || z == z0 + 3);
-                if (!door && !window) _blocks.Add(new BlockPos(x, floor + h * Blocks.Tall, z), Resource.Wood);
+                if (!door) _blocks.Add(new BlockPos(x, floor + h * Blocks.Tall, z), window ? Resource.Glass : Resource.Wood);
             }
             _blocks.Add(new BlockPos(x, floor + 4 * Blocks.Tall, z), Resource.Wood);
         }
@@ -584,7 +584,10 @@ public sealed class Game : IDisposable
     private static readonly (Vector3, Vector3) StoneChips = (new(0.52f, 0.48f, 0.56f), new(0.40f, 0.37f, 0.46f));
     private static readonly (Vector3, Vector3) CrystalChips = (new(0.75f, 0.55f, 1.0f), new(0.45f, 0.85f, 1.0f));
     private static float BreakSeconds(Resource r) => r switch { Resource.Wood => 0.45f, Resource.Stone => 0.6f, _ => 0.35f };
-    private static (Vector3, Vector3) ChipsOf(Resource r) => r switch { Resource.Wood => WoodChips, Resource.Stone => StoneChips, _ => CrystalChips };
+    private static (Vector3, Vector3) ChipsOf(Resource r) => r switch
+    {
+        Resource.Wood => WoodChips, Resource.Stone => StoneChips, Resource.Glass => (TreeModels.GlassChip, TreeModels.GlassChip2), _ => CrystalChips,
+    };
 
     // Tearing up grass: the whole terrain tile aimed at is torn up almost at once, for good
     // (Blocks.TearUp), giving one seed. Sowing a seed (right button) greens the tile where it lands,
@@ -596,6 +599,8 @@ public sealed class Game : IDisposable
     private Vector3? _lastSown;
     private double _thrownAt = double.NegativeInfinity; // when seeds were last thrown (the jar's flick, see DrawHeldItem)
     private const float FlickSeconds = 0.35f;
+    private double _balkedAt = double.NegativeInfinity; // when a throw was cut short (nothing can be sown there)
+    private const float BalkSeconds = 0.22f;
     private double _nextSowAt;
     private const float ButterflyGrass = 0.6f; // how grown planted grass must be for butterflies
     private Vector3? _mowTarget; // the centre of the grassy tile under the crosshair, when nothing else is aimed at
@@ -652,7 +657,7 @@ public sealed class Game : IDisposable
         if (!click && _lastSown == ground) return;
         if (_sown.Any(s => s.At == ground) || !_blocks.CanPlant(Blocks.TileColumns(ground.X, ground.Z), Plantable))
         {
-            if (click) Toast("Qui non si puo seminare", new Vector4(1f, 0.6f, 0.6f, 1f));
+            if (click) _balkedAt = _time; // no seed thrown: the jar's flick starts and stops short
             return;
         }
         _inventory.Take(Resource.Seeds, 1);
@@ -915,6 +920,45 @@ public sealed class Game : IDisposable
         _waterShader.Set("uWaterExtent", WaterRenderer.Extent);
         if (On("water")) _water.Draw();
 
+        // Glass: glass blocks, the glass cubes lying around, the translucent crystals.
+        _profiler.Section("vetro");
+        SetWorldUniforms(_objectShader, view * projection, eye, atmosphere, time);
+        _objectShader.Set("uModel", Matrix4x4.Identity);
+        _objectShader.Set("uGlow", 1f);
+        _objectShader.Set("uHighlight", 0f);
+        _objectShader.Set("uGlass", 1f);
+        SetWorldUniforms(_treeShader, view * projection, eye, atmosphere, time);
+        _treeShader.Set("uGlass", 1f);
+        if (_cubeList.Count > 0)
+        {
+            SetWorldUniforms(_cubeShader, view * projection, eye, atmosphere, time);
+            _cubeShader.Set("uGlass", 1f);
+        }
+        BeginGlass();
+        for (int side = 0; side < 2; side++)
+        {
+            _objectShader.Use();
+            _blockRenderer.DrawGlass();
+            if (_cubeList.Count > 0)
+            {
+                _cubeShader.Use();
+                _cubes.DrawGlass();
+            }
+            _treeShader.Use();
+            if (On("trees")) _trees.Draw(look, FieldOfView, (float)size.X / size.Y, translucent: true);
+            GlassBackFacesDone();
+        }
+        EndGlass();
+        _objectShader.Use();
+        _objectShader.Set("uGlass", 0f);
+        _treeShader.Use();
+        _treeShader.Set("uGlass", 0f);
+        if (_cubeList.Count > 0)
+        {
+            _cubeShader.Use();
+            _cubeShader.Set("uGlass", 0f);
+        }
+
         // The islands' waterfalls and their ponds: translucent and glowing, over everything opaque.
         _profiler.Section("cascate");
         if (On("falls")) _waterfalls.Draw(view * projection, eye, atmosphere.Night, time, 2f * MathF.Tan(FieldOfView / 2) / _post.SceneHeight);
@@ -959,6 +1003,9 @@ public sealed class Game : IDisposable
         // and swings back.
         float since = (float)(_time - _thrownAt) / FlickSeconds;
         float flick = jar && since is >= 0f and < 1f ? MathF.Sin(MathF.PI * since) * (1f - 0.3f * since) : 0f;
+        // Where nothing can be sown (grass there already), the flick is cut short: a small start, and back.
+        float balked = (float)(_time - _balkedAt) / BalkSeconds;
+        if (jar && balked is >= 0f and < 1f) flick = MathF.Max(flick, 0.28f * MathF.Sin(MathF.PI * MathF.Sqrt(balked)));
         var local = Matrix4x4.CreateScale(jar ? 0.6f : 0.34f) * Matrix4x4.CreateRotationY(-0.55f)
                     * Matrix4x4.CreateRotationX(0.2f + chop * 0.5f - flick * 0.75f) * Matrix4x4.CreateRotationZ(flick * 0.2f)
                     * Matrix4x4.CreateTranslation(0.42f + bobX - flick * 0.04f, -0.38f + lift + bobY - chop * 0.05f + flick * 0.07f, -0.72f - chop * 0.06f - flick * 0.12f);
@@ -970,24 +1017,34 @@ public sealed class Game : IDisposable
         _objectShader.Set("uModel", local * cameraToWorld);
         _objectShader.Set("uGlow", 1f);
         _objectShader.Set("uHighlight", 0f);
-        if (resource != Resource.Seeds)
-        {
-            _objectRenderer.DrawItem(resource);
-            return;
-        }
+        _objectRenderer.DrawItem(resource);
+        if (!_objectRenderer.HasGlass(resource)) return;
 
-        // The seeds are held in a glass jar: the lid and the grains, then the glass over them,
-        // its far side first, blended without writing depth.
-        _objectRenderer.DrawSeedJar(glass: false);
+        // Glass (the seed jar's, a glass block's panes) over the rest.
+        _objectShader.Set("uGlass", 1f);
+        BeginGlass();
+        _objectRenderer.DrawItem(resource, glass: true);
+        GlassBackFacesDone();
+        _objectRenderer.DrawItem(resource, glass: true);
+        EndGlass();
+        _objectShader.Set("uGlass", 0f);
+    }
+
+    // See-through glass is blended (premultiplied) over what is behind it without writing depth,
+    // each thing twice: its far side (front faces culled), then its near side.
+    private void BeginGlass()
+    {
         _gl.Enable(EnableCap.Blend);
         _gl.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
         _gl.DepthMask(false);
-        _objectShader.Set("uGlass", 1f);
         _gl.CullFace(TriangleFace.Front);
-        _objectRenderer.DrawSeedJar(glass: true);
+    }
+
+    private void GlassBackFacesDone() => _gl.CullFace(TriangleFace.Back);
+
+    private void EndGlass()
+    {
         _gl.CullFace(TriangleFace.Back);
-        _objectRenderer.DrawSeedJar(glass: true);
-        _objectShader.Set("uGlass", 0f);
         _gl.DepthMask(true);
         _gl.Disable(EnableCap.Blend);
     }

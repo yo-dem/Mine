@@ -17,29 +17,26 @@ public sealed unsafe class ObjectRenderer : IDisposable
     private readonly GL _gl;
     private readonly (uint Vao, uint Vbo, int Count)[] _meshes;
     private readonly (uint Vao, uint Vbo, int Count)[] _items;
-    private readonly (uint Vao, uint Vbo, int Count) _jar, _jarGlass; // the seeds as held
+    private readonly (uint Vao, uint Vbo, int Count)?[] _itemGlass; // the see-through part of each (ItemMeshes.GlassOf)
 
     public ObjectRenderer(GL gl)
     {
         _gl = gl;
         _meshes = Enum.GetValues<ObjectKind>().Select(kind => Upload(BuildMesh(kind))).ToArray();
-        _items = Enum.GetValues<Resource>().Select(r => Upload(ItemMeshes.Item(r))).ToArray();
-        var (jar, glass) = ItemMeshes.SeedJar();
-        (_jar, _jarGlass) = (Upload(jar), Upload(glass));
+        _items = Enum.GetValues<Resource>().Select(r => Upload(ItemMeshes.Carried(r))).ToArray();
+        _itemGlass = Enum.GetValues<Resource>().Select(r => ItemMeshes.GlassOf(r, carried: true) is { } glass ? Upload(glass) : ((uint, uint, int)?)null).ToArray();
     }
 
-    /// <summary>The seed jar as held (see <see cref="ItemMeshes.SeedJar"/>): its solid parts, or its glass.</summary>
-    public void DrawSeedJar(bool glass)
-    {
-        var (vao, _, count) = glass ? _jarGlass : _jar;
-        _gl.BindVertexArray(vao);
-        _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)count);
-    }
+    /// <summary>Whether a material's held model has a see-through part (drawn by <see cref="DrawItem"/> with <c>glass</c>).</summary>
+    public bool HasGlass(Resource resource) => _itemGlass[(int)resource] is not null;
 
-    /// <summary>Draws the model of a material (one unit across, centred on the origin: see <see cref="ItemMeshes"/>).</summary>
-    public void DrawItem(Resource resource)
+    /// <summary>
+    /// Draws the model of a material as held (one unit across, centred on the origin: see
+    /// <see cref="ItemMeshes.Carried"/>): its solid part, or with <paramref name="glass"/> its see-through part.
+    /// </summary>
+    public void DrawItem(Resource resource, bool glass = false)
     {
-        var (vao, _, count) = _items[(int)resource];
+        if ((glass ? _itemGlass[(int)resource] : _items[(int)resource]) is not var (vao, _, count)) return;
         _gl.BindVertexArray(vao);
         _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)count);
     }
@@ -96,7 +93,7 @@ public sealed unsafe class ObjectRenderer : IDisposable
 
     public void Dispose()
     {
-        foreach (var (vao, vbo, _) in _meshes.Concat(_items).Append(_jar).Append(_jarGlass))
+        foreach (var (vao, vbo, _) in _meshes.Concat(_items).Concat(_itemGlass.OfType<(uint, uint, int)>()))
         {
             _gl.DeleteBuffer(vbo);
             _gl.DeleteVertexArray(vao);

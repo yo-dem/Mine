@@ -100,8 +100,12 @@ public sealed unsafe class TreeRenderer : IDisposable
 
     private readonly bool[] _visible = new bool[Sectors];
 
-    /// <summary>Draws the trees in view: <paramref name="look"/> is the view direction, the field of view vertical.</summary>
-    public void Draw(Vector3 look, float verticalFov, float aspect)
+    /// <summary>
+    /// Draws the trees in view: <paramref name="look"/> is the view direction, the field of view
+    /// vertical. With <paramref name="translucent"/>, only the variants with glass parts
+    /// (<see cref="TreeModels.Translucent"/>), for the see-through pass.
+    /// </summary>
+    public void Draw(Vector3 look, float verticalFov, float aspect, bool translucent = false)
     {
         // The horizontal half-angle of the view, widened as the view tilts (the frustum then
         // reaches farther to the sides at the ground); looking steeply up or down, everything.
@@ -116,9 +120,11 @@ public sealed unsafe class TreeRenderer : IDisposable
             _visible[s] = all || delta <= halfView + MathF.PI / Sectors;
         }
 
-        foreach (var batch in _batches)
+        for (int v = 0; v < _batches.GetLength(0); v++)
+        for (int lod = 0; lod < _batches.GetLength(1); lod++)
         {
-            if (batch.InstanceCount == 0) continue;
+            var batch = _batches[v, lod];
+            if (batch.InstanceCount == 0 || (translucent && !TreeModels.Translucent(v))) continue;
             // The near group, then each run of visible slices in one draw (the groups are contiguous).
             int runStart = 0, runEnd = batch.GroupStart[1];
             for (int s = 0; s < Sectors; s++)

@@ -11,7 +11,10 @@ namespace Mine.Rendering;
 /// 4×4 grid of little squares shaded like the material cubes (<see cref="ItemMeshes"/>): bark with
 /// rings on the ends for wood, speckled lilac grey for stone, glowing violet glass for crystal.
 /// The natural stone of the rock spires is the terrain's sandstone with its strata, in a coarser
-/// 2×2 grid (spires are big: this keeps their meshes light).
+/// 2×2 grid (spires are big: this keeps their meshes light). Glass blocks go into a second mesh per
+/// chunk, drawn in the see-through pass (<see cref="DrawGlass"/>, not into the shadow map): a clear
+/// pane in each face within a slightly frosted, faintly glowing border, so a wall of glass reads as
+/// panes; glass hides no face of the blocks behind it, and faces between glass blocks are left out.
 /// </summary>
 public sealed unsafe class BlockRenderer : IDisposable
 {
@@ -21,6 +24,7 @@ public sealed unsafe class BlockRenderer : IDisposable
 
     private readonly GL _gl;
     private readonly Dictionary<(int X, int Z), (uint Vao, uint Vbo, int Count)> _chunks = new();
+    private readonly Dictionary<(int X, int Z), (uint Vao, uint Vbo, int Count)> _glassChunks = new();
 
     public BlockRenderer(GL gl) => _gl = gl;
 
@@ -30,15 +34,37 @@ public sealed unsafe class BlockRenderer : IDisposable
         foreach (var chunk in blocks.TakeDirtyChunks())
         {
             var m = new MeshBuilder();
+            var glass = new MeshBuilder();
             foreach (var (p, resource) in blocks.InChunk(chunk))
-                Block(m, p, resource, blocks.IsNatural(p), face => !Covered(blocks, p, face));
-            if (!_chunks.TryGetValue(chunk, out var buffers))
             {
-                if (m.Vertices.Count == 0) continue;
-                var (vao, vbo) = CreateBuffers();
-                buffers = (vao, vbo, 0);
+                bool isGlass = resource == Resource.Glass;
+                if (isGlass) GlassBlock(glass, p, face => !Covered(blocks, p, face, true));
+                else Block(m, p, resource, blocks.IsNatural(p), face => !Covered(blocks, p, face, false));
             }
-            _chunks[chunk] = buffers with { Count = Upload(buffers.Vbo, m.Vertices) };
+            Store(_chunks, chunk, m.Vertices);
+            Store(_glassChunks, chunk, glass.Vertices);
+        }
+    }
+
+    private void Store(Dictionary<(int X, int Z), (uint Vao, uint Vbo, int Count)> chunks, (int X, int Z) chunk, List<float> vertices)
+    {
+        if (!chunks.TryGetValue(chunk, out var buffers))
+        {
+            if (vertices.Count == 0) return;
+            var (vao, vbo) = CreateBuffers();
+            buffers = (vao, vbo, 0);
+        }
+        chunks[chunk] = buffers with { Count = Upload(buffers.Vbo, vertices) };
+    }
+
+    /// <summary>The glass blocks, for the see-through pass.</summary>
+    public void DrawGlass()
+    {
+        foreach (var (vao, _, count) in _glassChunks.Values)
+        {
+            if (count == 0) continue;
+            _gl.BindVertexArray(vao);
+            _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)count);
         }
     }
 
@@ -54,15 +80,51 @@ public sealed unsafe class BlockRenderer : IDisposable
 
     // A face is hidden when a block sits right against it (exactly level with it, for the sides),
     // or when it is buried: a bottom at or under the ground, a side under the neighbouring ground.
-    private static bool Covered(Blocks blocks, BlockPos p, int face) => face switch
+    // Glass hides only glass faces (a solid block's face shows through it).
+    private static bool Covered(Blocks blocks, BlockPos p, int face, bool glass)
     {
-        0 => blocks.At(p with { X = p.X + 1 }) is not null || blocks.GroundAt(p.X + 1, p.Z) >= p.Top,
-        1 => blocks.At(p with { X = p.X - 1 }) is not null || blocks.GroundAt(p.X - 1, p.Z) >= p.Top,
-        2 => blocks.At(p with { Y = p.Y + Blocks.Tall }) is not null,
-        3 => blocks.At(p with { Y = p.Y - Blocks.Tall }) is not null || blocks.GroundAt(p.X, p.Z) >= p.Bottom,
-        4 => blocks.At(p with { Z = p.Z + 1 }) is not null || blocks.GroundAt(p.X, p.Z + 1) >= p.Top,
-        _ => blocks.At(p with { Z = p.Z - 1 }) is not null || blocks.GroundAt(p.X, p.Z - 1) >= p.Top,
-    };
+        bool Hides(BlockPos n) => blocks.At(n) is { } r && (glass || r != Resource.Glass);
+        return face switch
+        {
+            0 => Hides(p with { X = p.X + 1 }) || blocks.GroundAt(p.X + 1, p.Z) >= p.Top,
+            1 => Hides(p with { X = p.X - 1 }) || blocks.GroundAt(p.X - 1, p.Z) >= p.Top,
+            2 => Hides(p with { Y = p.Y + Blocks.Tall }),
+            3 => Hides(p with { Y = p.Y - Blocks.Tall }) || blocks.GroundAt(p.X, p.Z) >= p.Bottom,
+            4 => Hides(p with { Z = p.Z + 1 }) || blocks.GroundAt(p.X, p.Z + 1) >= p.Top,
+            _ => Hides(p with { Z = p.Z - 1 }) || blocks.GroundAt(p.X, p.Z - 1) >= p.Top,
+        };
+    }
+
+    private static readonly Vector3 GlassTint = new(0.82f, 0.93f, 1.0f);
+    private const float GlassBorder = 0.07f; // the frosted rim round each pane
+
+    /// <summary>A glass block's visible faces: a clear pane within a frosted, faintly glowing rim.</summary>
+    private static void GlassBlock(MeshBuilder m, BlockPos p, Func<int, bool> visible)
+    {
+        var center = p.Center;
+        const float half = Blocks.Size / 2, b = GlassBorder;
+        for (int f = 0; f < 6; f++)
+        {
+            if (!visible(f)) continue;
+            var (n, u, v) = Faces[f];
+            var corner = center + n * half - u * half - v * half;
+            void Quad(float u0, float v0, float u1, float v1, float glow)
+            {
+                var a = corner + u * u0 + v * v0;
+                var bb = corner + u * u1 + v * v0;
+                var c = corner + u * u1 + v * v1;
+                var d = corner + u * u0 + v * v1;
+                m.Triangle(a, bb, c, GlassTint, glow);
+                m.Triangle(a, c, d, GlassTint, glow);
+            }
+            const float s = Blocks.Size, rim = 0.22f;
+            Quad(b, b, s - b, s - b, 0f);      // the pane
+            Quad(0, 0, s, b, rim);             // the rim: bottom, top, left, right
+            Quad(0, s - b, s, s, rim);
+            Quad(0, b, b, s - b, rim);
+            Quad(s - b, b, s, s - b, rim);
+        }
+    }
 
     // The six faces as (normal, u axis, v axis): +x, -x, +y, -y, +z, -z.
     private static readonly (Vector3 N, Vector3 U, Vector3 V)[] Faces =
@@ -171,7 +233,7 @@ public sealed unsafe class BlockRenderer : IDisposable
 
     public void Dispose()
     {
-        foreach (var (vao, vbo, _) in _chunks.Values)
+        foreach (var (vao, vbo, _) in _chunks.Values.Concat(_glassChunks.Values))
         {
             _gl.DeleteBuffer(vbo);
             _gl.DeleteVertexArray(vao);

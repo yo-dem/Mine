@@ -7,7 +7,8 @@ namespace Mine.Rendering;
 /// <summary>
 /// The inventory's icons: each material's model (<see cref="ItemMeshes"/>) turning slowly in its
 /// slot, drawn over the finished image in pixels (origin top left) with a simple fixed light. The
-/// seeds show as they are held, in their glass jar (<see cref="ItemMeshes.SeedJar"/>).
+/// materials show as they are held (<see cref="ItemMeshes.Carried"/>: the seeds in their glass jar),
+/// their glass parts see-through.
 /// </summary>
 public sealed unsafe class IconRenderer : IDisposable
 {
@@ -59,15 +60,14 @@ public sealed unsafe class IconRenderer : IDisposable
     private readonly GL _gl;
     private readonly Shader _shader;
     private readonly (uint Vao, uint Vbo, int Count)[] _models;
-    private readonly (uint Vao, uint Vbo, int Count) _jarGlass;
+    private readonly (uint Vao, uint Vbo, int Count)?[] _glass; // see-through parts (ItemMeshes.GlassOf)
 
     public IconRenderer(GL gl)
     {
         _gl = gl;
         _shader = new Shader(gl, VertexSource, FragmentSource);
-        var (jar, glass) = ItemMeshes.SeedJar();
-        _models = Enum.GetValues<Resource>().Select(r => Upload(r == Resource.Seeds ? jar : ItemMeshes.Item(r))).ToArray();
-        _jarGlass = Upload(glass);
+        _models = Enum.GetValues<Resource>().Select(r => Upload(ItemMeshes.Carried(r))).ToArray();
+        _glass = Enum.GetValues<Resource>().Select(r => ItemMeshes.GlassOf(r, carried: true) is { } glass ? Upload(glass) : ((uint, uint, int)?)null).ToArray();
     }
 
     /// <summary>Starts drawing icons over a screen of this size (depth cleared, so each model sorts its own faces).</summary>
@@ -94,15 +94,15 @@ public sealed unsafe class IconRenderer : IDisposable
         var (vao, _, count) = _models[(int)resource];
         _gl.BindVertexArray(vao);
         _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)count);
-        if (resource != Resource.Seeds) return;
+        if (_glass[(int)resource] is not var (glassVao, _, glassCount)) return;
 
-        // The jar's glass over its grains, blended without writing depth.
+        // The glass over the rest (the jar's over its grains), blended without writing depth.
         _gl.Enable(EnableCap.Blend);
         _gl.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
         _gl.DepthMask(false);
         _shader.Set("uGlass", 1f);
-        _gl.BindVertexArray(_jarGlass.Vao);
-        _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)_jarGlass.Count);
+        _gl.BindVertexArray(glassVao);
+        _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)glassCount);
         _shader.Set("uGlass", 0f);
         _gl.DepthMask(true);
         _gl.Disable(EnableCap.Blend);
@@ -131,7 +131,7 @@ public sealed unsafe class IconRenderer : IDisposable
 
     public void Dispose()
     {
-        foreach (var (vao, vbo, _) in _models.Append(_jarGlass))
+        foreach (var (vao, vbo, _) in _models.Concat(_glass.OfType<(uint, uint, int)>()))
         {
             _gl.DeleteBuffer(vbo);
             _gl.DeleteVertexArray(vao);

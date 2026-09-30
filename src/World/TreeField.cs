@@ -531,7 +531,8 @@ public sealed class TreeField
 
     // Giant crystal clusters are rare finds: this share of the sampled points on shores, desert
     // sand and rocky slopes tries one (see TryCrystal, which turns many of them down).
-    private const float CrystalChance = 0.004f;
+    private const float CrystalChance = 0.006f;
+    private const float ClearShare = 0.45f; // of them translucent (glass), picked by place
 
     /// <summary>
     /// A crystal cluster at (x, z), only where it touches no terrain but the ground it stands on:
@@ -540,6 +541,10 @@ public sealed class TreeField
     /// </summary>
     private void TryCrystal(List<TreeInstance> list, float x, float y, float z, float yaw, float scale, int variant)
     {
+        // Some are translucent, whatever the biome (chosen by the place, so no random number is drawn).
+        uint place = unchecked((uint)((int)MathF.Floor(x * 8f) * 73856093 ^ (int)MathF.Floor(z * 8f) * 19349663));
+        place = unchecked((place ^ (place >> 13)) * 1274126177u);
+        if ((place >> 16) % 1000 < ClearShare * 1000) variant = TreeModels.VariantOf(TreeModels.Decoration.ClearCrystals);
         float baseRadius = (TreeModels.CrystalBaseRadius + 0.2f) * scale, reach = TreeModels.CrystalReach * scale;
         for (float dz = -reach; dz <= reach; dz += 0.5f)
         for (float dx = -reach; dx <= reach; dx += 0.5f)

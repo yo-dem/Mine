@@ -71,7 +71,11 @@ public static class TreeModels
         Lilies,      // arching strap leaves, leafy stems, glowing trumpets
         TallPalm,    // a very tall, slender palm with a deep curve
         ShortPalm,   // a short, stocky palm with a big crown
+        ClearCrystals, // translucent crystals (real glass, each with a glowing core): mined for glass
     }
+
+    /// <summary>Whether a variant has see-through glass parts, drawn in the translucent pass (TreeRenderer).</summary>
+    public static bool Translucent(int variant) => variant == VariantOf(Decoration.ClearCrystals);
 
     public static int TreeStyleCount => Styles.Length;
 
@@ -103,6 +107,7 @@ public static class TreeModels
     {
         Decoration.VioletCrystals => new Vector3(0.66f, 0.42f, 1.0f),
         Decoration.CyanCrystals => new Vector3(0.40f, 0.85f, 1.0f),
+        Decoration.ClearCrystals => new Vector3(0.80f, 0.86f, 1.0f),
         _ => null,
     };
 
@@ -112,7 +117,7 @@ public static class TreeModels
     /// <summary>Radius of a variant's trunk at the foot, before instance scaling (for collisions).</summary>
     public static float TrunkRadius(int variant) => variant < Styles.Length ? Styles[variant].TrunkRadius : (Decoration)(variant - Styles.Length) switch
     {
-        Decoration.VioletCrystals or Decoration.CyanCrystals => 0.7f,
+        Decoration.VioletCrystals or Decoration.CyanCrystals or Decoration.ClearCrystals => 0.7f,
         Decoration.Reeds => 0f,
         Decoration.Palm => 0.24f,
         Decoration.TallPalm => 0.22f,
@@ -348,6 +353,27 @@ public static class TreeModels
                 }
                 break;
             }
+            case Decoration.ClearCrystals:
+            {
+                // Clear glass prisms, each with a thin glowing core seen through it.
+                var glass = new Vector3(0.82f, 0.92f, 1.0f);
+                var core = new Vector3(0.86f, 0.80f, 1.0f);
+                Plinth(mesh, CrystalBaseRadius, new Vector3(0.10f, 0.09f, 0.14f), random);
+                int count = 7;
+                int sides = lod >= 2 ? 4 : 6;
+                for (int i = 0; i < count; i++)
+                {
+                    float a = i * MathF.Tau / count + random.NextSingle() * 0.6f;
+                    float r = i == 0 ? 0f : 0.25f + 0.45f * random.NextSingle();
+                    var foot = new Vector3(MathF.Cos(a) * r, 0.15f, MathF.Sin(a) * r);
+                    var dir = Vector3.Normalize(new Vector3(MathF.Cos(a) * r * 1.2f, 1f, MathF.Sin(a) * r * 1.2f));
+                    float length = i == 0 ? 3.2f : 1.0f + 1.8f * random.NextSingle();
+                    float radius = i == 0 ? 0.38f : 0.16f + 0.16f * random.NextSingle();
+                    Prism(mesh, foot, dir, length * 0.8f, radius * 0.3f, core, lod >= 2 ? 4 : 5);
+                    Prism(mesh, foot, dir, length, radius, glass * (0.9f + 0.2f * random.NextSingle()), sides, glass: true);
+                }
+                break;
+            }
             case Decoration.Lotus:
             {
                 // A dark floating pad, two rings of petals glowing at the heart, and a bright core.
@@ -557,6 +583,7 @@ public static class TreeModels
     public readonly record struct Yield(string Name, Amount Amount, float Seconds, float PickRadius, float PickHeight, Vector3 Chip, Vector3 Chip2);
 
     private static readonly Vector3 CrystalChip = new(0.75f, 0.55f, 1.0f), VioletChip = new(0.66f, 0.42f, 1.0f), CyanChip = new(0.45f, 0.85f, 1.0f);
+    public static readonly Vector3 GlassChip = new(0.85f, 0.93f, 1.0f), GlassChip2 = new(0.62f, 0.72f, 0.86f);
 
     /// <summary>A small glowing crystal (<see cref="ObjectKind.Crystal"/>): quick to break, it gives only a couple of cubes.</summary>
     public static readonly Yield SmallCrystal = new("Cristallo", new Amount(Resource.Crystal, 2), 0.5f, 0.3f, 0.6f, CrystalChip, VioletChip);
@@ -585,6 +612,9 @@ public static class TreeModels
             // Crystal clusters (0.6 to 2.3 in scale) give 3 to 12 crystal cubes.
             Decoration.VioletCrystals or Decoration.CyanCrystals => new Yield("Cristalli giganti", new Amount(Resource.Crystal, Round(5.2f * scale)),
                 1.2f * scale, 0.9f * scale, 2.6f * scale, CrystalChip, (Decoration)(variant - Styles.Length) == Decoration.CyanCrystals ? CyanChip : VioletChip),
+            // Translucent crystals give as many glass blocks.
+            Decoration.ClearCrystals => new Yield("Cristalli traslucidi", new Amount(Resource.Glass, Round(5.2f * scale)),
+                1.2f * scale, 0.9f * scale, 2.6f * scale, GlassChip, GlassChip2),
             _ => null,
         };
     }
@@ -629,10 +659,14 @@ public static class TreeModels
 
     /// <summary>
     /// A crystal: a hexagonal (or square) prism with a pointed tip. It glows from within: dim at the
-    /// foot, brighter toward the tip, the facets alternating in brightness.
+    /// foot, brighter toward the tip, the facets alternating in brightness. A glass one is
+    /// see-through, only faintly glowing toward the tip: its glow is stored as -1 - glow, which
+    /// sends it to the translucent pass (TreeVertex).
     /// </summary>
-    private static void Prism(List<float> mesh, Vector3 foot, Vector3 axis, float length, float radius, Vector3 color, int sides)
+    private static void Prism(List<float> mesh, Vector3 foot, Vector3 axis, float length, float radius, Vector3 color, int sides, bool glass = false)
     {
+        void Vertex(List<float> mesh, Vector3 p, Vector3 n, Vector3 c, float emissive, float sway) =>
+            TreeModels.Vertex(mesh, p, n, c, glass ? -1f - 0.25f * emissive : emissive, sway);
         var side = Vector3.Normalize(Vector3.Cross(axis, MathF.Abs(axis.Y) < 0.9f ? Vector3.UnitY : Vector3.UnitX));
         var other = Vector3.Cross(axis, side);
         var shoulder = foot + axis * length * 0.78f;
