@@ -1104,10 +1104,9 @@ public sealed class Game : IDisposable
 
     // Starting, the screen is black while the land, the grass and the trees around are built, then
     // the world fades in over FadeInSeconds (after LoadingMaxSeconds at the latest), so nothing is
-    // seen popping in. In the black the title opens up over TitleOpenSeconds: big pixel letters cut
-    // through it, the world showing behind them; it stays at least TitleSeconds before the fade.
-    private const float FadeInSeconds = 1.6f, LoadingMaxSeconds = 12f, TitleOpenSeconds = 0.9f, TitleSeconds = 2.8f;
-    private const string Title = "ALONE";
+    // seen popping in. In the black the title is written as holes the world shows through
+    // (TitleCard); it stays readable a while before the fade (TitleSeconds at the earliest).
+    private const float FadeInSeconds = 1.6f, LoadingMaxSeconds = 12f, TitleSeconds = TitleCard.Written + 1.2f;
     private double _loadedAt = double.NaN;
 
     private void DrawLoadingFade(int width, int height)
@@ -1115,30 +1114,8 @@ public sealed class Game : IDisposable
         double fadeFrom = double.IsNaN(_loadedAt) ? double.NaN : Math.Max(_loadedAt, TitleSeconds);
         float t = double.IsNaN(fadeFrom) ? 0f : (float)Math.Clamp((_time - fadeFrom) / FadeInSeconds, 0.0, 1.0);
         if (t >= 1f) return;
-        float black = 1f - t * t * (3f - 2f * t);
-        float open = (float)Math.Clamp(_time / TitleOpenSeconds, 0.0, 1.0);
-        float hole = black * (1f - open * open * (3f - 2f * open)); // the black left in the letters
-        var dark = new Vector4(0f, 0f, 0f, black);
-
-        // The title's grid of glyph pixels, whole screen pixels each, in the middle of the screen.
-        int columns = Hud.TextPixels(Title), rows = 7;
-        int cell = Math.Max(2, (int)(width * 0.5f / columns));
-        int x0 = (width - columns * cell) / 2, y0 = (height - rows * cell) / 2;
-        int x1 = x0 + columns * cell, y1 = y0 + rows * cell;
-
         _hud.Begin(width, height);
-        // The black around the title, then its grid, the letters' cells holding what is left of the black.
-        _hud.Rect(0, 0, width, y0, dark);
-        _hud.Rect(0, y1, width, height - y1, dark);
-        _hud.Rect(0, y0, x0, y1 - y0, dark);
-        _hud.Rect(x1, y0, width - x1, y1 - y0, dark);
-        for (int row = 0; row < rows; row++)
-        for (int column = 0; column < columns; column++)
-        {
-            int letter = column / Hud.LetterAdvance, inLetter = column % Hud.LetterAdvance;
-            bool lit = Hud.GlyphPixel(Title[letter], inLetter, row);
-            _hud.Rect(x0 + column * cell, y0 + row * cell, cell, cell, lit ? dark with { W = hole } : dark);
-        }
+        TitleCard.Draw(_hud, width, height, (float)_time, 1f - t * t * (3f - 2f * t));
         _hud.End();
     }
 
