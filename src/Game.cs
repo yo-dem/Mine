@@ -528,6 +528,7 @@ public sealed class Game : IDisposable
         _indoor.Update(_blocks, _player.Eye, _time);
         var walk = new Vector2(_player.Velocity.X, _player.Velocity.Z).Length();
         if (_player.OnGround) _bobPhase += walk * dt * 1.2f;
+        UpdateHeldSwap(dt);
         _toasts.RemoveAll(t => t.Until < _time);
         bool inventoryWanted = _time - _inventoryUsedAt < InventoryHideDelay;
         _inventoryEntering = inventoryWanted;
@@ -1017,9 +1018,43 @@ public sealed class Game : IDisposable
     /// The material in hand, low on the right of the view, swaying as the player walks and chopping
     /// while gathering. Drawn big, so the block fills the corner where a hand would be.
     /// </summary>
+    // Switching what is in hand, the item held sinks out of the view below (SwapOutSeconds), as if
+    // put back in a pocket, and the new one rises from there (SwapInSeconds), overshooting its place a
+    // little. _swapOut goes 0 (in place) .. 1 (out of view); _shownItem is the one drawn meanwhile.
+    private const float SwapOutSeconds = 0.14f, SwapInSeconds = 0.26f, SwapDrop = 0.6f;
+    private Resource? _shownItem;
+    private float _swapOut = 1f;
+    private bool _swapComing;
+
+    private void UpdateHeldSwap(float dt)
+    {
+        if (Held != _shownItem && _shownItem is not null)
+        {
+            _swapComing = false;
+            _swapOut = MathF.Min(1f, _swapOut + dt / SwapOutSeconds);
+            if (_swapOut < 1f) return;
+        }
+        if (Held != _shownItem)
+        {
+            _shownItem = Held;
+            _swapOut = 1f;
+        }
+        if (_shownItem is null) return;
+        _swapComing = _swapOut > 0f;
+        _swapOut = MathF.Max(0f, _swapOut - dt / SwapInSeconds);
+    }
+
     private void DrawHeldItem(Matrix4x4 view, float time)
     {
-        if (Held is not { } resource) return;
+        if (_shownItem is not { } resource) return;
+        // Going out it speeds up as it sinks; coming in it slows down, rising a touch past its place (ease out back).
+        float swap;
+        if (_swapComing)
+        {
+            float t = 1f - _swapOut - 1f;
+            swap = -(2.2f * t * t * t + 1.2f * t * t); // 1 - easeOutBack(1 - _swapOut)
+        }
+        else swap = _swapOut * _swapOut;
         Matrix4x4.Invert(view, out var cameraToWorld);
         float bobX = MathF.Cos(_bobPhase) * 0.012f, bobY = -MathF.Abs(MathF.Sin(_bobPhase)) * 0.018f;
         float chop = _gathering is not null ? 0.5f + 0.5f * MathF.Sin(time * 14f) : 0f;
@@ -1034,8 +1069,9 @@ public sealed class Game : IDisposable
         float balked = (float)(_time - _balkedAt) / BalkSeconds;
         if (jar && balked is >= 0f and < 1f) flick = MathF.Max(flick, 0.28f * MathF.Sin(MathF.PI * MathF.Sqrt(balked)));
         var local = Matrix4x4.CreateScale(jar ? 0.6f : 0.34f) * Matrix4x4.CreateRotationY(-0.55f)
-                    * Matrix4x4.CreateRotationX(0.2f + chop * 0.5f - flick * 0.75f) * Matrix4x4.CreateRotationZ(flick * 0.2f)
-                    * Matrix4x4.CreateTranslation(0.42f + bobX - flick * 0.04f, -0.38f + lift + bobY - chop * 0.05f + flick * 0.07f, -0.72f - chop * 0.06f - flick * 0.12f);
+                    * Matrix4x4.CreateRotationX(0.2f + chop * 0.5f - flick * 0.75f + swap * 0.5f) * Matrix4x4.CreateRotationZ(flick * 0.2f - swap * 0.35f)
+                    * Matrix4x4.CreateTranslation(0.42f + bobX - flick * 0.04f + swap * 0.08f, -0.38f + lift + bobY - chop * 0.05f + flick * 0.07f - swap * SwapDrop,
+                        -0.72f - chop * 0.06f - flick * 0.12f);
 
         // Over everything, never cut by a wall the player stands against.
         _gl.DepthMask(true);
