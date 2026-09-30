@@ -196,8 +196,6 @@ public sealed class Game : IDisposable
             _slot = Math.Max(Enumerable.Range(0, Inventory.SlotCount).FirstOrDefault(i => _inventory[i]?.Resource == inHand, -1), 0);
         _sky = new SkyRenderer(_gl);
         _shadowMap = new ShadowMap(_gl);
-        if (int.TryParse(Environment.GetEnvironmentVariable("MINE_WORLD"), out int world) && world >= 1 && world <= WorldPreset.All.Length)
-            WorldPreset.Current = WorldPreset.All[world - 1];
         BuildWorld();
         _creatureRenderer = new CreatureRenderer(_gl);
         _creatureShader = new Shader(_gl, TerrainShaders.CreatureVertex, TerrainShaders.CreatureFragment);
@@ -276,7 +274,7 @@ public sealed class Game : IDisposable
     }
 
     // Debugging aids, from environment variables: MINE_FPS_LOG=1 prints the HUD line to the console,
-    // MINE_RAIN=1 starts with rain, MINE_SNOW=1 starts snowing with the snow already lying, MINE_STORM=1 / MINE_BLIZZARD=1 start a storm / a blizzard, MINE_WORLD=2 starts in world preset 2 (Ctrl+2), MINE_TIME=0.45 sets the time of day, MINE_PITCH=0.2 the view
+    // MINE_RAIN=1 starts with rain, MINE_SNOW=1 starts snowing with the snow already lying, MINE_STORM=1 / MINE_BLIZZARD=1 start a storm / a blizzard, MINE_TIME=0.45 sets the time of day, MINE_PITCH=0.2 the view
     // pitch (radians), MINE_YAW=1.5 the view heading, MINE_POS=800,-300 spawns exactly there, MINE_FULLSCREEN=1 starts full screen (windowed by default, for debugging), MINE_GIVE=1 gives 99 of every material, MINE_DEMO=1 builds a small block house ahead, MINE_SHOT=file.png saves a frame and quits (Screenshot), MINE_BREAK=10 holds the left button from 10 s on, MINE_SAVE=path|none picks the save file, MINE_GPU_PROFILE=1 prints the GPU time of each pass (GpuProfiler).
     private static readonly string Skip = Environment.GetEnvironmentVariable("MINE_SKIP") ?? "";
     private static bool On(string pass) => !Skip.Contains(pass);
@@ -300,7 +298,7 @@ public sealed class Game : IDisposable
 
     private void Respawn()
     {
-        var spawn = SpawnAt ?? (WorldPreset.Current == WorldPreset.Classic ? Spawn : FindSpawn());
+        var spawn = SpawnAt ?? FindSpawn();
         _player.Position = new Vector3(spawn.X, _terrainField.Height(spawn.X, spawn.Y), spawn.Y);
         _player.Velocity = Vector3.Zero;
         _player.Flying = SpawnHeight > 0f;
@@ -308,8 +306,8 @@ public sealed class Game : IDisposable
     }
 
     /// <summary>
-    /// A place to start in a generated world: the dry, gentle ground nearest the origin, preferring
-    /// the world's own character: the sand of a desert world, the green heart of an island.
+    /// A place to start: the dry, gentle ground nearest the origin in the heart of a prairie (or
+    /// failing that, any dry gentle ground).
     /// </summary>
     private Vector2 FindSpawn()
     {
@@ -323,8 +321,7 @@ public sealed class Game : IDisposable
                 float x = MathF.Cos(a) * r, z = MathF.Sin(a) * r;
                 if (_terrainField.Height(x, z) < TerrainField.WaterLevel + 2f || _terrainField.Normal(x, z).Y < 0.9f
                     || _terrainField.SpireHeight(x, z) > 0f) continue;
-                bool sandy = GroundMaterials.Desert(x, z) > 0.7f;
-                if (sandy == (WorldPreset.Current == WorldPreset.Desert)) return new Vector2(x, z);
+                if (GroundMaterials.Biomes(x, z).Prairie > 0.8f) return new Vector2(x, z);
                 fallback ??= new Vector2(x, z);
             }
             if (fallback is { } dry && r > 1500f) return dry;
@@ -454,16 +451,6 @@ public sealed class Game : IDisposable
         _sinceSave = 0;
     }
 
-    /// <summary>Switches to another kind of world (Ctrl+1..3) and starts over in it.</summary>
-    private void SetWorld(WorldPreset preset)
-    {
-        if (preset == WorldPreset.Current) return;
-        SaveState();
-        WorldPreset.Current = preset;
-        BuildWorld();
-        Respawn();
-    }
-
     private void OnUpdate(double deltaTime)
     {
         _time += deltaTime;
@@ -489,7 +476,7 @@ public sealed class Game : IDisposable
 
         bool fastTime = playing && _keyboard.IsKeyPressed(Key.T);
         _dayCycle.Update((float)deltaTime * (fastTime ? FastTimeScale : 1f));
-        _weather.Update(dt);
+        _weather.Update(dt, GroundMaterials.Snow(_player.Position.X, _player.Position.Z));
         SkyRenderer.Rain = _weather.Rain;
         SkyRenderer.Snow = _weather.Snow;
         SkyRenderer.SnowCover = _weather.SnowCover;
@@ -817,13 +804,7 @@ public sealed class Game : IDisposable
 
         _profiler.BeginFrame();
         // The terrain's slow materials around the camera (redrawn only after moving far).
-        _groundMap.Update(eye, shader =>
-        {
-            var preset = WorldPreset.Current;
-            shader.Set("uDesertRange", new Vector2(preset.DesertLow, preset.DesertHigh));
-            shader.Set("uIslands", preset.Islands ? 1f : 0f);
-            shader.Set("uColorVariety", preset.ColorVariety);
-        });
+        _groundMap.Update(eye, shader => shader.Set("uColorVariety", WorldPreset.Current.ColorVariety));
         _profiler.Section("ombre");
         var atmosphere = _dayCycle.Sample();
         float time = (float)_time;
@@ -850,6 +831,7 @@ public sealed class Game : IDisposable
         _gl.Clear(ClearBufferMask.DepthBufferBit); // the sky covers every pixel
         _cloudNoise.Bind(SkyRenderer.CloudNoiseUnit);
         _indoor.Bind();
+        _groundMap.Bind();
         var skyView = Matrix4x4.CreateLookAt(Vector3.Zero, look, Vector3.UnitY);
         var skyViewProjection = skyView * projection;
 
@@ -871,10 +853,6 @@ public sealed class Game : IDisposable
 
         _profiler.Section("terreno");
         SetWorldUniforms(_terrainShader, view * projection, eye, atmosphere, time);
-        _groundMap.Bind();
-        _terrainShader.Set("uGroundMap", GroundMap.Unit);
-        _terrainShader.Set("uGroundMapOrigin", float.IsNaN(_groundMap.Origin.X) ? new Vector2(1e9f) : _groundMap.Origin);
-        _terrainShader.Set("uGroundMapExtent", GroundMap.Extent);
         if (On("terrain")) _terrain.Draw(eye, look);
 
         _profiler.Section("oggetti+creature+isole");
@@ -1080,8 +1058,13 @@ public sealed class Game : IDisposable
         _objectShader.Set("uModel", local * cameraToWorld);
         _objectShader.Set("uGlow", 1f);
         _objectShader.Set("uHighlight", 0f);
+        _objectShader.Set("uSnowless", 1f);
         _objectRenderer.DrawItem(resource);
-        if (!_objectRenderer.HasGlass(resource)) return;
+        if (!_objectRenderer.HasGlass(resource))
+        {
+            _objectShader.Set("uSnowless", 0f);
+            return;
+        }
 
         // Glass (the seed jar's, a glass block's panes) over the rest.
         _objectShader.Set("uGlass", 1f);
@@ -1091,6 +1074,7 @@ public sealed class Game : IDisposable
         _objectRenderer.DrawItem(resource, glass: true);
         EndGlass();
         _objectShader.Set("uGlass", 0f);
+        _objectShader.Set("uSnowless", 0f);
     }
 
     // See-through glass is blended (premultiplied) over what is behind it without writing depth,
@@ -1244,10 +1228,11 @@ public sealed class Game : IDisposable
         SkyRenderer.SetUniforms(shader, atmosphere, time, (float)_dayCycle.Elapsed);
         shader.Set("uViewProj", viewProjection);
         shader.Set("uCameraPos", eye);
-        var preset = WorldPreset.Current;
-        shader.Set("uDesertRange", new Vector2(preset.DesertLow, preset.DesertHigh));
-        shader.Set("uIslands", preset.Islands ? 1f : 0f);
-        shader.Set("uColorVariety", preset.ColorVariety);
+        shader.Set("uColorVariety", WorldPreset.Current.ColorVariety);
+        // The ground map: the terrain's materials, and the snowy lands for every shader's snow.
+        shader.Set("uGroundMap", GroundMap.Unit);
+        shader.Set("uGroundMapOrigin", float.IsNaN(_groundMap.Origin.X) ? new Vector2(1e9f) : _groundMap.Origin);
+        shader.Set("uGroundMapExtent", GroundMap.Extent);
         shader.Set("uAmbient", atmosphere.Ambient);
         shader.Set("uFlash", new Vector3(0.7f, 0.75f, 1f) * _weather.Lightning * 0.9f); // lightning lights the world (outdoors)
         _indoor.SetUniforms(shader);
@@ -1284,12 +1269,6 @@ public sealed class Game : IDisposable
 
     private void OnKeyDown(IKeyboard keyboard, Key key, int scancode)
     {
-        bool ctrl = keyboard.IsKeyPressed(Key.ControlLeft) || keyboard.IsKeyPressed(Key.ControlRight);
-        if (ctrl && key >= Key.Number1 && key < Key.Number1 + WorldPreset.All.Length)
-        {
-            SetWorld(WorldPreset.All[key - Key.Number1]); // Ctrl+1..3: another kind of world
-            return;
-        }
         if (key == Key.Escape)
         {
             // The menu lies over the game, which goes on as if nothing were open.
@@ -1439,7 +1418,7 @@ public sealed class Game : IDisposable
         [
             $"Posizione: {p.X:0} {p.Y:0} {p.Z:0}",
             $"{fps} FPS",
-            $"Mondo: {WorldPreset.Current.Name}",
+            $"Bioma: {GroundMaterials.BiomeMix.Names[GroundMaterials.Biomes(p.X, p.Z).Dominant()]}",
             $"Ore {hours:00}:{minutes:00}, {weather}",
         ];
         string hint = _mouseCaptured ? "" : " | clicca per giocare";

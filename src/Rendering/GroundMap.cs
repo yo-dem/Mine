@@ -6,8 +6,9 @@ namespace Mine.Rendering;
 /// <summary>
 /// The slowly varying part of the terrain's materials around the camera, drawn by the GPU into a
 /// texture the terrain shader reads instead of computing it per pixel: the grass colour of the
-/// ground (<c>grassColorFor</c>, from the biome and hue noises) and the desert's share
-/// (<c>desertWeight</c>), one texel per 2 m (a terrain tile). Those were seven value noises a
+/// ground (<c>grassColorFor</c>, from the biome and hue noises) and the desert's share minus the
+/// snowy lands' (<c>desertWeight</c>, <c>snowWeight</c>: they never meet), one texel per 2 m (a
+/// terrain tile); every world shader reads the snowy lands from it (<c>snowCover</c>). Those were seven value noises a
 /// pixel, most of the terrain's cost; they vary over tens of metres, so the texture's bilinear
 /// filtering loses nothing. Redrawn when the camera has moved <see cref="Recenter"/> metres; past
 /// its edge the shader computes them as before. The same GLSL (<c>Materials</c>) draws it, so the
@@ -50,7 +51,7 @@ public sealed unsafe class GroundMap : IDisposable
 
     /// <summary>
     /// Redraws the map around the camera if it has moved far enough. <paramref name="setUniforms"/>
-    /// sets the world preset's material uniforms on the map shader. Leaves another framebuffer bound.
+    /// sets the world's material uniforms on the map shader. Leaves another framebuffer bound.
     /// </summary>
     public void Update(Vector3 camera, Action<Shader> setUniforms)
     {

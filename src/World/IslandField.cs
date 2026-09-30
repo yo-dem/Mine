@@ -95,10 +95,13 @@ public sealed class IslandField
         return new Vector2(site.X + MathF.Cos(a) * r, site.Z + MathF.Sin(a) * r);
     }
 
+    /// <summary>Whether the world has floating islands (off for now: they belonged to the classic world, since replaced by the biomes).</summary>
+    public const bool Enabled = false;
+
     /// <summary>The island of a cell, if it has one (see <see cref="IslandSite"/>).</summary>
     public static IslandSite? Site(int seed, int cx, int cz)
     {
-        if (WorldPreset.Current != WorldPreset.Classic) return null; // floating islands belong to the classic world
+        if (!Enabled) return null; // none in the world for now (the classic world had them)
         var random = new Random((int)Hash(seed, cx, cz));
         if (random.NextSingle() > Chance) return null;
         float x = (cx + 0.2f + 0.6f * random.NextSingle()) * CellSize;

@@ -65,34 +65,31 @@ public static class TerrainShaders
 
         float noise2(vec2 p, float layer) { return valueNoise3(vec3(p, layer)); }
 
-        // Biomes (indigo, pink and turquoise woods, desert), weights summing to 1; the desert's share alone.
-        // Mirrored in C# by GroundMaterials.Biome/Desert: keep the two in sync.
-        // The world preset (WorldPreset): the desert noise range, and 1 in an archipelago.
-        uniform vec2 uDesertRange;
-        uniform float uIslands;
+        // The climate (GroundMaterials: TemperatureAt, Desert, Snow): hot in the deserts, cold in the
+        // snowy lands, mild in between. Keep in sync.
         uniform float uColorVariety;
-        const float IslandCoast = 0.6, IslandSpan = 0.12;
+        const float HotLow = 0.61, HotHigh = 0.69, ColdHigh = 0.39, ColdLow = 0.31;
 
-        float desertWeight(vec2 xz)
-        {
-            if (uIslands > 0.5)
-            {
-                float land = noise2(xz * 0.0065, 31.0) * 0.7 + noise2(xz * 0.02, 32.0) * 0.3;
-                return 1.0 - smoothstep(0.25, 0.9, (land - IslandCoast) / IslandSpan);
-            }
-            return smoothstep(uDesertRange.x, uDesertRange.y, noise2(xz * 0.0008, 23.0) * 0.75 + noise2(xz * 0.003, 24.0) * 0.25);
-        }
+        float temperature(vec2 xz) { return noise2(xz * 0.0004, 41.0) * 0.75 + noise2(xz * 0.0016, 42.0) * 0.25; }
+        float desertWeight(vec2 xz) { return smoothstep(HotLow, HotHigh, temperature(xz)); }
+        float snowWeight(vec2 xz) { return smoothstep(ColdHigh, ColdLow, temperature(xz)); }
 
-        // The biome weights given the desert's share (desertWeight), when it is already known.
-        vec4 biomeWeightsFor(vec2 xz, float desert)
+        // The colour families (indigo, pink and turquoise woods, desert), weights summing to 1, given
+        // the desert's and the snowy lands' shares; the snowy lands count as indigo.
+        // Mirrored in C# by GroundMaterials.Biome: keep the two in sync.
+        vec4 biomeWeightsFor(vec2 xz, float desert, float snow)
         {
             float flavour = noise2(xz * 0.0011, 21.0) * 0.7 + noise2(xz * 0.004, 22.0) * 0.3;
             float pink = smoothstep(0.58, 0.64, flavour), teal = smoothstep(0.47, 0.41, flavour);
-            float wet = 1.0 - desert;
-            return vec4((1.0 - pink - teal) * wet, pink * wet, teal * wet, desert);
+            float mild = 1.0 - desert - snow;
+            return vec4((1.0 - pink - teal) * mild + snow, pink * mild, teal * mild, desert);
         }
 
-        vec4 biomeWeights(vec2 xz) { return biomeWeightsFor(xz, desertWeight(xz)); }
+        vec4 biomeWeights(vec2 xz)
+        {
+            float t = temperature(xz);
+            return biomeWeightsFor(xz, smoothstep(HotLow, HotHigh, t), smoothstep(ColdHigh, ColdLow, t));
+        }
 
         // Cosmic grass in patches of one hue each: teal, violet, magenta, lilac gold, sky blue.
         // A slow noise picks the hue (with soft borders between patches), a faster one varies it.
@@ -129,6 +126,19 @@ public static class TerrainShaders
         }
 
         vec2 rockSand(vec3 p, float normalY) { return rockSandFor(p, normalY, noise2(p.xz * 0.045, 2.0), desertWeight(p.xz)); }
+
+        // The ground map (GroundMap): grass colour (rgb) and the desert's share minus the snowy
+        // lands' (a: they never meet), drawn per 2 m around the camera; computed past its edge.
+        uniform sampler2D uGroundMap;
+        uniform vec2 uGroundMapOrigin;
+        uniform float uGroundMapExtent;
+
+        bool inGroundMap(vec2 xz, out vec2 uv)
+        {
+            uv = (xz - uGroundMapOrigin) / uGroundMapExtent;
+            return all(greaterThan(uv, vec2(0.001))) && all(lessThan(uv, vec2(0.999)));
+        }
+
         """;
 
     /// <summary>
@@ -136,6 +146,25 @@ public static class TerrainShaders
     /// <c>litColor</c> lights an albedo; <c>finishColor</c> adds haze, halos and fog and tone-maps.
     /// </summary>
     private const string Lighting = """
+        // The snowy lands' share at xz (from the ground map where it reaches).
+        float groundSnow(vec2 xz)
+        {
+            vec2 uv;
+            if (inGroundMap(xz, uv)) return max(-texture(uGroundMap, uv).a, 0.0);
+            return snowWeight(xz);
+        }
+
+        // How much snow lies on a surface facing `up`: what snowfall has laid (snowOn), and in the
+        // snowy lands always, in drifts, on everything facing up.
+        float snowCover(vec3 pos, float up)
+        {
+            float lands = groundSnow(pos.xz);
+            float fallen = snowOn(pos, up);
+            if (lands <= 0.001) return fallen;
+            float drift = texture(uCloudNoise, pos * 0.02).r;
+            return max(fallen, smoothstep(0.3, 0.7, lands + (drift - 0.5) * 0.35) * smoothstep(0.45, 0.8, up));
+        }
+
         uniform vec3 uCameraPos;
         uniform vec3 uAmbient;
         uniform vec3 uFlash;      // the light of a lightning bolt (none reaches indoors)
@@ -340,7 +369,7 @@ public static class TerrainShaders
 
     // ---- Terrain -------------------------------------------------------------------------
 
-    /// <summary>Draws <see cref="GroundMap"/>: per texel, the ground's grass colour (rgb) and the desert's share (a).</summary>
+    /// <summary>Draws <see cref="GroundMap"/>: per texel, the ground's grass colour (rgb) and the desert's share minus the snowy lands' (a).</summary>
     public const string GroundMapFragment = "#version 330 core\n" + SkyRenderer.Hash + Materials + """
 
         uniform vec2 uOrigin; // world xz of the map's corner
@@ -351,8 +380,9 @@ public static class TerrainShaders
         void main()
         {
             vec2 xz = uOrigin + gl_FragCoord.xy * uStep; // gl_FragCoord is at the texel's centre
-            float desert = desertWeight(xz);
-            FragColor = vec4(grassColorFor(xz, biomeWeightsFor(xz, desert)), desert);
+            float t = temperature(xz);
+            float desert = smoothstep(HotLow, HotHigh, t), snow = smoothstep(ColdHigh, ColdLow, t);
+            FragColor = vec4(grassColorFor(xz, biomeWeightsFor(xz, desert, snow)), desert - snow);
         }
         """;
 
@@ -402,30 +432,26 @@ public static class TerrainShaders
             return mix(1.0, 0.86 + 0.14 * smoothstep(0.0, 0.03, edge), smoothstep(60.0, 20.0, dist));
         }
 
-        // The ground map (GroundMap): grass colour and desert share, drawn per 2 m around the camera.
-        uniform sampler2D uGroundMap;
-        uniform vec2 uGroundMapOrigin;
-        uniform float uGroundMapExtent;
-
         // Each noise is computed once and handed to the material functions (they were computed up
         // to four times a pixel: the terrain's shading was mostly noise), and the slow ones come
         // from the ground map where it reaches. sandy: rockSand's y, for glitter.
         vec3 terrainAlbedo(vec3 p, float slope, float dist, out float sandy)
         {
             vec2 xz = p.xz;
-            vec2 uv = (xz - uGroundMapOrigin) / uGroundMapExtent;
+            vec2 uv;
             float desert;
             vec3 grass;
-            if (all(greaterThan(uv, vec2(0.001))) && all(lessThan(uv, vec2(0.999))))
+            if (inGroundMap(xz, uv))
             {
                 vec4 ground = texture(uGroundMap, uv);
                 grass = ground.rgb;
-                desert = ground.a;
+                desert = max(ground.a, 0.0);
             }
             else
             {
-                desert = desertWeight(xz);
-                grass = grassColorFor(xz, biomeWeightsFor(xz, desert));
+                float t = temperature(xz);
+                desert = smoothstep(HotLow, HotHigh, t);
+                grass = grassColorFor(xz, biomeWeightsFor(xz, desert, smoothstep(ColdHigh, ColdLow, t)));
             }
             float broad = noise2(xz * 0.0035, 0.0);
             float mid = noise2(xz * 0.045, 2.0);
@@ -473,7 +499,7 @@ public static class TerrainShaders
             float dist = length(vWorldPos - uCameraPos);
             float sandy;
             vec3 albedo = terrainAlbedo(vWorldPos, vSlope, dist, sandy);
-            albedo = mix(albedo, SnowColor, snowOn(vWorldPos, n.y)) * vAo * tileEdges(vWorldPos, n, dist);
+            albedo = mix(albedo, SnowColor, snowCover(vWorldPos, n.y)) * vAo * tileEdges(vWorldPos, n, dist);
             // Sown ground looks watered: darker and a touch cooler on the tile's top, drying as the grass grows.
             albedo *= mix(vec3(1.0), vec3(0.42, 0.40, 0.48), wetGround(vWorldPos) * step(0.7, n.y));
             vec3 color = litColor(albedo, vWorldPos, n, 0.0) + glitter(vWorldPos, n, sandy, dist) * uMagic;
@@ -574,7 +600,7 @@ public static class TerrainShaders
             vec3 n = normalize(vNormal);
             // Blades are seen from both sides: turn the normal toward the camera, but keep it pointing up.
             if (dot(n.xz, toCamera.xz) < 0.0) n.xz = -n.xz;
-            vec3 albedo = mix(vColor, SnowColor, snowOn(vWorldPos, 1.0) * 0.85);
+            vec3 albedo = mix(vColor, SnowColor, snowCover(vWorldPos, 1.0) * 0.85);
             float shadow = shadowAt(vWorldPos, n);
             vec3 color = litColorSky(albedo, vWorldPos, n, 0.6, vSkyFill, shadow);
             // Sunlight shining through the blades when looking toward the sun.
@@ -644,7 +670,7 @@ public static class TerrainShaders
                 return;
             }
             vec3 rd = normalize(vWorldPos - uCameraPos);
-            vec3 albedo = mix(vColor, SnowColor, snowOn(vWorldPos, n.y) * (1.0 - vEmissive));
+            vec3 albedo = mix(vColor, SnowColor, snowCover(vWorldPos, n.y) * (1.0 - vEmissive));
             vec3 color = litColor(albedo, vWorldPos, n, vFoliage * 0.5);
             // Foliage glows at the edges against the sun, and takes a soft rim of sky colour.
             color += vColor * uLightColor * pow(max(dot(rd, uLightDir), 0.0), 4.0) * 0.5 * vFoliage;
@@ -1027,6 +1053,7 @@ public static class TerrainShaders
         uniform float uGlow;      // flicker of the object's own light
         uniform float uHighlight; // 1 while the player aims at the object
         uniform float uGlass;     // 1 for glass: see-through, premultiplied alpha (glassColor)
+        uniform float uSnowless;  // 1 for what the player holds: no snow settles on it
 
         out vec4 FragColor;
 
@@ -1038,7 +1065,7 @@ public static class TerrainShaders
                 FragColor = glassColor(vWorldPos, n, vColor, vEmissive);
                 return;
             }
-            vec3 albedo = mix(vColor, SnowColor, snowOn(vWorldPos, n.y) * (1.0 - vEmissive));
+            vec3 albedo = mix(vColor, SnowColor, snowCover(vWorldPos, n.y) * (1.0 - vEmissive) * (1.0 - uSnowless));
             vec3 color = litColor(albedo, vWorldPos, n, 0.0);
             // Glowing parts shine with their own colour, brighter at night.
             color = mix(color, vColor * uGlow * mix(1.4, 2.2, uNight), vEmissive);

@@ -7,8 +7,9 @@ namespace Mine.World;
 /// The shape of the land, in metres. Pure and thread-safe, so terrain meshes can be built on
 /// background threads. The land is made of layers: square tiles <see cref="TileSize"/> wide, each
 /// flat at a height that is a multiple of <see cref="LayerHeight"/>, with vertical walls between.
-/// <see cref="SmoothHeight"/> is the continuous surface they are cut from: slowly rolling ground,
-/// domain-warped hills, long dune ridges and deep basins under the water. Slopes are kept gentle
+/// <see cref="SmoothHeight"/> is the continuous surface they are cut from: each biome's own shape
+/// (dunes in the desert, a gentle plain in the prairie, rolling hills, islets in the sea, snowy
+/// hills), blended by the biomes' shares, with lakes and deep basins under the water. Slopes are kept gentle
 /// enough that neighbouring tiles almost always differ by one layer at most (walkable); larger steps
 /// are rare. The rare rock spires are not part of it: they are built of stone blocks that can be dug
 /// (see <see cref="SpireHeight"/> and Blocks.UpdateSpires), drawn far away by BlockRenderer as the same blocks.
@@ -26,7 +27,7 @@ public sealed class TerrainField
     // but a few metres out the water is deep enough to swim.
     private const float DepthScale = 3f;
 
-    // Lakes (see Lakes): at most one per cell of LakeCell (a share WorldPreset.LakeChance of them),
+    // Lakes (see Lakes): at most one per cell of LakeCell (a share LakeChance of them, by biome),
     // on low and middling land. Each has a
     // wobbly shore LakeRadius across, banks sloping gently down to it over LakeBank metres, and a
     // floor that sinks toward its middle (then DepthScale deepens it further, like all water).
@@ -42,7 +43,7 @@ public sealed class TerrainField
     private const float PondMinRadius = 8f, PondPerWidth = 5f;
 
     private const float SpireCell = 180f;      // at most one spire per cell of this size
-    private const float SpireChance = 0.22f;
+    private const float SpireChance = 0.45f; // in the heart of the desert
 
     private readonly PerlinNoise _continent;
     private readonly PerlinNoise _hills;
@@ -159,31 +160,35 @@ public sealed class TerrainField
         return MathF.Max(h, bank + (h - bank) * t);
     }
 
+    /// <summary>
+    /// The land before the ponds: each biome has its own shape, and the land is their blend by the
+    /// biomes' shares (<see cref="GroundMaterials.Biomes"/>), so one turns into the next gradually.
+    /// The desert: dunes on gentle swells, raised dry above the water. The prairie: a wide, gently
+    /// rolling plain. The hills: tall rolling hills. The snowy lands: hills as tall, a little higher.
+    /// The islands: sea everywhere but islets (<see cref="IslandShape"/>). Lakes are scooped out of
+    /// the result, mostly in the prairie and the hills.
+    /// </summary>
     private float BaseHeight(float x, float z)
     {
-        if (WorldPreset.Current.Islands) return IslandHeight(x, z);
+        var b = GroundMaterials.Biomes(x, z);
         // Large, slow swells of the land.
         float continent = _continent.Fractal(x * 0.0006f, z * 0.0006f, 3);
-
-        // Hills, with their coordinates bent by another noise so they flow instead of
-        // looking like a regular grid of bumps.
+        // Hills, with their coordinates bent by another noise so they flow instead of looking like
+        // a regular grid of bumps.
         float wx = _warp.Fractal(x * 0.0025f, z * 0.0025f, 2) * 90f;
         float wz = _warp.Fractal(x * 0.0025f + 31.7f, z * 0.0025f - 17.3f, 2) * 90f;
         float hills = _hills.Fractal((x + wx) * 0.004f, (z + wz) * 0.004f, 5);
-
-        // Long rounded dune ridges, strongest where the land is low, and tallest in the deserts
-        // (whose hills are also gentler).
-        float desert = GroundMaterials.Desert(x, z);
+        // Long rounded dune ridges.
         float duneNoise = _dunes.Fractal(x * 0.006f + hills * 0.3f, z * 0.0025f, 3);
         float dune = 1f - MathF.Sqrt(duneNoise * duneNoise + 0.02f); // rounded crest, no sharp ridge
-        float lowland = MathF.Max(Smooth(0.2f, -0.3f, continent), desert);
+        dune *= dune;
 
-        float h = 20f + continent * 35f + hills * 30f * (1f - 0.4f * desert) + dune * dune * (9f + 6f * desert) * lowland;
-
-        // Flatter worlds keep only a share of the relief, around a level a few metres above the water.
-        const float reliefBase = 21f;
-        h = reliefBase + (h - reliefBase) * WorldPreset.Current.Relief;
-        h += WorldPreset.Current.LandLift;
+        float h = 0f;
+        if (b.Desert > 0f) h += b.Desert * (28f + continent * 18f + hills * 14f + dune * 14f);
+        if (b.Prairie > 0f) h += b.Prairie * (26f + continent * 8f + hills * 6f + dune * 1.5f); // above the shore sand (19.5 m)
+        if (b.Hills > 0f) h += b.Hills * (28f + continent * 28f + hills * 36f);
+        if (b.Snow > 0f) h += b.Snow * (31f + continent * 26f + hills * 36f);
+        if (b.Islands > 0f) h += b.Islands * IslandShape(x, z, hills, dune);
         h = Lakes(x, z, h);
 
         h += _detail.Fractal(x * 0.05f, z * 0.05f, 2) * 0.4f;
@@ -192,28 +197,15 @@ public sealed class TerrainField
     }
 
     /// <summary>
-    /// The archipelago: sea everywhere but where the island noise rises above the coast line; each
-    /// island has a shallow shelf, dune-rippled sandy shores, and rises gently to wooded hills.
+    /// The islands: sea everywhere but where the island noise rises above the coast line; each
+    /// islet has a shallow shelf, dune-rippled sandy shores, and rises gently to wooded hills.
     /// </summary>
-    private float IslandHeight(float x, float z)
+    private float IslandShape(float x, float z, float hills, float dune)
     {
         float inland = GroundMaterials.Inland(x, z);
-        float h;
-        if (inland < 0f)
-            h = WaterLevel - 0.6f + inland * 4f; // the shelf, then deep water (DepthScale below)
-        else
-        {
-            float wx = _warp.Fractal(x * 0.0025f, z * 0.0025f, 2) * 90f;
-            float wz = _warp.Fractal(x * 0.0025f + 31.7f, z * 0.0025f - 17.3f, 2) * 90f;
-            float hills = _hills.Fractal((x + wx) * 0.004f, (z + wz) * 0.004f, 5);
-            float duneNoise = _dunes.Fractal(x * 0.006f, z * 0.0025f, 3);
-            float dune = 1f - MathF.Sqrt(duneNoise * duneNoise + 0.02f);
-            float shore = 1f - Smooth(0.2f, 0.8f, inland);
-            h = WaterLevel - 0.6f + inland * 3.5f + (hills + 0.4f) * 7f * Smooth(0.2f, 1.2f, inland) + dune * dune * 2.5f * shore;
-        }
-        h += _detail.Fractal(x * 0.05f, z * 0.05f, 2) * 0.4f;
-        if (h < WaterLevel) h = WaterLevel - (WaterLevel - h) * DepthScale;
-        return h;
+        if (inland < 0f) return WaterLevel - 0.6f + inland * 4f; // the shelf, then deep water (DepthScale below)
+        float shore = 1f - Smooth(0.2f, 0.8f, inland);
+        return WaterLevel - 0.6f + inland * 3.5f + (hills + 0.4f) * 7f * Smooth(0.2f, 1.2f, inland) + dune * 2.5f * shore;
     }
 
     /// <summary>
@@ -265,16 +257,11 @@ public sealed class TerrainField
         for (int dz = -1; dz <= 1; dz++)
         for (int dx = -1; dx <= 1; dx++)
         {
-            uint hash = Hash(cx + dx + 9001, cz + dz - 4507);
-            if ((hash & 0xFFFF) / 65536f > WorldPreset.Current.LakeChance) continue;
-            float px = (cx + dx + 0.2f + 0.6f * ((hash >> 8) & 0xFF) / 255f) * LakeCell;
-            float pz = (cz + dz + 0.2f + 0.6f * ((hash >> 16) & 0xFF) / 255f) * LakeCell;
+            if (LakeIn(cx + dx, cz + dz) is not var (px, pz, hash)) continue;
             float radius = LakeMinRadius + (LakeMaxRadius - LakeMinRadius) * ((hash >> 24) & 0xF) / 15f;
             float ox = x - px, oz = z - pz;
             float r = MathF.Sqrt(ox * ox + oz * oz);
             if (r >= (radius + LakeBank) * 1.4f) continue;
-            // Not up in the high lands, where the banks would have to be cliffs.
-            if (_continent.Fractal(px * 0.0006f, pz * 0.0006f, 3) > 0.2f) continue;
 
             // A wobbly shore: the distance is measured against a radius that changes around the
             // lake (noise sampled on a circle, so it wraps seamlessly).
@@ -294,6 +281,23 @@ public sealed class TerrainField
         return h - floor;
     }
 
+    // The lake of a lake cell, if it has one: its centre and the hash its size and shape come from.
+    // A share of the cells hold one, by the biomes there: many in the prairie and the hills, some in
+    // the snowy lands, hardly any in the desert, none among the islands (all sea); and none up in
+    // the high lands, where the banks would have to be cliffs. Cached: every height looks at nine.
+    private (float X, float Z, uint Hash)? LakeIn(int cx, int cz) => _lakeCells.GetOrAdd((cx, cz), key =>
+    {
+        uint hash = Hash(key.X + 9001, key.Z - 4507);
+        float px = (key.X + 0.2f + 0.6f * ((hash >> 8) & 0xFF) / 255f) * LakeCell;
+        float pz = (key.Z + 0.2f + 0.6f * ((hash >> 16) & 0xFF) / 255f) * LakeCell;
+        var b = GroundMaterials.Biomes(px, pz);
+        float chance = 0.6f * b.Prairie + 0.55f * b.Hills + 0.35f * b.Snow + 0.02f * b.Desert;
+        if ((hash & 0xFFFF) / 65536f > chance || _continent.Fractal(px * 0.0006f, pz * 0.0006f, 3) > 0.2f) return null;
+        return (px, pz, hash);
+    });
+
+    private readonly ConcurrentDictionary<(int X, int Z), (float X, float Z, uint Hash)?> _lakeCells = new();
+
     /// <summary>A rock spire: its centre, its reach (no rock beyond it) and the hash its shape comes from.</summary>
     public readonly record struct Spire(float X, float Z, float Reach, uint Hash);
 
@@ -303,7 +307,6 @@ public sealed class TerrainField
     /// </summary>
     public float SpireHeight(float x, float z)
     {
-        if (WorldPreset.Current.Relief < 0.5f) return 0f;
         int cx = (int)MathF.Floor(x / SpireCell), cz = (int)MathF.Floor(z / SpireCell);
         float total = 0;
         // A spire can lean over the border of its cell, so check the neighbours too.
@@ -320,7 +323,6 @@ public sealed class TerrainField
     /// <summary>The spires whose rock comes within <paramref name="radius"/> of (x, z).</summary>
     public IEnumerable<Spire> SpiresNear(float x, float z, float radius)
     {
-        if (WorldPreset.Current.Relief < 0.5f) yield break;
         int x0 = (int)MathF.Floor((x - radius) / SpireCell) - 1, x1 = (int)MathF.Floor((x + radius) / SpireCell) + 1;
         int z0 = (int)MathF.Floor((z - radius) / SpireCell) - 1, z1 = (int)MathF.Floor((z + radius) / SpireCell) + 1;
         for (int cz = z0; cz <= z1; cz++)
@@ -332,16 +334,21 @@ public sealed class TerrainField
         }
     }
 
-    // At most one spire per cell.
-    private Spire? SpireIn(int cx, int cz)
+    // At most one spire per cell: the desert is full of them, the hills and snowy lands have a few
+    // (by the biomes where it stands; cached, since every height query looks at nine cells).
+    private Spire? SpireIn(int cx, int cz) => _spires.GetOrAdd((cx, cz), key =>
     {
-        uint h = Hash(cx, cz);
-        if ((h & 0xFFFF) / 65536f > SpireChance) return null;
-        float px = (cx + 0.2f + 0.6f * ((h >> 8) & 0xFF) / 255f) * SpireCell;
-        float pz = (cz + 0.2f + 0.6f * ((h >> 16) & 0xFF) / 255f) * SpireCell;
+        uint h = Hash(key.X, key.Z);
+        float px = (key.X + 0.2f + 0.6f * ((h >> 8) & 0xFF) / 255f) * SpireCell;
+        float pz = (key.Z + 0.2f + 0.6f * ((h >> 16) & 0xFF) / 255f) * SpireCell;
+        var b = GroundMaterials.Biomes(px, pz);
+        float chance = SpireChance * b.Desert + 0.04f * b.Hills + 0.03f * b.Snow;
+        if ((h & 0xFFFF) / 65536f > chance) return null;
         float radius = 7f + 9f * ((h >> 24) & 0xF) / 15f;
         return new Spire(px, pz, radius * 1.4f, h);
-    }
+    });
+
+    private readonly ConcurrentDictionary<(int X, int Z), Spire?> _spires = new();
 
     /// <summary>A tall rock needle with a steep flank and a rounded top: how tall this one spire stands at (x, z).</summary>
     public float SpireHeight(Spire spire, float x, float z)

@@ -209,11 +209,16 @@ public sealed unsafe class GrassRenderer : IDisposable
         var random = new Random(tx * 73856093 ^ tz * 19349663);
         // Tall meadows are a little denser: more attempts everywhere, some dropped on ordinary ground.
         const float averageClump = 11f; // blades per clump on average: ~2 tufts of ~5.5 blades
-        int count = (int)(TileSize * TileSize * BladesPerSquareMetre * WorldPreset.Current.GrassDensity * 1.6f / averageClump);
+        // The biomes thin the grass (GroundMaterials.GrassDensity, up to MaxDensity on the prairie);
+        // they change over hundreds of metres, so once per tile is enough. Planted grass grows full.
+        const float MaxDensity = 1.15f;
+        float density = GroundMaterials.GrassDensity(x0 + TileSize / 2, z0 + TileSize / 2) / MaxDensity;
+        int count = (int)(TileSize * TileSize * BladesPerSquareMetre * MaxDensity * 1.6f / averageClump);
         var blades = new List<float>((int)(count * averageClump * 0.7f) * FloatsPerBlade);
         for (int b = 0; b < count; b++)
         {
             float lx = random.NextSingle() * TileSize, lz = random.NextSingle() * TileSize;
+            float keep = random.NextSingle();
             float tall = GroundMaterials.TallGrass(x0 + lx, z0 + lz);
             if (random.NextSingle() > 0.9f + 0.1f * tall) continue;
             int i = (int)(lx / t), j = (int)(lz / t);
@@ -223,6 +228,7 @@ public sealed unsafe class GrassRenderer : IDisposable
             var center = new Vector3(x0 + lx, y - 0.02f, z0 + lz);
             const float water = TerrainField.WaterLevel; // shores and shallows hold reed clumps instead (TreeField)
             bool planted = Planted?.Invoke(center.X, center.Z) == true;
+            if (!planted && keep > density) continue;
             if (!planted && (normalY < 0.6f || y < water + 1f)) continue; // certainly rock, sand or water: skip early
             if (_terrain.InPond(center.X, center.Z, 0.5f)) continue; // under a waterfall's pond
             if (!planted && GroundMaterials.GrassWeight(center, normalY) < 0.35f) continue;

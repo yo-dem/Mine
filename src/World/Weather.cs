@@ -7,6 +7,9 @@ namespace Mine.World;
 /// <see cref="SnowCover"/> grows (full in about a minute and a quarter); afterwards it melts
 /// slowly, faster in the rain. Each can turn heavy: a storm (denser, wind-driven rain and
 /// lightning every few seconds) or a blizzard (thick snow blown by the wind, settling twice as fast).
+/// In the snowy lands it snows by itself most of the time (<see cref="Update"/>): spells of snow with
+/// calmer breaks, which stop when the player walks out of them. That snow lays no cover of its own:
+/// the snowy lands are always white (the shaders' snowCover), and the rest of the world stays as it is.
 /// </summary>
 public sealed class Weather
 {
@@ -29,6 +32,10 @@ public sealed class Weather
     public float LightningSeed { get; private set; }
 
     private readonly Random _random = new();
+    private bool _localSnow; // snowing by itself, in the snowy lands
+
+    // In the snowy lands: snow falls for SnowSpell seconds of every SnowCycle.
+    private const float SnowCycle = 330f, SnowSpell = 250f;
     private float _clock, _strikeStart = -100f, _nextStrike;
 
     /// <summary>0 = clear, 1 = full rain.</summary>
@@ -80,14 +87,21 @@ public sealed class Weather
         SnowCover = 1f;
     }
 
-    public void Update(float dt)
+    /// <summary>
+    /// Moves the weather on; <paramref name="snowyLands"/> is how much the player stands in the
+    /// snowy lands (0..1), where it snows by itself in spells (unless it rains by hand).
+    /// </summary>
+    public void Update(float dt, float snowyLands)
     {
         _clock += dt;
+        bool spell = _clock % SnowCycle < SnowSpell;
+        _localSnow = spell && !Raining && (_localSnow ? snowyLands > 0.45f : snowyLands > 0.55f);
         Rain = Ease(Rain, Raining, dt);
-        Snow = Ease(Snow, Snowing, dt);
+        Snow = Ease(Snow, Snowing || _localSnow, dt);
         Storm = Ease(Storm, Storming && Raining, dt);
         Blizzard = Ease(Blizzard, Blizzarding && Snowing, dt);
-        float change = Snow > 0.3f ? Snow * (1f + Blizzard) / 75f : -(Rain > 0.3f ? 1f / 40f : 1f / 180f);
+        // Only the snow called by hand lays its cover over the whole world.
+        float change = Snowing && Snow > 0.3f ? Snow * (1f + Blizzard) / 75f : -(Rain > 0.3f ? 1f / 40f : 1f / 180f);
         SnowCover = Math.Clamp(SnowCover + change * dt, 0f, 1f);
 
         // Lightning: a strike every 3 to 12 s in a storm, each a bright flash with a second,

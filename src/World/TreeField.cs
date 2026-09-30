@@ -11,8 +11,10 @@ public readonly record struct TreeInstance(Vector3 Position, float Yaw, float Sc
 /// Where the trees grow (forests and lone trees, placed deterministically per 32 m cell on gentle,
 /// grassy ground) and where the glowing decorations sit: lotus flowers floating in the shallows,
 /// palms along the shores, glowing bells in patches on the meadows. The
-/// biomes (<see cref="GroundMaterials.Biome"/>) pick the family of tree models and the flowers of a
-/// region: indigo woods, pink woods, turquoise woods, and deserts of dry trees. Cells around the player are
+/// biomes pick how much grows (<see cref="GroundMaterials.Biomes"/>: thick woods in the hills, open
+/// prairie with lone trees, dry shrubs and palms in the desert, pines in the snow) and the colour
+/// families (<see cref="GroundMaterials.Biome"/>) the family of tree models and the flowers of a
+/// region: indigo woods, pink woods, turquoise woods, dry shrubs in the desert, pines in the snow. Cells around the player are
 /// generated on the thread pool; <see cref="Version"/> changes whenever the set of trees does.
 /// Trees, palms and rocks can be broken (<see cref="Pick"/>, <see cref="Gather"/>): they are
 /// remembered by position and never come back; nothing without a trunk grows where a floor covers the ground.
@@ -34,14 +36,22 @@ public sealed class TreeField
         [0, 0, 1, 10, 10, 8, 5], // indigo woods
         [2, 2, 4, 4, 7],         // pink woods
         [3, 3, 6, 9, 9],         // turquoise woods
-        [13, 13, 14, 14, 15],    // desert
+        [15, 15, 15, 14, 13],    // desert: mostly small dry shrubs, the odd dry tree
+        [10, 10, 10, 1, 10, 13], // snowy lands: pines, a cypress, a bare tree
     ];
-    private static readonly int[][] Undergrowth = [[12, 12, 11], [11, 11, 12], [12, 11, 12], [15, 15, 14]];
-    private const int DesertBiome = 3;
+    private static readonly int[][] Undergrowth = [[12, 12, 11], [11, 11, 12], [12, 11, 12], [15, 15, 14], [11, 10, 12]];
+    private const int DesertBiome = 3, SnowBiome = 4;
 
-    // Forest noise above this: woods (the same threshold for the trees, their flowers and gardens).
-    // Woods grow where the forest noise exceeds this (set by the world preset).
-    private static float WoodsThreshold => WorldPreset.Current.WoodsThreshold;
+    // Woods grow where the forest noise exceeds this (the same threshold for the trees, their
+    // flowers and gardens), by biome: thick in the hills, patchy among the islands and in the snow,
+    // few on the prairie (open land, with lone trees), none in the desert.
+    private static float WoodsThreshold(in GroundMaterials.BiomeMix b) =>
+        0.9f * b.Desert + 0.32f * b.Prairie - 0.02f * b.Hills + 0.08f * b.Islands + 0.1f * b.Snow;
+
+    private static float WoodsThreshold(float x, float z) => WoodsThreshold(GroundMaterials.Biomes(x, z));
+
+    // How often a cell outside the woods has a lone tree or two, by biome.
+    private static float LoneTrees(in GroundMaterials.BiomeMix b) => 0.45f * b.Prairie + 0.3f * b.Hills + 0.25f * b.Islands + 0.3f * b.Snow;
 
     private readonly TerrainField _terrain;
     private readonly PerlinNoise _forest;
@@ -259,15 +269,15 @@ public sealed class TreeField
             float z = TerrainField.InsideTile((cz + random.NextSingle()) * CellSize, 0.35f);
             float garden = _forest.Fractal(x * 0.012f + 300f, z * 0.012f - 200f, 2);
             // The same forest noise as the trees: the thicker the wood, the more flowers.
-            float woods = Math.Clamp((Forest(x, z) - WoodsThreshold) / 0.15f, 0f, 1f);
+            float woods = Math.Clamp((Forest(x, z) - WoodsThreshold(x, z)) / 0.15f, 0f, 1f);
             float density = Math.Clamp(garden / 0.15f, 0f, 1f) * woods;
             if (random.NextSingle() >= density * 0.8f) continue;
             float y = _terrain.Height(x, z);
             if (y < water + 2f || _terrain.Normal(x, z, 1f).Y < 0.8f) continue;
             // Each wood has its flower: irises in the indigo woods, poppies in the pink, lilies in the
-            // turquoise; none in the desert.
+            // turquoise; none in the desert or the snow.
             int biome = PickBiome(x, z, random);
-            if (biome == DesertBiome) continue;
+            if (biome is DesertBiome or SnowBiome) continue;
             var kind = kinds[random.NextSingle() < 0.15f ? random.Next(kinds.Length) : biome];
             list.Add(new TreeInstance(new Vector3(x, y - 0.03f, z), random.NextSingle() * MathF.Tau,
                 1.1f + 0.45f * random.NextSingle(), TreeModels.VariantOf(kind)));
@@ -301,12 +311,13 @@ public sealed class TreeField
 
             TreeModels.Decoration kind;
             int biome = PickBiome(x, z, random);
-            if (biome == DesertBiome)
+            if (biome is DesertBiome or SnowBiome)
             {
-                if (roll > 0.015f) continue;
+                // The odd glowing starflower in the sand, or through the snow.
+                if (roll > (biome == SnowBiome ? 0.01f : 0.015f)) continue;
                 kind = TreeModels.Decoration.Starflowers;
             }
-            else if (Forest(x, z) > WoodsThreshold)
+            else if (Forest(x, z) > WoodsThreshold(x, z))
             {
                 // Under the woods.
                 if (roll > 0.35f) continue;
@@ -329,16 +340,15 @@ public sealed class TreeField
     }
 
     /// <summary>
-    /// Groves of palms, mostly along the lake and sea shores: a grove noise picks where they gather,
-    /// thickest just above the water and thinning out up the banks (a few also stand farther
-    /// inland). Palms of three builds and many sizes, leaning every way.
+    /// Groves of palms, along the lake and sea shores and in the desert's oases: a grove noise picks
+    /// where they gather, thickest just above the water and thinning out up the banks (a few also
+    /// stand farther inland), anywhere in the desert; none in the snow. Palms of three builds and
+    /// many sizes, leaning every way.
     /// </summary>
     private void AddPalmGroves(List<TreeInstance> list, int cx, int cz, Random random)
     {
         const float water = TerrainField.WaterLevel;
-        // Where lone trees are rare, palms grow only in the hearts of their groves, close together.
-        float lone = WorldPreset.Current.LoneTrees;
-        float start = 0.05f + 0.15f * (1f - lone), ramp = 0.2f - 0.12f * (1f - lone);
+        const float start = 0.05f, ramp = 0.2f;
         for (int i = 0; i < 30; i++)
         {
             float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.5f);
@@ -348,8 +358,10 @@ public sealed class TreeField
             float y = _terrain.Height(x, z);
             if (y < water + 0.8f) continue;
             float shore = Math.Clamp((water + 12f - y) / 9f, 0f, 1f); // 1 up to 3 m above the water, 0 from 12 m
-            float density = Math.Clamp((grove - start) / ramp, 0f, 1f) * (0.08f * lone + (1f - 0.08f * lone) * shore);
-            if (random.NextSingle() >= density * 0.5f * WorldPreset.Current.TreeDensity || _terrain.Normal(x, z, 1f).Y < 0.8f) continue;
+            var b = GroundMaterials.Biomes(x, z);
+            float place = MathF.Max(shore, 0.6f * b.Desert) * (1f - b.Snow);
+            float density = Math.Clamp((grove - start) / ramp, 0f, 1f) * (0.08f * (1f - b.Snow) + 0.92f * place);
+            if (random.NextSingle() >= density * 0.5f || _terrain.Normal(x, z, 1f).Y < 0.8f) continue;
             list.Add(RandomPalm(x, y, z, random.NextSingle() * MathF.Tau, random));
         }
     }
@@ -368,6 +380,7 @@ public sealed class TreeField
     /// </summary>
     private void AddReeds(List<TreeInstance> list, int cx, int cz, Random random)
     {
+        if (GroundMaterials.Snow((cx + 0.5f) * CellSize, (cz + 0.5f) * CellSize) > 0.6f) return; // not in the snow
         const float water = TerrainField.WaterLevel;
         const float t = TerrainField.TileSize;
         for (float tz = cz * CellSize; tz < (cz + 1) * CellSize; tz += t)
@@ -448,13 +461,14 @@ public sealed class TreeField
     }
 
     /// <summary>
-    /// The forest noise at (x, z), which decides where the woods are. In an archipelago it rises
-    /// toward the middle of the islands, so their hearts are thickly wooded.
+    /// The forest noise at (x, z), which decides where the woods are. Among the islands it rises
+    /// toward the middle of each, so their hearts are thickly wooded.
     /// </summary>
     private float Forest(float x, float z)
     {
         float forest = _forest.Fractal(x * 0.0025f, z * 0.0025f, 3);
-        if (WorldPreset.Current.Islands) forest += 0.4f * Math.Clamp((GroundMaterials.Inland(x, z) - 0.8f) / 1.2f, 0f, 1f);
+        float islands = GroundMaterials.Biomes(x, z).Islands;
+        if (islands > 0f) forest += 0.4f * islands * Math.Clamp((GroundMaterials.Inland(x, z) - 0.8f) / 1.2f, 0f, 1f);
         return forest;
     }
 
@@ -463,14 +477,15 @@ public sealed class TreeField
         float centerX = (cx + 0.5f) * CellSize, centerZ = (cz + 0.5f) * CellSize;
         float forest = Forest(centerX, centerZ);
         var random = new Random((int)Hash(cx, cz));
-        float desert = GroundMaterials.Desert(centerX, centerZ);
+        var biomes = GroundMaterials.Biomes(centerX, centerZ);
+        float threshold = WoodsThreshold(biomes);
 
-        // Thick woods where the forest noise is high, the odd lone tree elsewhere; in the deserts,
-        // sparse groves of dry trees. Under the canopy, shrubs and saplings.
-        int count = forest > WoodsThreshold ? 8 + (int)((forest - WoodsThreshold) * 55) : random.NextSingle() < 0.3f * WorldPreset.Current.LoneTrees ? 1 + random.Next(2) : 0;
-        count = (int)MathF.Round(float.Lerp(count, forest > WoodsThreshold ? 1 + forest * 10 : random.NextSingle() < 0.25f * WorldPreset.Current.LoneTrees ? 1 : 0, desert));
-        count = (int)MathF.Round(count * WorldPreset.Current.TreeDensity);
-        int undergrowth = forest > WoodsThreshold ? count / 2 : 0;
+        // Thick woods where the forest noise is high, the odd lone tree elsewhere; in the desert,
+        // small dry shrubs scattered over the sand and the odd dry tree. Under the canopy, shrubs
+        // and saplings.
+        int count = forest > threshold ? 8 + (int)((forest - threshold) * 55) : random.NextSingle() < 0.3f * LoneTrees(biomes) ? 1 + random.Next(2) : 0;
+        count = (int)MathF.Round(float.Lerp(count, random.Next(4), biomes.Desert));
+        int undergrowth = forest > threshold ? count / 2 : 0;
 
         var trees = new List<TreeInstance>(count + undergrowth);
         for (int i = 0; i < count + undergrowth; i++)
@@ -521,9 +536,11 @@ public sealed class TreeField
     /// </summary>
     private static int PickBiome(float x, float z, Random random)
     {
-        var w = GroundMaterials.Biome(x, z);
+        var w = GroundMaterials.Biome(x, z); // the snowy lands are counted in the indigo share
+        float snow = GroundMaterials.Snow(x, z);
         float roll = random.NextSingle();
-        if ((roll -= w.X) < 0) return 0;
+        if ((roll -= snow) < 0) return SnowBiome;
+        if ((roll -= w.X - snow) < 0) return 0;
         if ((roll -= w.Y) < 0) return 1;
         if ((roll -= w.Z) < 0) return 2;
         return DesertBiome;
@@ -537,7 +554,8 @@ public sealed class TreeField
         AddFlowers(list, cx, cz, random);
         AddLightGardens(list, cx, cz, random);
         const float water = TerrainField.WaterLevel;
-        bool desert = GroundMaterials.Biome((cx + 0.5f) * CellSize, (cz + 0.5f) * CellSize).W > 0.5f;
+        bool desert = GroundMaterials.Desert((cx + 0.5f) * CellSize, (cz + 0.5f) * CellSize) > 0.5f;
+        bool snowy = GroundMaterials.Snow((cx + 0.5f) * CellSize, (cz + 0.5f) * CellSize) > 0.5f;
         for (int i = 0; i < 20; i++)
         {
             float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.4f);
@@ -549,17 +567,17 @@ public sealed class TreeField
             if (y < water - 0.3f && y > water - 2.5f)
             {
                 // Shallow water: lotus flowers floating on the surface.
-                if (roll < 0.22f)
+                if (roll < 0.22f && !snowy)
                     list.Add(new TreeInstance(new Vector3(x, water + 0.02f, z), yaw, 0.7f + 0.6f * random.NextSingle(),
                         TreeModels.VariantOf(TreeModels.Decoration.Lotus)));
             }
             else if (y >= water - 1f && y < water + 4f)
             {
                 // The shore: palms.
-                if (roll < 0.03f && y > water + 0.8f)
+                if (roll < 0.03f && y > water + 0.8f && !snowy)
                     list.Add(RandomPalm(x, y, z, yaw, random));
             }
-            else if (y >= water + 2f && !desert && roll < 0.3f && _terrain.Normal(x, z, 1f).Y >= 0.75f
+            else if (y >= water + 2f && !desert && !snowy && roll < 0.3f && _terrain.Normal(x, z, 1f).Y >= 0.75f
                 && _forest.Fractal(x * 0.02f + 40f, z * 0.02f, 2) > 0.0f)
             {
                 // Meadows: glowing bells, in patches.

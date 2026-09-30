@@ -163,8 +163,10 @@ public sealed class Creatures
             if (!b.Active || HorizontalDistance(b.Position, player) > ButterflyRange)
             {
                 if (i >= butterflies) { b.Active = false; continue; }
-                // Only over grass (where the flowers are too): in deserts butterflies are rare.
+                // Only over grass (where the flowers are too): in deserts butterflies are rare, in the
+                // snowy lands there are none.
                 b.Active = TrySpawn(player, 6f, ButterflyRange * 0.8f, (x, z, h) => h > water + 0.3f && !_terrain.InPond(x, z, 1f)
+                    && GroundMaterials.Snow(x, z) < 0.25f
                     && (GrassFor?.Invoke(x, z) ?? GroundMaterials.GrassWeight(new Vector3(x, h, z), _terrain.Normal(x, z).Y) > 0.5f), out var p);
                 if (!b.Active) continue;
                 b.Position = p + new Vector3(0, 0.6f + 1.8f * _random.NextSingle(), 0);
@@ -178,6 +180,9 @@ public sealed class Creatures
             var away = new Vector3(b.Position.X - player.X, 0, b.Position.Z - player.Z);
             float near = away.Length();
             if (near < 1.5f) { b.Active = false; continue; }
+            // The snow keeps them out: one heading into it turns back.
+            var ahead = b.Position + b.Velocity;
+            if (GroundMaterials.Snow(ahead.X, ahead.Z) > 0.3f) { b.Velocity.X = -b.Velocity.X; b.Velocity.Z = -b.Velocity.Z; }
             if (near < 4f) b.Velocity += away / near * (4f - near) * 3f * dt;
             float speed = b.Velocity.Length();
             if (speed > 1.6f) b.Velocity *= 1.6f / speed;
@@ -249,6 +254,9 @@ public sealed class Creatures
         if (float.IsNaN(_flockAnchor.X)) _flockAnchor = player;
         _flockAnchor = Vector3.Lerp(_flockAnchor, player, 1f - MathF.Exp(-0.05f * dt));
         float flocks = float.Lerp(NightFlocks, FlockCount, daylight * daylight * (3f - 2f * daylight));
+        // No birds over the snowy lands: they fly off as the player walks into them.
+        float snowy = Math.Clamp((GroundMaterials.Snow(player.X, player.Z) - 0.2f) / 0.4f, 0f, 1f);
+        flocks *= 1f - snowy * snowy * (3f - 2f * snowy);
         for (int k = 0; k < FlockCount; k++)
         {
             ref var flock = ref _flocks[k];
