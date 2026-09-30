@@ -294,13 +294,17 @@ public sealed class Game : IDisposable
     private static readonly double AutoBreakAt = double.TryParse(Environment.GetEnvironmentVariable("MINE_BREAK"),
         System.Globalization.CultureInfo.InvariantCulture, out double breakAt) ? breakAt : double.MaxValue;
     private static readonly bool LogHud = Environment.GetEnvironmentVariable("MINE_FPS_LOG") == "1";
+    // Debug (MINE_HEIGHT=metres): start flying that high above the ground, for a view over the land.
+    private static readonly float SpawnHeight = float.TryParse(Environment.GetEnvironmentVariable("MINE_HEIGHT"),
+        System.Globalization.CultureInfo.InvariantCulture, out float height) ? height : 0f;
 
     private void Respawn()
     {
         var spawn = SpawnAt ?? (WorldPreset.Current == WorldPreset.Classic ? Spawn : FindSpawn());
         _player.Position = new Vector3(spawn.X, _terrainField.Height(spawn.X, spawn.Y), spawn.Y);
         _player.Velocity = Vector3.Zero;
-        _player.Flying = false;
+        _player.Flying = SpawnHeight > 0f;
+        _player.Position += new Vector3(0, SpawnHeight, 0);
     }
 
     /// <summary>
@@ -519,6 +523,7 @@ public sealed class Game : IDisposable
         }
         _blocks.UpdateSpires(_player.Position);
         _blockRenderer.Update(_blocks);
+        _blockRenderer.UpdateFar(_player.Eye, _blocks, _terrainField);
         _blocks.Update();
         _indoor.Update(_blocks, _player.Eye, _time);
         var walk = new Vector2(_player.Velocity.X, _player.Velocity.Z).Length();
@@ -895,6 +900,7 @@ public sealed class Game : IDisposable
         // What the player built: crystal blocks glow steadily.
         _objectShader.Set("uGlow", 1f);
         _blockRenderer.Draw();
+        _blockRenderer.DrawFar(_blocks);
 
         // Chips and cubes of material (the object fragment shader, with the cube vertex shader).
         _cubeList.Clear();
@@ -1214,6 +1220,11 @@ public sealed class Game : IDisposable
         shader.Set("uLightDir", atmosphere.LightDirection);
         shader.Set("uFogStart", fogEnd * 0.75f); // only the last stretch, to hide the world's edge
         shader.Set("uFogEnd", fogEnd);
+        // The far veil: from 300 m the land melts toward the sky's colour, 85% at the end of the view
+        // (far spires turn to pale silhouettes, and the world's edge softens).
+        shader.Set("uVeil", 0.85f);
+        shader.Set("uVeilStart", 300f);
+        shader.Set("uVeilHeight", 0f);
         shader.Set("uMistDensity", float.Lerp(0.0012f, 0.0025f, atmosphere.Haze) * (1f + 2.5f * MathF.Max(_weather.Rain, _weather.Snow) + 6f * _weather.Blizzard + _weather.Storm)); // more at dawn, dusk, in rain and snow
         shader.Set("uShadowMap", 0);
         shader.Set("uShadowTexel", 1f / ShadowMap.Size);

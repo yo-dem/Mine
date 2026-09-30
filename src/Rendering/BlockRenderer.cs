@@ -47,7 +47,7 @@ public sealed unsafe class BlockRenderer : IDisposable
         }
     }
 
-    private void Store(Dictionary<(int X, int Z), (uint Vao, uint Vbo, int Count)> chunks, (int X, int Z) chunk, List<float> vertices)
+    private void Store<TKey>(Dictionary<TKey, (uint Vao, uint Vbo, int Count)> chunks, TKey chunk, List<float> vertices) where TKey : notnull
     {
         if (!chunks.TryGetValue(chunk, out var buffers))
         {
@@ -237,6 +237,119 @@ public sealed unsafe class BlockRenderer : IDisposable
         }
     }
 
+    // ---- Far spires ------------------------------------------------------------------------
+    // Beyond the blocks Blocks lays (Blocks.SpireRadius), each spire within the view is drawn as the
+    // very same blocks (Blocks.SpireLayout: columns, dug blocks, veins), one plain quad per visible
+    // face in the rock's colours, so nothing changes shape when the real blocks take over. Meshes are
+    // built on the thread pool, uploaded a few a frame, and drawn while their spire is not laid.
+
+    private const float FarRadius = TerrainRenderer.ViewDistance, FarForget = FarRadius + 150f, FarRecheck = 32f;
+    private const int FarUploadsPerFrame = 2;
+    private readonly Dictionary<(float X, float Z), (uint Vao, uint Vbo, int Count)> _far = new();
+    private readonly HashSet<(float X, float Z)> _farBuilding = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<((float X, float Z) Key, List<float> Vertices)> _farDone = new();
+    private Vector2? _farCheckedAt;
+
+    /// <summary>Builds the meshes of the spires coming into view and drops those left far behind.</summary>
+    public void UpdateFar(Vector3 camera, Blocks blocks, TerrainField terrain)
+    {
+        for (int i = 0; i < FarUploadsPerFrame && _farDone.TryDequeue(out var done); i++)
+        {
+            _farBuilding.Remove(done.Key);
+            Store(_far, done.Key, done.Vertices);
+        }
+
+        var at = new Vector2(camera.X, camera.Z);
+        if (_farCheckedAt is { } last && Vector2.Distance(last, at) < FarRecheck) return;
+        _farCheckedAt = at;
+        foreach (var key in _far.Keys.Where(k => Vector2.Distance(new Vector2(k.X, k.Z), at) > FarForget).ToList())
+        {
+            var (vao, vbo, _) = _far[key];
+            _gl.DeleteBuffer(vbo);
+            _gl.DeleteVertexArray(vao);
+            _far.Remove(key);
+        }
+        foreach (var spire in terrain.SpiresNear(at.X, at.Y, FarRadius))
+        {
+            var key = (spire.X, spire.Z);
+            if (_far.ContainsKey(key) || !_farBuilding.Add(key)) continue;
+            var dug = blocks.DugIn(spire);
+            Task.Run(() => _farDone.Enqueue((key, FarMesh(Blocks.SpireLayout(terrain, spire, dug), terrain))));
+        }
+    }
+
+    /// <summary>The far spires (those not laid as blocks now).</summary>
+    public void DrawFar(Blocks blocks)
+    {
+        foreach (var (key, (vao, _, count)) in _far)
+        {
+            if (count == 0 || blocks.SpireLaid(key)) continue;
+            _gl.BindVertexArray(vao);
+            _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)count);
+        }
+    }
+
+    // A spire's blocks with the faces BlockRenderer would show (Covered, for natural blocks alone).
+    private static List<float> FarMesh(List<(BlockPos Position, Resource? Vein)> layout, TerrainField terrain)
+    {
+        var present = layout.Select(b => b.Position).ToHashSet();
+        var ground = new Dictionary<(int, int), float>();
+        float GroundAt(int x, int z)
+        {
+            if (!ground.TryGetValue((x, z), out float g)) ground[(x, z)] = g = terrain.Height(x + 0.5f, z + 0.5f);
+            return g;
+        }
+        var m = new MeshBuilder();
+        foreach (var (p, vein) in layout)
+            FarBlock(m, p, vein, face => face switch
+            {
+                0 => !present.Contains(p with { X = p.X + 1 }) && GroundAt(p.X + 1, p.Z) < p.Top,
+                1 => !present.Contains(p with { X = p.X - 1 }) && GroundAt(p.X - 1, p.Z) < p.Top,
+                2 => !present.Contains(p with { Y = p.Y + Blocks.Tall }),
+                3 => !present.Contains(p with { Y = p.Y - Blocks.Tall }) && GroundAt(p.X, p.Z) < p.Bottom,
+                4 => !present.Contains(p with { Z = p.Z + 1 }) && GroundAt(p.X, p.Z + 1) < p.Top,
+                _ => !present.Contains(p with { Z = p.Z - 1 }) && GroundAt(p.X, p.Z - 1) < p.Top,
+            });
+        return m.Vertices;
+    }
+
+    /// <summary>A natural block seen from afar: one quad per visible face, coloured like its little squares on average.</summary>
+    private static void FarBlock(MeshBuilder m, BlockPos p, Resource? vein, Func<int, bool> visible)
+    {
+        var center = p.Center;
+        const float half = Blocks.Size / 2;
+        float strata = 0.5f + 0.5f * MathF.Sin(p.Bottom * 0.45f + 0.6f * MathF.Sin(p.X * 0.11f) + 0.6f * MathF.Sin(p.Z * 0.13f));
+        for (int f = 0; f < 6; f++)
+        {
+            if (!visible(f)) continue;
+            var (n, u, v) = Faces[f];
+            // The mean of the near block's 2×2 squares (see Block), so the far rock is no noisier.
+            float h = 0;
+            for (int j = 0; j < NaturalGrid; j++)
+            for (int i = 0; i < NaturalGrid; i++)
+                h += Hash(p.X * 7 + f * 131 + i * 17, p.Y * 13 + j * 29, p.Z * 11 + i * j) / (NaturalGrid * NaturalGrid);
+            var rock =Vector3.Lerp(RockDark, RockLight, 0.3f + 0.45f * strata) * (0.86f + 0.22f * h) * (f == 2 ? 1.08f : 1f);
+            var (color, emissive) = (rock, 0f);
+            if (vein is { } ore)
+            {
+                // The average of a vein face's squares (see Vein).
+                (color, emissive) = (Vector3.Zero, 0f);
+                for (int k = 0; k < 8; k++)
+                {
+                    var (c, e) = Vein(ore, rock, (k + 0.5f) / 8, 0.5f);
+                    color += c / 8;
+                    emissive += e / 8;
+                }
+            }
+            var a = center + n * half - u * half - v * half;
+            var b = a + u * Blocks.Size;
+            var c2 = b + v * Blocks.Size;
+            var d = a + v * Blocks.Size;
+            m.Triangle(a, b, c2, color, emissive);
+            m.Triangle(a, c2, d, color, emissive);
+        }
+    }
+
     private static float Hash(int x, int y, int z)
     {
         unchecked
@@ -276,7 +389,7 @@ public sealed unsafe class BlockRenderer : IDisposable
 
     public void Dispose()
     {
-        foreach (var (vao, vbo, _) in _chunks.Values.Concat(_glassChunks.Values))
+        foreach (var (vao, vbo, _) in _chunks.Values.Concat(_glassChunks.Values).Concat(_far.Values))
         {
             _gl.DeleteBuffer(vbo);
             _gl.DeleteVertexArray(vao);

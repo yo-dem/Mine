@@ -11,7 +11,7 @@ namespace Mine.World;
 /// domain-warped hills, long dune ridges and deep basins under the water. Slopes are kept gentle
 /// enough that neighbouring tiles almost always differ by one layer at most (walkable); larger steps
 /// are rare. The rare rock spires are not part of it: they are built of stone blocks that can be dug
-/// (see <see cref="SpireHeight"/> and Blocks.Update), and only far terrain meshes add them.
+/// (see <see cref="SpireHeight"/> and Blocks.UpdateSpires), drawn far away by BlockRenderer as the same blocks.
 /// </summary>
 public sealed class TerrainField
 {
@@ -343,8 +343,8 @@ public sealed class TerrainField
         return new Spire(px, pz, radius * 1.4f, h);
     }
 
-    /// <summary>A tall rock needle with a steep flank and a rounded top.</summary>
-    private float SpireHeight(Spire spire, float x, float z)
+    /// <summary>A tall rock needle with a steep flank and a rounded top: how tall this one spire stands at (x, z).</summary>
+    public float SpireHeight(Spire spire, float x, float z)
     {
         uint h = spire.Hash;
         float radius = 7f + 9f * ((h >> 24) & 0xF) / 15f;

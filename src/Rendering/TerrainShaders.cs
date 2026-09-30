@@ -148,6 +148,9 @@ public static class TerrainShaders
         uniform float uFogStart;
         uniform float uFogEnd;
         uniform float uMistDensity; // soft aerial haze, per metre of distance
+        uniform float uVeil;        // far veil toward the sky colour: strength at the view's end (0 = none)
+        uniform float uVeilStart;   // where it begins (metres)
+        uniform float uVeilHeight;  // > 0: it lies low, thinning by e over this many metres above the water
         uniform float uUnderwater;  // 1 while the camera is below the water surface
 
         #define MAX_POINT_LIGHTS 16
@@ -277,6 +280,13 @@ public static class TerrainShaders
         #ifndef CHEAP
             color += lightHalos(uCameraPos, rd, dist);
         #endif
+
+            // The far veil: distance melts into the sky's colour (lying low, if uVeilHeight > 0).
+            if (uVeil > 0.0)
+            {
+                float lying = uVeilHeight > 0.0 ? exp(-max(pos.y - 15.0, 0.0) / uVeilHeight) : 1.0; // TerrainField.WaterLevel
+                color = mix(color, sky, uVeil * smoothstep(uVeilStart, uFogEnd, dist) * lying * cutThrough);
+            }
 
             // Edge fog: only the last stretch before the end of the view fades into the sky.
             float edge = smoothstep(uFogStart, uFogEnd, dist) * cutThrough;

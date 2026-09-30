@@ -298,6 +298,39 @@ public sealed class Blocks
             Lerp(Lerp(Corner(0, 0, 1), Corner(1, 0, 1), fx), Lerp(Corner(0, 1, 1), Corner(1, 1, 1), fx), fy), fz);
     }
 
+    /// <summary>Whether the spire centred at <paramref name="key"/> is laid as blocks now.</summary>
+    public bool SpireLaid((float X, float Z) key) => _spires.ContainsKey(key);
+
+    /// <summary>The blocks dug out of a spire (a copy, for a worker thread).</summary>
+    public HashSet<BlockPos> DugIn(TerrainField.Spire spire) =>
+        _dug.Where(p => MathF.Abs(p.X + 0.5f - spire.X) <= spire.Reach + 1 && MathF.Abs(p.Z + 0.5f - spire.Z) <= spire.Reach + 1).ToHashSet();
+
+    /// <summary>
+    /// A spire's natural blocks as <see cref="UpdateSpires"/> lays them, without those in
+    /// <paramref name="dug"/>, each with its vein (for the far spires, <see cref="Rendering.BlockRenderer"/>).
+    /// A column two spires share goes to the taller there. Thread-safe: it reads the terrain itself,
+    /// not the <see cref="GroundAt"/> cache.
+    /// </summary>
+    public static List<(BlockPos Position, Resource? Vein)> SpireLayout(TerrainField terrain, TerrainField.Spire spire, HashSet<BlockPos> dug)
+    {
+        var blocks = new List<(BlockPos, Resource?)>();
+        for (int z = (int)MathF.Floor(spire.Z - spire.Reach); z <= (int)MathF.Ceiling(spire.Z + spire.Reach); z++)
+        for (int x = (int)MathF.Floor(spire.X - spire.Reach); x <= (int)MathF.Ceiling(spire.X + spire.Reach); x++)
+        {
+            float rise = terrain.SpireHeight(x + 0.5f, z + 0.5f);
+            if (rise < Size / 2 || terrain.SpireHeight(spire, x + 0.5f, z + 0.5f) < rise) continue;
+            float ground = terrain.Height(x + 0.5f, z + 0.5f);
+            int bottom = (int)MathF.Floor(ground / Size);
+            int count = (int)MathF.Round(ground + rise - bottom * Size);
+            for (int k = 0; k < count; k++)
+            {
+                var p = new BlockPos(x, (bottom + k) * Tall, z);
+                if (!dug.Contains(p)) blocks.Add((p, Vein(p)));
+            }
+        }
+        return blocks;
+    }
+
     public List<DugSave> SaveDug() => _dug.Select(p => new DugSave(p.X, p.Y, p.Z)).ToList();
 
     /// <summary>Restores what was dug out of the spires (before they are laid).</summary>
