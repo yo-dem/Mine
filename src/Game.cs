@@ -513,6 +513,11 @@ public sealed class Game : IDisposable
         _blockRenderer.UpdateFar(_player.Eye, _blocks, _terrainField);
         _blocks.Update();
         _indoor.Update(_blocks, _player.Eye, _time);
+        if (double.IsNaN(_loadedAt) && ((_terrain.Ready && _grass.Ready && _treeField.Ready) || _time > LoadingMaxSeconds))
+        {
+            _loadedAt = _time;
+            if (LogHud) Console.WriteLine($"Mondo caricato in {_time:0.0} s");
+        }
         var walk = new Vector2(_player.Velocity.X, _player.Velocity.Z).Length();
         if (_player.OnGround) _bobPhase += walk * dt * 1.2f;
         UpdateHeldSwap(dt);
@@ -983,6 +988,7 @@ public sealed class Game : IDisposable
 
         _crosshair.Draw();
         DrawHud(size.X, size.Y);
+        DrawLoadingFade(size.X, size.Y);
         _profiler.EndFrame();
 
         if (Screenshot.Path is { } shot && _time > Screenshot.At)
@@ -1094,6 +1100,22 @@ public sealed class Game : IDisposable
         _gl.CullFace(TriangleFace.Back);
         _gl.DepthMask(true);
         _gl.Disable(EnableCap.Blend);
+    }
+
+    // Starting, the screen is black while the land, the grass and the trees around are built, then
+    // the world fades in over FadeInSeconds (after LoadingMaxSeconds at the latest), so nothing is
+    // seen popping in.
+    private const float FadeInSeconds = 1.6f, LoadingMaxSeconds = 12f;
+    private double _loadedAt = double.NaN;
+
+    private void DrawLoadingFade(int width, int height)
+    {
+        float t = double.IsNaN(_loadedAt) ? 0f : (float)Math.Clamp((_time - _loadedAt) / FadeInSeconds, 0.0, 1.0);
+        if (t >= 1f) return;
+        float black = 1f - t * t * (3f - 2f * t);
+        _hud.Begin(width, height);
+        _hud.Rect(0, 0, width, height, new Vector4(0f, 0f, 0f, black));
+        _hud.End();
     }
 
     /// <summary>The interface: the materials column, the progress of a blow, messages and the menu.</summary>

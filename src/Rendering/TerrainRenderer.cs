@@ -59,6 +59,9 @@ public sealed unsafe class TerrainRenderer : IDisposable
         }
     }
 
+    /// <summary>Whether every tile in view has its mesh at the wanted detail (the world is loaded).</summary>
+    public bool Ready => _tiles.Count > 0 && _tiles.Values.All(t => t.Lod == t.WantedLod);
+
     /// <summary>Requests the tiles and detail levels needed around the camera and uploads finished meshes.</summary>
     public void Update(Vector3 camera)
     {

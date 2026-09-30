@@ -116,6 +116,9 @@ public sealed unsafe class GrassRenderer : IDisposable
         }
     }
 
+    /// <summary>Whether every grass tile around the camera has its blades.</summary>
+    public bool Ready => _tiles.Count > 0 && _tiles.Values.All(t => t.Ready);
+
     /// <summary>How many blades the last <see cref="Draw"/> sent to the GPU (for measuring).</summary>
     public int DrawnBlades { get; private set; }
 

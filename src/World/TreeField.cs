@@ -80,6 +80,9 @@ public sealed class TreeField
         _forest = new PerlinNoise(seed + 20);
     }
 
+    /// <summary>Whether every cell around the player has been generated (none waiting on the thread pool).</summary>
+    public bool Ready => _cells.Count > 0 && _pending.Count == 0;
+
     public IEnumerable<TreeInstance> All => _cells.Values.SelectMany(c => c).Concat(_fixed.Values.SelectMany(f => f));
 
     /// <summary>Replaces the instances from one outside source (they do not come from the cells).</summary>
