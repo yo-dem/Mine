@@ -19,8 +19,10 @@ public static class TitleCard
     private const float Overshoot = 0.03f; // the O rises and sinks this much past the cap height
 
     // Flying into the title: the point it grows around (the bottom of the O's ring, between its
-    // counter and its outer edge).
+    // counter and its outer edge), and how much it grows (enough for the ring there to cover any
+    // screen, wide ones too).
     private static readonly Vector2 ZoomPivot = new(2.120f + 0.564f, 0.85f);
+    private const float ZoomScale = 16f;
 
     private static readonly List<(float A, float B)> Spans = new();
     private static readonly List<(float X, Vector4 Color)> Row = new();
@@ -93,70 +95,40 @@ public static class TitleCard
         var dark = new Vector4(0f, 0f, 0f, black);
         float cap = MathF.Min(width * 0.94f / WordWidth, height * 0.6f);
         float left = (width - WordWidth * cap) / 2, top = (height - cap) / 2;
-
-        // Flying in: the black is a slab Thickness thick (in distances from the title at rest, 1)
-        // that the view moves through, from 1 to the far side of it. Its front face is seen at a
-        // scale of 1 / d, its back face at 1 / (d + thickness), both around the vanishing point,
-        // the pivot on the O sliding to the middle of the screen; between the two edges of every
-        // hole its inner wall shows. The thickness grows in at the start, so the title at rest is flat.
-        bool front = true;
-        float frontScale = 1f, backScale = 1f;
-        var pivot = new Vector2(left + ZoomPivot.X * cap, top + ZoomPivot.Y * cap);
         if (zoom > 0f)
         {
-            float t = Math.Clamp(zoom / 0.15f, 0f, 1f);
-            float thickness = Thickness * t * t * (3f - 2f * t);
-            // It ends just before the back face, already EndScale times the size it had at rest:
-            // past its own walls, the O's opening then covers the screen.
-            float d = 1f - zoom * (1f + thickness - 1f / EndScale);
-            front = d > 1e-4f;
-            frontScale = front ? MathF.Min(1f / d, 1e4f) : 0f;
-            backScale = MathF.Min(1f / MathF.Max(d + thickness, 1e-4f), 1e4f);
-            pivot = Vector2.Lerp(pivot, new Vector2(width / 2f, height / 2f), zoom);
+            // Growing exponentially reads as a steady flight; the pivot keeps its place on the letter.
+            var from = new Vector2(left + ZoomPivot.X * cap, top + ZoomPivot.Y * cap);
+            var to = Vector2.Lerp(from, new Vector2(width / 2f, height / 2f), zoom);
+            cap *= MathF.Pow(ZoomScale, zoom);
+            left = to.X - ZoomPivot.X * cap;
+            top = to.Y - ZoomPivot.Y * cap;
         }
-        float frontCap = cap * frontScale, backCap = cap * backScale;
-        float frontLeft = pivot.X - ZoomPivot.X * frontCap, frontTop = pivot.Y - ZoomPivot.Y * frontCap;
-        float backLeft = pivot.X - ZoomPivot.X * backCap, backTop = pivot.Y - ZoomPivot.Y * backCap;
-        bool walls = zoom > 0f;
-
-        // The rows the letters can touch (on either face); the rest is black (or, inside the slab, wall).
-        float spanTop = MathF.Min(front ? frontTop : float.MaxValue, walls ? backTop : float.MaxValue);
-        float spanBottom = MathF.Max(front ? frontTop + frontCap : float.MinValue, walls ? backTop + backCap : float.MinValue);
-        if (!walls) (spanTop, spanBottom) = (frontTop, frontTop + frontCap);
-        int y0 = Math.Clamp((int)MathF.Floor(spanTop - Overshoot * MathF.Max(frontCap, backCap)), 0, height);
-        int y1 = Math.Clamp((int)MathF.Ceiling(spanBottom + Overshoot * MathF.Max(frontCap, backCap)), 0, height);
-        // Past the front face the view is inside the hole: walls all round, shaded row by row.
-        if (!front) (y0, y1) = (0, height);
+        int y0 = Math.Max(0, (int)MathF.Floor(top - Overshoot * cap)), y1 = Math.Min(height, (int)MathF.Ceiling(top + (1f + Overshoot) * cap));
         hud.Rect(0, 0, width, y0, dark);
         hud.Rect(0, y1, width, height - y1, dark);
 
         for (int py = y0; py < y1; py++)
         {
-            RowSpans(py, frontLeft, frontTop, frontCap, Spans);
-            if (walls) RowSpans(py, backLeft, backTop, backCap, BackSpans);
-            else BackSpans.Clear();
-
-            // The row cut at every edge of either face; each piece is black (outside the front's
-            // holes), wall (in a front hole but outside the back's), or the letters (through both).
-            Edges.Clear();
-            Edges.Add(0f);
-            Edges.Add(width);
-            if (front) foreach (var (a, b) in Spans) { Edges.Add(Math.Clamp(a, 0, width)); Edges.Add(Math.Clamp(b, 0, width)); }
-            if (walls) foreach (var (a, b) in BackSpans) { Edges.Add(Math.Clamp(a, 0, width)); Edges.Add(Math.Clamp(b, 0, width)); }
-            Edges.Sort();
-            Row.Clear();
-            for (int e = 0; e + 1 < Edges.Count; e++)
+            float y = (py + 0.5f - top) / cap;
+            Spans.Clear();
+            for (int k = 0; k < LetterX.Length; k++)
             {
-                float a = Edges[e], b = Edges[e + 1];
-                if (b <= a) continue;
-                float mid = (a + b) / 2;
-                bool inFront = !front || Inside(Spans, mid), inBack = !walls || Inside(BackSpans, mid);
-                if (!inFront || inBack) Add(b, !inFront ? dark : letters);
-                else
-                    // A wall, shaded in short pieces, so its light changes smoothly across it.
-                    for (float x = a; x < b; x += WallPiece)
-                        Add(MathF.Min(b, x + WallPiece), WallColor(MathF.Min(b, x + WallPiece / 2), py + 0.5f, pivot, black));
+                int before = Spans.Count;
+                LetterSpans(k, y, Spans);
+                for (int i = before; i < Spans.Count; i++)
+                    Spans[i] = (MathF.Round(left + (LetterX[k] + Spans[i].A) * cap), MathF.Round(left + (LetterX[k] + Spans[i].B) * cap));
             }
+
+            // The row as runs of one colour: the black, and the letters.
+            Row.Clear();
+            foreach (var (a, b) in Spans)
+            {
+                if (b <= a) continue;
+                Add(a, dark);
+                Add(b, letters);
+            }
+            Add(width, dark);
 
             float from = 0f;
             foreach (var (to, color) in Row)
@@ -174,41 +146,6 @@ public static class TitleCard
             hud.Rect(barX, barY, barWidth, barHeight, new Vector4(1f, 1f, 1f, 0.18f * bar));
             hud.Rect(barX, barY, MathF.Round(barWidth * Math.Clamp(progress, 0f, 1f)), barHeight, new Vector4(1f, 1f, 1f, bar));
         }
-    }
-
-    private const float Thickness = 0.1f, EndScale = 40f, WallPiece = 24f;
-    private static readonly List<(float A, float B)> BackSpans = new();
-    private static readonly List<float> Edges = new();
-
-    // The letters' spans on screen row py, for the title laid out at (left, top) with this cap height.
-    private static void RowSpans(int py, float left, float top, float cap, List<(float A, float B)> spans)
-    {
-        spans.Clear();
-        float y = (py + 0.5f - top) / cap;
-        if (y < -Overshoot || y > 1f + Overshoot) return;
-        for (int k = 0; k < LetterX.Length; k++)
-        {
-            int before = spans.Count;
-            LetterSpans(k, y, spans);
-            for (int i = before; i < spans.Count; i++)
-                spans[i] = (MathF.Round(left + (LetterX[k] + spans[i].A) * cap), MathF.Round(left + (LetterX[k] + spans[i].B) * cap));
-        }
-    }
-
-    private static bool Inside(List<(float A, float B)> spans, float x)
-    {
-        foreach (var (a, b) in spans) if (x > a && x < b) return true;
-        return false;
-    }
-
-    // The holes' inner walls: a very dark violet, lit from above, so the walls seen below the
-    // vanishing point (facing up) are lighter than those above it (facing down), and the sides in between.
-    private static Vector4 WallColor(float x, float y, Vector2 vanishing, float black)
-    {
-        var d = new Vector2(x, y) - vanishing;
-        float light = 0.5f + 0.5f * d.Y / MathF.Max(d.Length(), 1f);
-        light = MathF.Round(light * 12f) / 12f; // in a few steps, so runs merge
-        return new Vector4(0.05f + 0.10f * light, 0.035f + 0.07f * light, 0.08f + 0.14f * light, black);
     }
 
     // Extends the row up to x in this colour, merging with the run before if it is the same.

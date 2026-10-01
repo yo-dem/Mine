@@ -1112,9 +1112,6 @@ public sealed class Game : IDisposable
     private const float TitleStart = 0.3f, TitleInSeconds = 0.6f, WhiteSeconds = 2.2f, OpenSeconds = 0.9f, HoldSeconds = 2.5f;
     private const float ZoomSeconds = 2.2f, LoadingMaxSeconds = 12f, BarFillSeconds = 0.5f, BarPace = 1.8f;
     private double _loadedAt = double.NaN;
-    // Debug (MINE_INTRO_ZOOM=0.95): the opening held at that point of its flight into the title.
-    private static readonly float? IntroZoom = float.TryParse(Environment.GetEnvironmentVariable("MINE_INTRO_ZOOM"),
-        System.Globalization.CultureInfo.InvariantCulture, out float introZoom) ? introZoom : null;
 
     // When the title starts opening (never, until the world around is built).
     private double OpenFrom => double.IsNaN(_loadedAt) ? double.PositiveInfinity : Math.Max(_loadedAt + BarFillSeconds, WhiteSeconds);
@@ -1130,8 +1127,7 @@ public sealed class Game : IDisposable
         static float Smooth(double t) { float x = (float)Math.Clamp(t, 0.0, 1.0); return x * x * (3f - 2f * x); }
         // Flying in starts slowly and speeds up (ease in).
         float z = (float)Math.Clamp((_time - ZoomFrom) / ZoomSeconds, 0.0, 1.0);
-        if (IntroZoom is { } still) z = still; // debug: the opening held at one moment of the flight in
-        else if (z >= 1f) return;
+        if (z >= 1f) return;
         float zoom = z * z * (2f - z);
         float white = Smooth((_time - TitleStart) / TitleInSeconds);
         float open = Smooth((_time - OpenFrom) / OpenSeconds);
