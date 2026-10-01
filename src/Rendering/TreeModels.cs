@@ -407,10 +407,16 @@ public static class TreeModels
                     var foot = new Vector3(MathF.Cos(a) * r, 0, MathF.Sin(a) * r);
                     var bend = new Vector3(MathF.Cos(a) * 0.25f, 0, MathF.Sin(a) * 0.25f);
                     var top = foot + new Vector3(0, height, 0) + bend;
-                    Cylinder(mesh, new Segment(foot, top, 0.018f, 0.012f, 0, BellSway), 3, new Vector3(0.10f, 0.20f, 0.26f));
-                    // A drooping bell: a small cone hanging from the tip.
+                    // A drooping bell: a small cone hanging from the tip. The stem turns upright
+                    // just under it and ends inside the cone, below its point (where the cone is
+                    // wider than the stem), so it never shows through the bell.
+                    float radius = 0.08f + 0.04f * random.NextSingle(), bell = radius * 1.6f;
+                    var stalk = new Vector3(0.10f, 0.20f, 0.26f);
+                    var knee = top - new Vector3(0, bell * 1.3f, 0);
+                    Cylinder(mesh, new Segment(foot, knee, 0.018f, 0.012f, 0, BellSway), 3, stalk);
+                    Cylinder(mesh, new Segment(knee, top - new Vector3(0, bell * 0.4f, 0), 0.012f, 0.011f, BellSway, BellSway), 3, stalk);
                     var color = i % 2 == 0 ? new Vector3(0.2f, 0.75f, 1.0f) : new Vector3(0.7f, 0.35f, 1.0f);
-                    Bell(mesh, top, 0.08f + 0.04f * random.NextSingle(), color, lod >= 2 ? 5 : 8);
+                    Bell(mesh, top, radius, color, lod >= 2 ? 5 : 8);
                 }
                 break;
             }
