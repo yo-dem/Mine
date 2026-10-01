@@ -18,6 +18,12 @@ public static class TitleCard
     private const float WordWidth = 5.331f;
     private const float Overshoot = 0.03f; // the O rises and sinks this much past the cap height
 
+    // Flying into the title: the point it grows around (the middle of the N, solid between its
+    // notches: a band 0.955 wide and 0.4 tall), and how much it grows (enough for that band to
+    // cover any screen).
+    private static readonly Vector2 ZoomPivot = new(3.338f + 0.4775f, 0.5f);
+    private const float ZoomScale = 16f;
+
     private static readonly List<(float A, float B)> Spans = new();
     private static readonly List<(float X, Vector4 Color)> Row = new();
 
@@ -80,13 +86,24 @@ public static class TitleCard
     /// Draws the black (<paramref name="black"/> its opacity) with the title in it, its letters of
     /// colour <paramref name="letters"/> (alpha 0: holes the world shows through), and under it a
     /// thin loading bar filled to <paramref name="progress"/> (0..1), as opaque as <paramref name="bar"/>.
-    /// Call between Hud.Begin and Hud.End.
+    /// <paramref name="zoom"/> (0..1) flies into the title: it grows around the solid heart of the N
+    /// (<see cref="ZoomPivot"/>), which slides to the middle of the screen, until that letter fills
+    /// the screen and only the world is left. Call between Hud.Begin and Hud.End.
     /// </summary>
-    public static void Draw(Hud hud, int width, int height, float black, Vector4 letters, float progress, float bar)
+    public static void Draw(Hud hud, int width, int height, float black, Vector4 letters, float progress, float bar, float zoom = 0f)
     {
         var dark = new Vector4(0f, 0f, 0f, black);
         float cap = MathF.Min(width * 0.94f / WordWidth, height * 0.6f);
         float left = (width - WordWidth * cap) / 2, top = (height - cap) / 2;
+        if (zoom > 0f)
+        {
+            // Growing exponentially reads as a steady flight; the pivot keeps its place on the letter.
+            var from = new Vector2(left + ZoomPivot.X * cap, top + ZoomPivot.Y * cap);
+            var to = Vector2.Lerp(from, new Vector2(width / 2f, height / 2f), zoom);
+            cap *= MathF.Pow(ZoomScale, zoom);
+            left = to.X - ZoomPivot.X * cap;
+            top = to.Y - ZoomPivot.Y * cap;
+        }
         int y0 = Math.Max(0, (int)MathF.Floor(top - Overshoot * cap)), y1 = Math.Min(height, (int)MathF.Ceiling(top + (1f + Overshoot) * cap));
         hud.Rect(0, 0, width, y0, dark);
         hud.Rect(0, y1, width, height - y1, dark);
