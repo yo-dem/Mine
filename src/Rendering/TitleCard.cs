@@ -8,23 +8,18 @@ namespace Mine.Rendering;
 /// its feet, a wide L, a slightly oval O with a small round counter, an N cut by two diagonal
 /// notches, an E with thin slits), as holes in the black through which the world shows. The
 /// letters are measured in cap heights (<see cref="LetterSpans"/>) and rasterised row by row at
-/// screen resolution with the HUD's rectangles, so they stay crisp at any size. The whole word
-/// opens at once, the black in its letters fading away (<see cref="WriteStart"/> .. <see cref="Written"/>).
+/// screen resolution with the HUD's rectangles, so they stay crisp at any size. The caller says
+/// what the letters are (Game.DrawLoadingFade: white in the black, then see-through).
 /// </summary>
 public static class TitleCard
 {
-    /// <summary>When the first hole starts opening, and when the last one is fully open (seconds).</summary>
-    public const float WriteStart = 0.3f, Written = WriteStart + OpenSeconds;
-
-    private const float OpenSeconds = 0.6f;
-
     // Where each letter starts, in cap heights from the A's left edge, and the whole word's width.
     private static readonly float[] LetterX = [0f, 1.218f, 2.120f, 3.338f, 4.421f];
     private const float WordWidth = 5.331f;
     private const float Overshoot = 0.03f; // the O rises and sinks this much past the cap height
 
     private static readonly List<(float A, float B)> Spans = new();
-    private static readonly List<(float X, float Alpha)> Row = new();
+    private static readonly List<(float X, Vector4 Color)> Row = new();
 
     /// <summary>The parts of letter <paramref name="k"/> on the row at height <paramref name="y"/> (0 at the cap line, 1 at the baseline), in cap heights from its left edge.</summary>
     private static void LetterSpans(int k, float y, List<(float, float)> spans)
@@ -82,10 +77,11 @@ public static class TitleCard
     }
 
     /// <summary>
-    /// Draws the black (<paramref name="black"/> its opacity) with the title cut into it, at
-    /// <paramref name="time"/> seconds since the start. Call between Hud.Begin and Hud.End.
+    /// Draws the black (<paramref name="black"/> its opacity) with the title in it, its letters of
+    /// colour <paramref name="letters"/> (alpha 0: holes the world shows through). Call between
+    /// Hud.Begin and Hud.End.
     /// </summary>
-    public static void Draw(Hud hud, int width, int height, float time, float black)
+    public static void Draw(Hud hud, int width, int height, float black, Vector4 letters)
     {
         var dark = new Vector4(0f, 0f, 0f, black);
         float cap = MathF.Min(width * 0.94f / WordWidth, height * 0.6f);
@@ -94,8 +90,6 @@ public static class TitleCard
         hud.Rect(0, 0, width, y0, dark);
         hud.Rect(0, y1, width, height - y1, dark);
 
-        float open = Math.Clamp((time - WriteStart) / OpenSeconds, 0f, 1f);
-        float hole = black * (1f - open * open * (3f - 2f * open)); // the black left in the letters
         for (int py = y0; py < y1; py++)
         {
             float y = (py + 0.5f - top) / cap;
@@ -108,29 +102,29 @@ public static class TitleCard
                     Spans[i] = (MathF.Round(left + (LetterX[k] + Spans[i].A) * cap), MathF.Round(left + (LetterX[k] + Spans[i].B) * cap));
             }
 
-            // The row as runs of equal opacity: the black, and the letters holding what is left of it.
+            // The row as runs of one colour: the black, and the letters.
             Row.Clear();
             foreach (var (a, b) in Spans)
             {
                 if (b <= a) continue;
-                Add(a, black);
-                Add(b, hole);
+                Add(a, dark);
+                Add(b, letters);
             }
-            Add(width, black);
+            Add(width, dark);
 
             float from = 0f;
-            foreach (var (to, alpha) in Row)
+            foreach (var (to, color) in Row)
             {
-                if (alpha > 0.002f && to > from) hud.Rect(from, py, to - from, 1, dark with { W = alpha });
+                if (color.W > 0.002f && to > from) hud.Rect(from, py, to - from, 1, color);
                 from = to;
             }
         }
     }
 
-    // Extends the row up to x with this opacity, merging with the run before if it is the same.
-    private static void Add(float x, float alpha)
+    // Extends the row up to x in this colour, merging with the run before if it is the same.
+    private static void Add(float x, Vector4 color)
     {
-        if (Row.Count > 0 && MathF.Abs(Row[^1].Alpha - alpha) < 0.002f) Row[^1] = (x, alpha);
-        else Row.Add((x, alpha));
+        if (Row.Count > 0 && Row[^1].Color == color) Row[^1] = (x, color);
+        else Row.Add((x, color));
     }
 }
