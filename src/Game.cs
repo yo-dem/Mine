@@ -733,8 +733,10 @@ public sealed class Game : IDisposable
         {
             var material = _blocks.At(block.Block) ?? Resource.Wood;
             (chip, chip2) = ChipsOf(material);
-            // A vein is broken like the rock around it, but its chips glint with the mineral.
+            // A vein is broken like the rock around it, but its chips glint with the mineral;
+            // glowstone's with its light.
             if (_blocks.VeinAt(block.Block) is { } ore) chip2 = ChipsOf(ore).Item1;
+            if (_blocks.GlowstoneAt(block.Block) is { } glow) chip2 = Blocks.GlowstoneColors[glow];
             seconds = BreakSeconds(material);
             hit = block.Point - look * 0.05f;
         }
@@ -784,11 +786,13 @@ public sealed class Game : IDisposable
         }
         else
         {
-            // A block breaks into chips and gives itself back as a cube.
+            // A block breaks into chips and gives itself back as a cube; glowstone (found only
+            // under the water) is no material: it shatters and is gone.
             var at = _aimedBlock!.Value.Block;
+            bool glowstone = _blocks.GlowstoneAt(at) is not null;
             var material = _blocks.Remove(at) ?? Resource.Wood;
             _debris.Burst(at.Center - new Vector3(0, 0.5f, 0), 1f, 0.5f, 25, chip, chip2);
-            _debris.Spill(material, 1, at.Center - new Vector3(0, 0.5f, 0), 0.5f);
+            if (!glowstone) _debris.Spill(material, 1, at.Center - new Vector3(0, 0.5f, 0), 0.5f);
         }
         _gathering = null;
         _gatherProgress = 0;

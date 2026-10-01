@@ -40,7 +40,7 @@ public sealed unsafe class BlockRenderer : IDisposable
             {
                 bool isGlass = resource == Resource.Glass;
                 if (isGlass) GlassBlock(glass, blocks, p);
-                else Block(m, p, resource, blocks.IsNatural(p), blocks.VeinAt(p), (face, half) => !Covered(blocks, p, face, half, false));
+                else Block(m, p, resource, blocks.IsNatural(p), blocks.VeinAt(p), (face, half) => !Covered(blocks, p, face, half, false), blocks.GlowstoneAt(p));
             }
             Store(_chunks, chunk, m.Vertices);
             Store(_glassChunks, chunk, glass.Vertices);
@@ -167,11 +167,11 @@ public sealed unsafe class BlockRenderer : IDisposable
     private static readonly Vector3 RockDark = new(0.30f, 0.23f, 0.36f), RockLight = new(0.46f, 0.35f, 0.50f);
 
     /// <summary>A block's visible faces, each a grid of little shaded squares.</summary>
-    private static void Block(MeshBuilder m, BlockPos p, Resource resource, bool natural, Resource? vein, Func<int, int, bool> visible)
+    private static void Block(MeshBuilder m, BlockPos p, Resource resource, bool natural, Resource? vein, Func<int, int, bool> visible, int? glowstone = null)
     {
         var center = p.Center;
         const float half = Blocks.Size / 2;
-        int grid = natural && vein is null ? NaturalGrid : Grid; // veins in the fine grid: their nuggets are small
+        int grid = natural && vein is null && glowstone is null ? NaturalGrid : Grid; // veins and glowstone in the fine grid: their nuggets and cracks are small
         float size = Blocks.Size / grid;
         // The spires' strata: bands a couple of metres tall, wavering around the spire.
         float strata = 0.5f + 0.5f * MathF.Sin(p.Bottom * 0.45f + 0.6f * MathF.Sin(p.X * 0.11f) + 0.6f * MathF.Sin(p.Z * 0.13f));
@@ -187,7 +187,8 @@ public sealed unsafe class BlockRenderer : IDisposable
                 if (!visible(f, 2 * j / grid)) continue; // the lower or upper half (v is up on the sides)
                 float h = Hash(p.X * 7 + f * 131 + i * 17, p.Y * 13 + j * 29, p.Z * 11 + i * j);
                 var rock = Vector3.Lerp(RockDark, RockLight, 0.3f + 0.45f * strata) * (0.86f + 0.22f * h) * (f == 2 ? 1.08f : 1f);
-                var (color, emissive) = !natural ? Shade(resource, end, i, j, h)
+                var (color, emissive) = glowstone is { } glow ? Glowstone(Blocks.GlowstoneColors[glow], i, j, f, p)
+                    : !natural ? Shade(resource, end, i, j, h)
                     : vein is { } ore ? Vein(ore, rock, Hash(p.X * 5 + f * 97 + i * 31, p.Y * 19 + j * 43, p.Z * 3 + i * 7 + j), h)
                     : (rock, 0f);
                 var a = corner + u * (i * size) + v * (j * size);
@@ -213,6 +214,20 @@ public sealed unsafe class BlockRenderer : IDisposable
             return pick < 0.55f ? (CrystalNugget * (0.85f + 0.3f * h), 1.3f) : (Vector3.Lerp(rock, CrystalStain, 0.6f), 0.12f);
         if (pick < 0.12f) return (GlassGlint, 0.05f);
         return pick < 0.5f ? (GlassNugget * (0.8f + 0.25f * h), 0f) : (Vector3.Lerp(rock, new Vector3(0.62f), 0.3f), 0f);
+    }
+
+    // Glowstone, found only on the lake and sea floors and nothing like the blocks the player
+    // carries: near-black rock split by cracks that glow in its colour (two crooked lines across
+    // each face, a different pair on each), the rock beside them faintly lit.
+    private static readonly Vector3 GlowstoneRock = new(0.07f, 0.05f, 0.10f);
+
+    private static (Vector3 Color, float Emissive) Glowstone(Vector3 light, int i, int j, int face, BlockPos p)
+    {
+        int seed = (int)(Hash(p.X * 3 + face * 41, p.Y * 7, p.Z * 5) * 4);
+        bool crack = i == (j + seed) % Grid || (i + j) == (seed + 2) % (2 * Grid - 1);
+        bool near = Math.Abs(i - (j + seed) % Grid) == 1;
+        if (crack) return (light, 1.6f);
+        return (Vector3.Lerp(GlowstoneRock, light * 0.4f, near ? 0.35f : 0.1f), near ? 0.25f : 0.06f);
     }
 
     private static (Vector3 Color, float Emissive) Shade(Resource resource, bool end, int i, int j, float h)

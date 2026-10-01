@@ -151,10 +151,17 @@ public sealed class Blocks
         return true;
     }
 
-    /// <summary>Takes a block away (a natural one is remembered as dug).</summary>
+    /// <summary>Takes a block away (a natural one is remembered as dug). Returns what it gives: nothing for glowstone.</summary>
     public Resource? Remove(BlockPos p)
     {
         if (Delete(p) is not { } resource) return null;
+        if (_glowstones.Remove(p))
+        {
+            _natural.Remove(p);
+            _dug.Add(p);
+            Changed(p);
+            return null;
+        }
         if (_natural.Remove(p))
         {
             _dug.Add(p);
@@ -256,7 +263,93 @@ public sealed class Blocks
             _spires[(spire.X, spire.Z)] = laid;
             changed = true;
         }
+        if (UpdateOutcrops(at)) changed = true;
         if (changed) Version++;
+    }
+
+    // ---- Glowstone outcrops on the lake and sea floors ------------------------------------------
+
+    // In about one cell of OutcropCell metres in OutcropChance, where the water is at least
+    // OutcropMinDepth deep, a small cluster of glowstone rises from the floor: a few columns, the
+    // middle one tallest, always OutcropClearance under the surface. Glowstone is found only
+    // there: dark rock split by glowing cracks, cyan, pink or gold (GlowstoneColors, one to each
+    // cluster), lighting the water round it (Lights). It is no material: broken, it is gone for
+    // good (Remove gives nothing; it is remembered as dug). Laid within OutcropRadius, taken away
+    // beyond OutcropForget.
+    private const float OutcropCell = 9f, OutcropChance = 0.75f, OutcropMinDepth = 1.2f, OutcropClearance = 0.15f;
+    private const float OutcropRadius = 160f, OutcropForget = 200f;
+    private readonly Dictionary<(int X, int Z), List<BlockPos>> _outcrops = new();
+    private readonly Dictionary<BlockPos, int> _glowstones = new(); // and its colour (GlowstoneColors)
+
+    public static readonly Vector3[] GlowstoneColors = [new(0.3f, 0.9f, 1.0f), new(1.0f, 0.4f, 0.8f), new(1.0f, 0.75f, 0.3f)];
+
+    /// <summary>The colour of a glowstone block (an index into <see cref="GlowstoneColors"/>), or null if it is none.</summary>
+    public int? GlowstoneAt(BlockPos p) => _glowstones.TryGetValue(p, out int c) ? c : null;
+
+    private bool UpdateOutcrops(Vector2 at)
+    {
+        bool changed = false;
+        foreach (var key in _outcrops.Keys.ToList())
+        {
+            if (Vector2.Distance(new Vector2((key.X + 0.5f) * OutcropCell, (key.Z + 0.5f) * OutcropCell), at) < OutcropForget) continue;
+            foreach (var p in _outcrops[key])
+                if (_natural.Remove(p) && Delete(p) is not null) MarkDirty(p);
+            foreach (var p in _outcrops[key]) _glowstones.Remove(p);
+            _outcrops.Remove(key);
+            changed = true;
+        }
+
+        int reach = (int)MathF.Ceiling(OutcropRadius / OutcropCell);
+        int cx = (int)MathF.Floor(at.X / OutcropCell), cz = (int)MathF.Floor(at.Y / OutcropCell);
+        ReadOnlySpan<(int X, int Z)> around = [(0, 0), (1, 0), (0, 1), (-1, 0), (0, -1), (1, 1), (-1, 1)];
+        for (int dz = -reach; dz <= reach; dz++)
+        for (int dx = -reach; dx <= reach; dx++)
+        {
+            var key = (cx + dx, cz + dz);
+            if (_outcrops.ContainsKey(key)) continue;
+            var center = new Vector2((key.Item1 + 0.5f) * OutcropCell, (key.Item2 + 0.5f) * OutcropCell);
+            if (Vector2.Distance(center, at) > OutcropRadius) continue;
+            var laid = new List<BlockPos>();
+            _outcrops[key] = laid;
+            if (Hash(key.Item1, key.Item2, 1) > OutcropChance) continue;
+            int x0 = (int)MathF.Floor(key.Item1 * OutcropCell + 3 + Hash(key.Item1, key.Item2, 2) * (OutcropCell - 6));
+            int z0 = (int)MathF.Floor(key.Item2 * OutcropCell + 3 + Hash(key.Item1, key.Item2, 3) * (OutcropCell - 6));
+            if (TerrainField.WaterLevel - GroundAt(x0, z0) < OutcropMinDepth) continue;
+            int columns = 2 + (int)(Hash(key.Item1, key.Item2, 4) * 5); // 2 to 6
+            int color = (int)(Hash(key.Item1, key.Item2, 7) * GlowstoneColors.Length);
+            int tallest = 1 + (int)(Hash(key.Item1, key.Item2, 5) * 3);  // 1 to 3 blocks
+            for (int c = 0; c < columns; c++)
+            {
+                int x = x0 + around[c].X, z = z0 + around[c].Z;
+                float ground = GroundAt(x, z);
+                int bottom = (int)MathF.Floor(ground / Size);
+                // Blocks wholly under the water, with room above.
+                int room = (int)MathF.Floor((TerrainField.WaterLevel - OutcropClearance - bottom * Size) / Size);
+                int count = Math.Min(c == 0 ? tallest : Math.Max(1, tallest - 1 - (int)(Hash(x, z, 6) * 2)), room);
+                for (int k = 0; k < count; k++)
+                {
+                    var p = new BlockPos(x, (bottom + k) * Tall, z);
+                    if (_dug.Contains(p) || Overlaps(p)) continue;
+                    Insert(p, Resource.Stone);
+                    _natural.Add(p);
+                    _glowstones[p] = color;
+                    laid.Add(p);
+                }
+            }
+            foreach (var p in laid) MarkDirty(p);
+            if (laid.Count > 0) changed = true;
+        }
+        return changed;
+    }
+
+    private static float Hash(int x, int z, int seed)
+    {
+        unchecked
+        {
+            uint h = (uint)(x * 374761393 + z * 668265263 + seed * 1442695041);
+            h = (h ^ (h >> 13)) * 1274126177u;
+            return ((h ^ (h >> 16)) & 0xFFFF) / 65536f;
+        }
     }
 
     // Veins: thin sheets winding through the rock where a 3D noise crosses zero, broken into patches
@@ -775,12 +868,14 @@ public sealed class Blocks
 
     public static readonly Vector3 CrystalLight = new(0.66f, 0.46f, 1.0f);
 
-    /// <summary>The nearest crystal blocks within <paramref name="radius"/> (at most <paramref name="max"/>), as point lights.</summary>
+    /// <summary>The nearest crystal and glowstone blocks within <paramref name="radius"/> (at most <paramref name="max"/>), as point lights.</summary>
     public IEnumerable<PointLight> Lights(Vector3 center, float radius, int max = 6) => _crystals
-        .Where(p => Vector3.DistanceSquared(p.Center, center) < radius * radius)
-        .OrderBy(p => Vector3.DistanceSquared(p.Center, center))
+        .Select(p => (Position: p, Color: CrystalLight * 1.5f))
+        .Concat(_glowstones.Select(g => (Position: g.Key, Color: GlowstoneColors[g.Value] * 1.3f)))
+        .Where(l => Vector3.DistanceSquared(l.Position.Center, center) < radius * radius)
+        .OrderBy(l => Vector3.DistanceSquared(l.Position.Center, center))
         .Take(max)
-        .Select(p => new PointLight(p.Center, CrystalLight * 1.5f, 7f));
+        .Select(l => new PointLight(l.Position.Center, l.Color, 7f));
 }
 
 /// <summary>An axis-aligned box in world space.</summary>
