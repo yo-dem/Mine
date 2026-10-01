@@ -258,6 +258,35 @@ public sealed class TreeField
     private readonly List<(float Distance, TreeInstance Tree)> _flowerScratch = new();
 
     /// <summary>
+    /// What stands in the water and stirs rings on it (reed clumps rising out of it, lotus) within
+    /// <paramref name="radius"/>, added to <paramref name="into"/> with its distance, each as x, z,
+    /// the radius of what stands there and a phase of its own (negative for reed clumps).
+    /// </summary>
+    public void WaterRipplers(Vector3 center, float radius, List<(float Distance, Vector4 Rippler)> into)
+    {
+        int reeds = TreeModels.VariantOf(TreeModels.Decoration.Reeds), lotus = TreeModels.VariantOf(TreeModels.Decoration.Lotus);
+        int reach = (int)MathF.Ceiling(radius / CellSize);
+        int cx = (int)MathF.Floor(center.X / CellSize), cz = (int)MathF.Floor(center.Z / CellSize);
+        for (int dz = -reach; dz <= reach; dz++)
+        for (int dx = -reach; dx <= reach; dx++)
+        {
+            if (!_cells.TryGetValue((cx + dx, cz + dz), out var trees)) continue;
+            foreach (var tree in trees)
+            {
+                bool stands = tree.Variant == lotus || (tree.Variant == reeds && tree.Position.Y < TerrainField.WaterLevel - 0.05f);
+                if (!stands) continue;
+                float d = Vector2.Distance(new Vector2(tree.Position.X, tree.Position.Z), new Vector2(center.X, center.Z));
+                if (d >= radius) continue;
+                float size = tree.Variant == lotus ? 0.45f * tree.Scale : 0.3f * tree.Scale;
+                float phase = MathF.Abs(MathF.Sin(tree.Position.X * 12.9898f + tree.Position.Z * 78.233f)) * 43.7f;
+                // (Reed clumps are told apart by a negative phase: their rings leave each stem.)
+                if (tree.Variant == reeds) phase = -1f - phase;
+                into.Add((d, new Vector4(tree.Position.X, tree.Position.Z, size, phase)));
+            }
+        }
+    }
+
+    /// <summary>
     /// Gardens of flowers born of light (irises, poppies, lilies), the only place they grow: glowing
     /// patches under the thick woods (a garden noise picks about half of them), densest at their
     /// heart and where the trees crowd. The biome picks the kind.

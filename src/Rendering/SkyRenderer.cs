@@ -348,6 +348,9 @@ public sealed class SkyRenderer : IDisposable
         uniform float uManualSeed;
         uniform vec3 uManualStart;   // where it starts: ahead of the camera, up in the sky
 
+        // How thin a shooting star's trail is (exp(-across^2 * this)); the water's reflection widens it.
+        float gStreakSharpness = 3e5;
+
         // One shooting star, `age` seconds old: it glides slowly along the great circle from `start`
         // around `axis` (40-90 degrees in 3-4.5 s) with a long tail, brightening quickly and fading
         // out slowly over the second half of its flight.
@@ -366,7 +369,8 @@ public sealed class SkyRenderer : IDisposable
             float tailLength = 0.3 + 0.25 * hash13(vec3(seed, 1.0, 9.0));
             float tail = pow(smoothstep(tailLength, 0.0, behind), 1.5) * step(-0.002, behind);
             float life = smoothstep(0.0, 0.08, progress) * (1.0 - smoothstep(0.45, 1.0, progress));
-            return vec3(1.0, 0.9, 1.0) * tail * exp(-across * across * 3e5) * life * 4.0;
+            // (A wider trail is a little dimmer.)
+            return vec3(1.0, 0.9, 1.0) * tail * exp(-across * across * gStreakSharpness) * life * 4.0 * pow(gStreakSharpness / 3e5, 0.25);
         }
 
         // Now and then (one slot in two, every 9 s) a shooting star crosses a good part of the sky,
@@ -379,7 +383,8 @@ public sealed class SkyRenderer : IDisposable
             if (hash13(vec3(slot, 7.0, 1.0)) > 0.5)
             {
                 float a = hash13(vec3(slot, 2.0, 5.0)) * 6.283;
-                vec3 start = normalize(vec3(cos(a), 0.35 + 0.5 * hash13(vec3(slot, 4.0, 4.0)), sin(a)));
+                // From low to high in the sky (low ones are the ones seen mirrored in the lakes).
+                vec3 start = normalize(vec3(cos(a), 0.12 + 0.7 * hash13(vec3(slot, 4.0, 4.0)), sin(a)));
                 vec3 axis = normalize(vec3(hash13(vec3(slot, 6.0, 1.0)) - 0.5, 1.0, hash13(vec3(slot, 9.0, 3.0)) - 0.5));
                 c += streak(d, slot, uTime - slot * period, start, axis) * visibility;
             }

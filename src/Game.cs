@@ -500,6 +500,7 @@ public sealed class Game : IDisposable
         _objects.Update(_player.Position);
         _creatures.Update(_player.Position, _dayCycle.Sample(), dt);
         _creatureRenderer.Update(_creatures);
+        UpdateRipples();
         Aim();
         Gather(dt);
         Sow(dt);
@@ -796,6 +797,74 @@ public sealed class Game : IDisposable
 
     private void Toast(string text, Vector4 color) => _toasts.Add((text, color, _time + 2.2));
 
+    // Rings on the water (the water shader's ripples) round the reed clumps, lotus and blocks
+    // standing in it within RippleRange (the nearest MaxRipplers, gathered every RipplerRefresh
+    // seconds), and the player's wake and trail of light (the water shader's wake): wading or
+    // swimming, the path is kept as a point every WakeStep metres moved (none while keeping
+    // still) in a ring of WakeStamps; leaving the water breaks it (a point with w 0).
+    private const int MaxRipplers = 40, WakeStamps = 39;
+    private const float RippleRange = 35f, RipplerRefresh = 0.2f, WakeStep = 0.4f;
+    private static readonly string[] RipplerUniforms = Enumerable.Range(0, MaxRipplers).Select(i => $"uRippler[{i}]").ToArray();
+    private static readonly string[] WakeUniforms = Enumerable.Range(0, WakeStamps + 1).Select(i => $"uWakeStamp[{i}]").ToArray();
+    private readonly Vector4[] _ripplers = new Vector4[MaxRipplers];
+    private readonly Vector4[] _wake = new Vector4[WakeStamps];
+    private readonly List<(float Distance, Vector4 Rippler)> _rippleScratch = new();
+    private int _ripplerCount, _wakeNext;
+    private double _ripplersAt = double.NegativeInfinity;
+    private Vector2 _lastWake = new(float.NaN);
+    private bool _inWater;
+
+    private void UpdateRipples()
+    {
+        if (_time - _ripplersAt >= RipplerRefresh)
+        {
+            _rippleScratch.Clear();
+            _treeField.WaterRipplers(_player.Position, RippleRange, _rippleScratch);
+            // Blocks standing in the water, through its surface (a ring round each, its corners
+            // reaching a little past it).
+            var center = new Vector2(_player.Position.X, _player.Position.Z);
+            foreach (var (block, _) in _blocks.All)
+            {
+                if (block.Bottom >= TerrainField.WaterLevel || block.Top <= TerrainField.WaterLevel) continue;
+                var c = new Vector2(block.X + 0.5f, block.Z + 0.5f);
+                float d = Vector2.Distance(c, center);
+                if (d < RippleRange) _rippleScratch.Add((d, new Vector4(c.X, c.Y, 0.6f, (block.X * 7 + block.Z * 13) % 40)));
+            }
+            _rippleScratch.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+            _ripplerCount = Math.Min(MaxRipplers, _rippleScratch.Count);
+            for (int i = 0; i < _ripplerCount; i++) _ripplers[i] = _rippleScratch[i].Rippler;
+            _ripplersAt = _time;
+        }
+        var feet = new Vector2(_player.Position.X, _player.Position.Z);
+        _inWater = _player.Position.Y < TerrainField.WaterLevel - 0.1f;
+        if (!_inWater)
+        {
+            if (!float.IsNaN(_lastWake.X)) AddWakePoint(new Vector4(feet.X, feet.Y, (float)_time, 0f));
+            _lastWake = new Vector2(float.NaN);
+            return;
+        }
+        if (float.IsNaN(_lastWake.X) || Vector2.Distance(feet, _lastWake) >= WakeStep)
+        {
+            AddWakePoint(new Vector4(feet.X, feet.Y, (float)_time, 1f));
+            _lastWake = feet;
+        }
+    }
+
+    private void AddWakePoint(Vector4 point)
+    {
+        _wake[_wakeNext] = point;
+        _wakeNext = (_wakeNext + 1) % WakeStamps;
+    }
+
+    private void SetRipples(Shader shader)
+    {
+        for (int i = 0; i < _ripplerCount; i++) shader.Set(RipplerUniforms[i], _ripplers[i]);
+        shader.Set("uRipplerCount", _ripplerCount);
+        // The path oldest first, then where the player is now (so the wake reaches them).
+        for (int i = 0; i < WakeStamps; i++) shader.Set(WakeUniforms[i], _wake[(_wakeNext + i) % WakeStamps]);
+        shader.Set(WakeUniforms[WakeStamps], new Vector4(_player.Position.X, _player.Position.Z, (float)_time, _inWater ? 1f : 0f));
+    }
+
     private void OnRender(double deltaTime)
     {
         _frames++;
@@ -949,6 +1018,7 @@ public sealed class Game : IDisposable
         _waterShader.Set("uNear", NearPlane);
         _waterShader.Set("uFar", FarPlane);
         _waterShader.Set("uWaterLevel", TerrainField.WaterLevel);
+        SetRipples(_waterShader);
         if (On("water")) _water.Draw();
 
         // Glass: glass blocks, the glass cubes lying around, the translucent crystals.
@@ -1312,6 +1382,10 @@ public sealed class Game : IDisposable
         shader.Set("uFlash", new Vector3(0.7f, 0.75f, 1f) * _weather.Lightning * 0.9f); // lightning lights the world (outdoors)
         _indoor.SetUniforms(shader);
         shader.Set("uUnderwater", eye.Y < TerrainField.WaterLevel ? 1f : 0f);
+        shader.Set("uWaterLevel", TerrainField.WaterLevel);
+        // The sea floor (for the terrain's light from the submerged rocks; the water and the lotus read it too).
+        shader.Set("uSeaFloor", SeaFloorMap.Unit);
+        shader.Set("uSeaFloorOrigin", float.IsNaN(_seaFloor.Origin.X) ? new Vector2(1e9f) : _seaFloor.Origin);
         shader.Set("uLightColor", atmosphere.LightColor * (1f - 0.45f * MathF.Max(_weather.Rain, 0.8f * _weather.Snow))); // rain and snow veil the sun
         shader.Set("uLightDir", atmosphere.LightDirection);
         shader.Set("uFogStart", fogEnd * 0.75f); // only the last stretch, to hide the world's edge

@@ -421,7 +421,72 @@ public static class TerrainShaders
         in float vSlope;
         in float vAo;
 
+        uniform float uWaterLevel;
+
         out vec4 FragColor;
+
+        // Light from the rocks under the water: from the edges of some of the submerged rocks
+        // (the floor's 2 m tiles), light seeps out, as if from cracks: along the rim of the top
+        // where the rock drops to a lower one (the neighbours' heights from the SeaFloorMap, as
+        // TerrainField.TileHeight: its texels sit on the tiles' centres) and down the walls of the
+        // step, brightest at the top edge; pink, blue or gold, one colour to each cluster of
+        // rocks, pulsing slowly, broken here and there. Seen from the surface, even through the
+        // mirrored sky at night (its light passes through the water: the water's glowBelow), it
+        // gives the water depth. Rocks light up in clusters where a broad noise says.
+        uniform sampler2D uSeaFloor;
+        uniform vec2 uSeaFloorOrigin;
+
+        // The layered height of a tile (TerrainField.TileHeight), or -1e4 off the map.
+        float tileHeight(vec2 tile)
+        {
+            ivec2 t = ivec2(tile - floor(uSeaFloorOrigin / 2.0 + 0.5));
+            if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, textureSize(uSeaFloor, 0)))) return -1e4;
+            return round(texelFetch(uSeaFloor, t, 0).r / 0.5) * 0.5;
+        }
+
+        vec3 rockLight(vec3 p, vec3 n, float dist)
+        {
+            if (uWaterLevel - p.y < 0.4 || dist > 180.0) return vec3(0.0);
+            bool wall = abs(n.y) < 0.4;
+            if (!wall && n.y < 0.6) return vec3(0.0);
+            // Which rock: on a wall, the tile behind it (the higher one: nudged against the normal).
+            vec2 tile = floor((p.xz - (wall ? n.xz * 0.05 : vec2(0.0))) / 2.0);
+            float chance = smoothstep(0.5, 0.75, noise2(tile * 0.11, 12.0)) * 0.8;
+            if (hash13(vec3(tile, 91.0)) > chance) return vec3(0.0);
+
+            float light;
+            if (wall)
+            {
+                // Down the wall from the top edge of each half-metre layer.
+                float up = fract(p.y / 0.5);
+                light = pow(up, 6.0) * 1.4 + pow(up, 2.0) * 0.3;
+            }
+            else
+            {
+                // Along the rim of the top, on each side where the rock drops.
+                float own = tileHeight(tile);
+                if (own < -1e3) return vec3(0.0); // off the map
+                vec2 local = p.xz - tile * 2.0;
+                light = 0.0;
+                vec4 edges = vec4(local.x, 2.0 - local.x, local.y, 2.0 - local.y);
+                vec2 sides[4] = vec2[4](vec2(-1.0, 0.0), vec2(1.0, 0.0), vec2(0.0, -1.0), vec2(0.0, 1.0));
+                for (int k = 0; k < 4; k++)
+                {
+                    if (edges[k] > 0.8) continue;
+                    float below = tileHeight(tile + sides[k]);
+                    if (below < -1e3 || own - below < 0.25) continue;
+                    light = max(light, exp(-edges[k] / 0.1) * 1.3 + exp(-edges[k] / 0.35) * 0.3);
+                }
+                if (light <= 0.0) return vec3(0.0);
+            }
+            float along = dot(p.xz, wall ? vec2(-n.z, n.x) : vec2(0.7, 0.7));
+            float seep = 0.35 + 0.65 * smoothstep(0.3, 0.7, noise2(vec2(along * 1.4, p.y * 2.0 + p.x * 0.3), 13.0));
+            vec3 pink = vec3(1.0, 0.35, 0.75), blue = vec3(0.2, 0.5, 1.0), gold = vec3(1.0, 0.75, 0.25);
+            float hue = noise2(floor(tile / 6.0) * 0.7, 14.0);
+            vec3 tint = hue < 0.4 ? pink : hue < 0.62 ? blue : gold;
+            float pulse = 0.75 + 0.25 * sin(uTime * 0.35 + hash13(vec3(tile, 92.0)) * 30.0);
+            return tint * light * seep * pulse * 1.8 * smoothstep(180.0, 110.0, dist) * mix(0.35, 1.0, uNight);
+        }
 
         // The land is made of tiles: a faint groove along their edges, fading with distance.
         float tileEdges(vec3 p, vec3 n, float dist)
@@ -503,6 +568,7 @@ public static class TerrainShaders
             // Sown ground looks watered: darker and a touch cooler on the tile's top, drying as the grass grows.
             albedo *= mix(vec3(1.0), vec3(0.42, 0.40, 0.48), wetGround(vWorldPos) * step(0.7, n.y));
             vec3 color = litColor(albedo, vWorldPos, n, 0.0) + glitter(vWorldPos, n, sandy, dist) * uMagic;
+            color += rockLight(vWorldPos, n, dist);
             FragColor = finishColor(color, vWorldPos, 1.0);
         }
         """;
@@ -807,6 +873,13 @@ public static class TerrainShaders
         uniform vec2 uScreenSize;
         uniform float uNear;
         uniform float uFar;
+        // Rings on the water round what stands in it (reed clumps, lotus, blocks: x, z, its radius,
+        // a phase), and the path the player has swum or waded, oldest first, up to where they are
+        // now (x, z, when; w 0 for an unused point), see Game.UpdateRipples.
+        const int MaxRipplers = 40, MaxWake = 40;
+        uniform vec4 uRippler[MaxRipplers];
+        uniform int uRipplerCount;
+        uniform vec4 uWakeStamp[MaxWake];
 
         out vec4 FragColor;
 
@@ -847,7 +920,7 @@ public static class TerrainShaders
                 float k = 6.2832 / wavelength;
                 float omega = sqrt(9.81 * k);
                 // Steeper short waves, and those react most to the gusts (long ones only half).
-                float steep = mix(0.07, 0.13, float(i) / float(WaveCount - 1)) * mix(1.0, gust, mix(0.5, 1.0, float(i) / float(WaveCount - 1)));
+                float steep = mix(0.045, 0.085, float(i) / float(WaveCount - 1)) * mix(1.0, gust, mix(0.5, 1.0, float(i) / float(WaveCount - 1)));
                 float theta = dot(dir, p) * k - omega * uTime + h * 40.0;
                 // exp(sin - 1): sharp crests; its slope is steep * cos * exp(sin - 1).
                 float slope = steep * cos(theta) * exp(sin(theta) - 1.0);
@@ -902,6 +975,127 @@ public static class TerrainShaders
             return vec4(normalize(n), rough);
         }
 
+        // The slope the rings on the water add. From every lotus, block and reed stem standing in
+        // the water (a reed clump has RingStems stems scattered over it) rings keep spreading out:
+        // a train of fine waves (~RingWavelength apart) leaving at RingSpeed, gathered in groups
+        // that travel outward too, dying away within a few metres. The waves of neighbouring stems
+        // are summed, so where they meet they cross and interfere. Finer than a few pixels they
+        // fade out (`footprint`: metres per pixel), as they would only shimmer.
+        const float RingSpeed = 0.35, RingWavelength = 0.26, RingReach = 3.5;
+        const int RingStems = 3;
+        vec2 ripples(vec2 p, float footprint)
+        {
+            float visible = smoothstep(3.0, 6.0, RingWavelength / max(footprint, 1e-4));
+            if (visible <= 0.0) return vec2(0.0);
+            const float k = 6.2832 / RingWavelength, kGroup = 6.2832 / 1.3;
+            vec2 sum = vec2(0.0);
+            for (int i = 0; i < MaxRipplers; i++)
+            {
+                if (i >= uRipplerCount) break;
+                vec4 s = uRippler[i];
+                if (distance(p, s.xy) > RingReach + s.z) continue;
+                bool reeds = s.w < 0.0;
+                float phase = abs(s.w);
+                int stems = reeds ? RingStems : 1;
+                for (int j = 0; j < RingStems; j++)
+                {
+                    if (j >= stems) break;
+                    // A stem somewhere in the clump (or the lotus or block itself, at its centre).
+                    float h = fract(phase * 7.13 + float(j) * 0.618);
+                    vec2 stem = s.xy + (reeds ? vec2(cos(h * 6.2832), sin(h * 6.2832)) * s.z * (0.3 + 0.6 * fract(h * 13.7)) : vec2(0.0));
+                    float start = reeds ? 0.03 : s.z;
+                    vec2 off = p - stem;
+                    float d = length(off);
+                    float x = d - start;
+                    if (x < 0.0 || x > RingReach) continue;
+                    float own = phase * 3.7 + float(j) * 2.1;
+                    float wave = sin(k * (x - uTime * RingSpeed) + own);
+                    float groups = 0.5 + 0.5 * sin(kGroup * (x - uTime * RingSpeed * 0.8) + own * 1.3);
+                    float envelope = exp(-x * 0.9) / sqrt(1.0 + x * 3.0) * smoothstep(0.0, 0.06, x);
+                    sum += off / max(d, 1e-3) * wave * groups * envelope * (reeds ? 0.22 : 0.3);
+                }
+            }
+            return sum * visible;
+        }
+
+        // The player's wake, along the path they swam or waded (uWakeStamp). How far a point is
+        // from the path, and how long ago the player passed there, are blended over the nearby
+        // segments (a soft minimum), so the wake bends smoothly round the turns instead of
+        // breaking into straight pieces with corners. Behind the player its waves fan out: crests
+        // slanting back from the path (a feathered V), spreading to WakeSpread m/s, broken here
+        // and there, dying away over WakeLife seconds. Returns the slope.
+        const float WakeLife = 6.0, WakeSpread = 0.45, WakeBlend = 0.35;
+        vec2 wake(vec2 p)
+        {
+            float weights = 0.0, ageSum = 0.0;
+            vec2 awaySum = vec2(0.0);
+            for (int i = 0; i < MaxWake - 1; i++)
+            {
+                vec4 a = uWakeStamp[i], b = uWakeStamp[i + 1];
+                if (a.w <= 0.0 || b.w <= 0.0) continue;
+                vec2 ab = b.xy - a.xy;
+                float len2 = dot(ab, ab);
+                if (len2 > 4.0) continue; // a jump, not a path
+                float t = len2 > 1e-6 ? clamp(dot(p - a.xy, ab) / len2, 0.0, 1.0) : 0.0;
+                vec2 off = p - (a.xy + ab * t);
+                float d = length(off);
+                if (d > 5.0) continue;
+                float w = exp(-d / WakeBlend);
+                weights += w;
+                ageSum += w * (uTime - mix(a.z, b.z, t));
+                awaySum += w * off / max(d, 1e-3);
+            }
+            if (weights < 1e-6) return vec2(0.0);
+            float dist = -WakeBlend * log(weights);
+            float age = ageSum / weights;
+            if (age > WakeLife || dist > 4.0) return vec2(0.0);
+            vec2 away = awaySum / max(length(awaySum), 1e-4);
+            float life = 1.0 - age / WakeLife;
+            // The front of the spreading wake, and behind it (toward the path) the feathered crests.
+            float front = 0.2 + age * WakeSpread;
+            float inside = smoothstep(0.0, 0.25, dist) * smoothstep(front + 0.25, front - 0.15, dist);
+            float crests = sin(dist * 22.0 - age * 7.0);
+            float edge = exp(-(dist - front) * (dist - front) * 30.0) * sin((dist - front) * 26.0);
+            float broken = 0.4 + 1.2 * texture(uCloudNoise, vec3(p * 0.5, 0.61)).r;
+            return away * (crests * inside * 0.6 + edge) * life * life * broken * 0.4;
+        }
+
+        // The primordial soup: broad patches of light in the water, pink, indigo and red, that
+        // slowly flow, swirl, stretch, merge and part (domain-warped noise, its warp drifting),
+        // grainy like glowing plankton, brighter at night.
+        vec3 soupPalette(float hue)
+        {
+            const vec3 hues[6] = vec3[6](vec3(1.0, 0.3, 0.8), vec3(1.0, 0.15, 0.25), vec3(1.0, 0.65, 0.15),
+                                         vec3(0.15, 0.9, 1.0), vec3(0.3, 0.25, 1.0), vec3(0.75, 0.25, 1.0));
+            float x = hue * 6.0;
+            int i = int(floor(x));
+            float f = smoothstep(0.0, 1.0, x - floor(x));
+            return mix(hues[i % 6], hues[(i + 1) % 6], f);
+        }
+
+        vec3 soup(vec2 p)
+        {
+            // (Read from the noise's blurred mip levels: broad soft masses, no fine marbling.)
+            vec2 q = p * 0.009;
+            vec2 warp = vec2(textureLod(uCloudNoise, vec3(q * 0.8 + vec2(uTime * 0.004, 0.0), 0.13), 3.0).r,
+                             textureLod(uCloudNoise, vec3(q * 0.8 + vec2(0.0, -uTime * 0.0035), 0.47), 3.0).r) - 0.5;
+            vec2 flow = q + warp * 2.4 + vec2(uTime * 0.0025, -uTime * 0.0018);
+            float body = textureLod(uCloudNoise, vec3(flow, 0.71), 2.5).r * 0.8 + textureLod(uCloudNoise, vec3(flow * 2.3 - warp, 0.29), 2.0).r * 0.2;
+            float patches = smoothstep(0.44, 0.6, body);
+            if (patches <= 0.0) return vec3(0.0);
+            // Colour: its own slow warped noise, run round a ring of vivid hues (pink, red, gold,
+            // cyan, indigo, violet), drifting, so every patch has its own and they blend where they
+            // meet. (The blurred noise varies little: stretched so the whole ring comes out.)
+            float hue = textureLod(uCloudNoise, vec3(flow * 0.7 + warp * 0.8 + 3.1, 0.88), 2.5).r;
+            hue = fract(hue * 4.0 + uTime * 0.004);
+            vec3 tint = soupPalette(hue);
+            float grain = 0.5 + 1.0 * texture(uCloudNoise, vec3(p * 0.6 + warp * 2.0, 0.55 + uTime * 0.002)).r;
+            // Soft and even over the patches; the strong light only in narrow streaks winding
+            // through them (where the noise crosses a level), never in whole bright areas.
+            float streak = exp(-(body - 0.62) * (body - 0.62) / (0.012 * 0.012)) * smoothstep(0.44, 0.52, body);
+            return tint * (patches * 0.55 * grain + streak * 1.4);
+        }
+
         void main()
         {
             vec2 uv = gl_FragCoord.xy / uScreenSize;
@@ -911,7 +1105,11 @@ public static class TerrainShaders
             // Rain rings, computed once for both the ripples and their glow.
             vec3 rings = uRain > 0.01 && dist < 60.0 ? rainRings(vWorldPos.xz) : vec3(0.0);
             vec4 surfaceNormal = waterNormal(vWorldPos.xz, dist, rings);
-            vec3 n = surfaceNormal.xyz;
+            // The rings (near only) bend the surface fully, also in the night mirror below.
+            vec2 fwRipple = fwidth(vWorldPos.xz);
+            vec2 rip = dist < 60.0 && uUnderwater < 0.5 ? (ripples(vWorldPos.xz, max(fwRipple.x, fwRipple.y)) + wake(vWorldPos.xz)) * smoothstep(60.0, 30.0, dist) : vec2(0.0);
+            vec3 waves = surfaceNormal.xyz;
+            vec3 n = normalize(waves - vec3(rip.x, 0.0, rip.y));
             float rough = surfaceNormal.w;
 
             // How much water the view ray crosses before hitting the bottom, and how deep it is there.
@@ -925,17 +1123,39 @@ public static class TerrainShaders
             if (viewDepth(texture(uUnderDepth, bentUv).r) < surface) bentUv = uv;
             vec3 under = texture(uUnderColor, bentUv).rgb;
             vec3 deep = vec3(0.03, 0.015, 0.1) + uAmbient * 0.12;
-            vec3 refracted = mix(under, deep, 1.0 - exp(-thickness * 0.22));
+            // (Clear enough that the floor shows through the mirror.)
+            vec3 refracted = mix(under, deep, 1.0 - exp(-thickness * 0.14));
 
-            // Reflection of the whole sky, galaxy and stars included.
-            vec3 r = reflect(rd, n);
+            // Reflection of the whole sky, galaxy and stars included. At night (mirror) the water is
+            // a mirror of the sky: the galaxy, the stars and the moon are seen in it, whole. The
+            // reflection then follows the waves only a 25th as much (they barely ripple the image
+            // instead of breaking it up), and at least MirrorReflectance of the sky is reflected
+            // even looking straight down (dark water, really: the bottom is unlit at night). By day
+            // the water is a softer mirror (DayReflectance, the waves followed 30%), so the sky is
+            // seen in it and the rings round things and the wake show by day too.
+            const float MirrorReflectance = 0.8, DayReflectance = 0.35;
+            float mirror = smoothstep(0.2, 0.8, uNight);
+            float follow = mix(0.3, 0.04, mirror);
+            vec3 nr = normalize(vec3(waves.x * follow - rip.x, 1.0, waves.z * follow - rip.y));
+            vec3 r = reflect(rd, nr);
             // Rough water, on average, mirrors the sky a little higher than glassy water would.
-            r.y = max(abs(r.y), rough * 0.12);
+            r.y = max(abs(r.y), rough * 0.12 * (1.0 - mirror));
             r = normalize(r);
             // (and less of it at grazing angles, where the tiny waves' backs face the viewer).
-            float fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(n, -rd), 0.0), 5.0) * (1.0 - 0.35 * rough);
-            // Capped, so the galaxy core or the moon reflected in every ripple do not wash out into white.
-            vec3 color = mix(refracted, min(skyColor(r, true), vec3(1.6)), fresnel);
+            float fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(nr, -rd), 0.0), 5.0) * (1.0 - 0.35 * rough * (1.0 - mirror));
+            float physicalFresnel = fresnel;
+            fresnel = mix(mix(DayReflectance, MirrorReflectance, mirror), 1.0, fresnel);
+            // Capped by day, so the sun-lit sky reflected in every ripple does not wash out into
+            // white; the night mirror keeps the moon and the galaxy's core bright. Shooting stars
+            // are drawn wider in it, or the least ripple would break their hair-thin trail away.
+            gStreakSharpness = 4e4;
+            vec3 color = mix(refracted, min(skyColor(r, true), vec3(mix(1.6, 6.0, mirror))), fresnel);
+            gStreakSharpness = 3e5;
+            // What glows under the water (the crystal outcrops on the floor, their light on it)
+            // shines through the mirror as real water would let it, dimmed by the water it crosses,
+            // so the lake has depths under the mirrored sky.
+            vec3 glowBelow = max(under - vec3(0.45), vec3(0.0)) * exp(-thickness * 0.06);
+            color += glowBelow * (1.0 - physicalFresnel) * mix(0.6, 1.3, mirror);
             if (uUnderwater > 0.5)
             {
                 // Seen from below: the bright, rippled sky through the surface, fading at grazing
@@ -954,15 +1174,20 @@ public static class TerrainShaders
             // themselves, as if the swell stirred the bioluminescence.
             float crest = clamp(vSwell / 0.12, 0.0, 1.0);
             float against = pow(clamp(dot(normalize(rd.xz + 1e-5), normalize(uLightDir.xz + 1e-5)), 0.0, 1.0), 3.0);
-            color += vec3(0.25, 0.8, 0.95) * uLightColor * crest * crest * against * (1.0 - fresnel) * 0.6;
+            // (Faint under the moon: it lit the night lake in bands.)
+            color += vec3(0.25, 0.8, 0.95) * uLightColor * crest * crest * against * (1.0 - fresnel) * 0.6 * mix(1.0, 0.3, uNight);
 
             // A glittering path toward the sun or the moon.
-            float toLight = max(dot(r, uLightDir), 0.0);
+            // (By day from the full waves, so the sun still glitters in a broad path; at night from
+            // the mirror's calmer surface.)
+            float toLight = max(dot(reflect(rd, normalize(mix(n, nr, mirror))), uLightDir), 0.0);
             // (Softer under the moon, whose glints would otherwise flood the rippled water.)
             // On rough water the sharp glints widen into a broad, dimmer sheen.
             float sharpness = mix(400.0, 60.0, rough);
-            color += uLightColor * (pow(toLight, sharpness) * mix(8.0, 2.0, uNight) * mix(1.0, 0.35, rough)
-                                  + pow(toLight, mix(40.0, 12.0, rough)) * mix(0.35, 0.12, uNight));
+            // (Not in the night mirror: the moon is mirrored whole, and its glint was a bright dot
+            // in the middle of it.)
+            color += uLightColor * (pow(toLight, sharpness) * mix(8.0, 2.0, uNight) * mix(1.0, 0.35, rough) * (1.0 - mirror)
+                                  + pow(toLight, mix(40.0, 12.0, rough)) * mix(0.35, 0.12, uNight) * mix(1.0, 0.4, mirror));
 
             // The real depth of the water here (from the sea floor map; past its edge, the depth the
             // view ray measures).
@@ -972,21 +1197,22 @@ public static class TerrainShaders
             float waterDepth = mix(depth, max(seaDepth, 0.0), inMap);
 
             // Bioluminescence, meant to be watched for a long time: soft clouds of glowing plankton,
-            // sparse, drifting very slowly, thickest in the shallows and faint out in the open
-            // water. They breathe in slow waves of light rolling toward the shore (~14 s), and the
+            // sparse, drifting very slowly, out in the open water, away from the shores (offshore:
+            // by the real depth), and never right in front of the viewer, so someone standing on
+            // the shore to watch the lake is not dazzled. They breathe in slow waves of light rolling toward the shore (~14 s), and the
             // swell carries the light, brighter on its crests. Within the clouds, faint filaments.
             float cloudA = texture(uCloudNoise, vec3(vWorldPos.xz * 0.015 + vec2(uTime * 0.0025, uTime * 0.0012), 0.9)).r;
             float cloudB = texture(uCloudNoise, vec3(vWorldPos.xz * 0.05 - vec2(uTime * 0.004, -uTime * 0.003), 0.62)).r;
             float plankton = smoothstep(0.45, 0.8, cloudA * 0.65 + cloudB * 0.35);
-            float shallow = mix(0.12, 1.0, exp(-waterDepth * 0.6));
+            float offshore = smoothstep(1.0, 4.0, waterDepth) * smoothstep(6.0, 18.0, dist);
             float breathe = 0.6 + 0.4 * sin(uTime * 0.45 - waterDepth * 1.2 + cloudA * 3.0);
             float carried = 0.7 + 0.6 * crest;
             float filament = pow(max(1.0 - abs(cloudB - 0.5) * 2.0, 0.0), 14.0) * plankton;
             vec3 planktonColor = mix(vec3(0.2, 0.75, 1.0), vec3(0.45, 0.5, 1.0), smoothstep(0.3, 0.7, cloudB));
-            vec3 glow = planktonColor * (plankton * 0.55 + filament * 0.3) * breathe * carried * shallow;
+            vec3 glow = planktonColor * (plankton * 0.55 + filament * 0.3) * breathe * carried * offshore;
             // A soft line of light where the water laps the sand, slowly coming and going.
             float shore = exp(-waterDepth * 8.0) * (0.65 + 0.35 * sin(uTime * 0.7 + vWorldPos.x * 0.15 + vWorldPos.z * 0.1));
-            glow += vec3(0.25, 0.65, 1.0) * shore * 0.18;
+            glow += vec3(0.25, 0.65, 1.0) * shore * 0.07;
             glow += vec3(0.3, 0.85, 1.0) * crest * crest * crest * 0.25 * uNight;
             // Now and then a sparkle, like a star fallen in the water, slowly waxing and waning.
             vec2 cell = floor(vWorldPos.xz * 3.0);
@@ -1002,8 +1228,10 @@ public static class TerrainShaders
             // smooth sea floor (so they follow every coastline in soft curves, not the layered tiles),
             // rearing up as the water gets shallow and breaking into glowing pink-white foam that
             // trails behind each crest, a cyan glow on each rising face. Each wave is stronger or
-            // weaker along its length, and broken up where it is weak.
-            if (inMap > 0.0 && seaDepth < 7.0 && uUnderwater < 0.5)
+            // weaker along its length, and broken up where it is weak. Off for now (BreakingWaves),
+            // on trial: their lines moving over the surface broke up the mirrored sky.
+            const bool BreakingWaves = false;
+            if (BreakingWaves && inMap > 0.0 && seaDepth < 7.0 && uUnderwater < 0.5)
             {
                 float depth = max(seaDepth, 0.0);
                 float wobble = texture(uCloudNoise, vec3(vWorldPos.xz * 0.012, 0.15)).r;
@@ -1027,7 +1255,19 @@ public static class TerrainShaders
                 glow += foam * surf * mix(2.4, 0.9, uNight) + vec3(0.25, 0.7, 1.0) * face * mix(0.8, 0.3, uNight);
             }
 
-            color += glow * mix(0.45, 1.0, uNight) * mix(0.15, 1.0, uMagic);
+            // (At night, softer: the mirrored sky is the show.)
+            color += glow * mix(0.45, 1.0, uNight) * mix(0.15, 1.0, uMagic) * mix(1.0, 0.5, mirror);
+            // The primordial soup of light, brightest at night, fading far away (where it would
+            // only be a haze).
+            if (uUnderwater < 0.5 && dist < 400.0)
+            {
+                // Never brighter than SoupCap (its hue kept), so it cannot dazzle.
+                const float SoupCap = 0.9;
+                // (Away from the shores and from the viewer, like the plankton: offshore.)
+                vec3 light = soup(vWorldPos.xz) * mix(0.4, 1.2, uNight) * mix(0.15, 1.0, uMagic) * smoothstep(400.0, 200.0, dist) * offshore;
+                float peak = max(max(light.r, light.g), light.b);
+                color += light * min(1.0, SoupCap / max(peak, 1e-4));
+            }
 
             FragColor = finishColor(min(color, vec3(8.0)), vWorldPos, 1.0);
         }
