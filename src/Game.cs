@@ -1102,31 +1102,37 @@ public sealed class Game : IDisposable
         _gl.Disable(EnableCap.Blend);
     }
 
-    // Starting: the black, and in it the title (TitleCard) turning white over TitleInSeconds. Once
-    // the land, the grass and the trees around are built (LoadingMaxSeconds at the latest), and
-    // not before WhiteSeconds, the white empties out of the letters over OpenSeconds, the world
-    // showing through them, and without a pause (the last FadeOverlap of it) the black goes on
-    // emptying, more slowly, over FadeInSeconds. So nothing is ever seen being built.
-    private const float TitleStart = 0.3f, TitleInSeconds = 0.6f, WhiteSeconds = 2.2f, OpenSeconds = 0.9f, FadeOverlap = 0.2f;
-    private const float FadeInSeconds = 2.4f, LoadingMaxSeconds = 12f;
+    // Starting: the black, and in it the title (TitleCard) turning white over TitleInSeconds, with
+    // a loading bar under it that creeps on by itself (never past 90%) while the land, the grass
+    // and the trees around are built (LoadingMaxSeconds at the latest), and then fills up over
+    // BarFillSeconds. Then, and not before WhiteSeconds, the white empties out of the letters (the
+    // bar fading with it) over OpenSeconds, the world showing through them; the hollow title stays
+    // HoldSeconds, and the black empties out over FadeInSeconds. So nothing is ever seen being built.
+    private const float TitleStart = 0.3f, TitleInSeconds = 0.6f, WhiteSeconds = 2.2f, OpenSeconds = 0.9f, HoldSeconds = 2.5f;
+    private const float FadeInSeconds = 2.4f, LoadingMaxSeconds = 12f, BarFillSeconds = 0.5f, BarPace = 1.8f;
     private double _loadedAt = double.NaN;
 
     // When the title starts opening (never, until the world around is built).
-    private double OpenFrom => double.IsNaN(_loadedAt) ? double.PositiveInfinity : Math.Max(_loadedAt, WhiteSeconds);
+    private double OpenFrom => double.IsNaN(_loadedAt) ? double.PositiveInfinity : Math.Max(_loadedAt + BarFillSeconds, WhiteSeconds);
+
+    // When the black starts fading away.
+    private double FadeFrom => OpenFrom + OpenSeconds + HoldSeconds;
 
     /// <summary>Whether the opening (title and fade from black) is over: until then the game answers no input at all.</summary>
-    private bool IntroOver => _time >= OpenFrom + OpenSeconds - FadeOverlap + FadeInSeconds;
+    private bool IntroOver => _time >= FadeFrom + FadeInSeconds;
 
     private void DrawLoadingFade(int width, int height)
     {
         static float Smooth(double t) { float x = (float)Math.Clamp(t, 0.0, 1.0); return x * x * (3f - 2f * x); }
-        double openFrom = OpenFrom;
-        float fade = Smooth((_time - (openFrom + OpenSeconds - FadeOverlap)) / FadeInSeconds);
+        float fade = Smooth((_time - FadeFrom) / FadeInSeconds);
         if (fade >= 1f) return;
         float white = Smooth((_time - TitleStart) / TitleInSeconds);
-        float open = Smooth((_time - openFrom) / OpenSeconds);
+        float open = Smooth((_time - OpenFrom) / OpenSeconds);
+        // The loading bar is a show: it creeps toward 90% while the world is built, then fills up.
+        static float Creep(double t) => 0.9f * (1f - MathF.Exp(-(float)t / BarPace));
+        float progress = double.IsNaN(_loadedAt) ? Creep(_time) : float.Lerp(Creep(_loadedAt), 1f, Smooth((_time - _loadedAt) / BarFillSeconds));
         _hud.Begin(width, height);
-        TitleCard.Draw(_hud, width, height, 1f - fade, new Vector4(white, white, white, 1f - open));
+        TitleCard.Draw(_hud, width, height, 1f - fade, new Vector4(white, white, white, 1f - open), progress, white * (1f - open));
         _hud.End();
     }
 

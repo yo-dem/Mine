@@ -78,10 +78,11 @@ public static class TitleCard
 
     /// <summary>
     /// Draws the black (<paramref name="black"/> its opacity) with the title in it, its letters of
-    /// colour <paramref name="letters"/> (alpha 0: holes the world shows through). Call between
-    /// Hud.Begin and Hud.End.
+    /// colour <paramref name="letters"/> (alpha 0: holes the world shows through), and under it a
+    /// thin loading bar filled to <paramref name="progress"/> (0..1), as opaque as <paramref name="bar"/>.
+    /// Call between Hud.Begin and Hud.End.
     /// </summary>
-    public static void Draw(Hud hud, int width, int height, float black, Vector4 letters)
+    public static void Draw(Hud hud, int width, int height, float black, Vector4 letters, float progress, float bar)
     {
         var dark = new Vector4(0f, 0f, 0f, black);
         float cap = MathF.Min(width * 0.94f / WordWidth, height * 0.6f);
@@ -118,6 +119,15 @@ public static class TitleCard
                 if (color.W > 0.002f && to > from) hud.Rect(from, py, to - from, 1, color);
                 from = to;
             }
+        }
+
+        // The loading bar: a faint track half the word wide under it, and its filled part.
+        if (bar > 0.002f)
+        {
+            float barWidth = WordWidth * cap * 0.5f, barHeight = MathF.Max(2f, MathF.Round(cap * 0.03f));
+            float barX = MathF.Round((width - barWidth) / 2), barY = MathF.Round(top + cap * 1.22f);
+            hud.Rect(barX, barY, barWidth, barHeight, new Vector4(1f, 1f, 1f, 0.18f * bar));
+            hud.Rect(barX, barY, MathF.Round(barWidth * Math.Clamp(progress, 0f, 1f)), barHeight, new Vector4(1f, 1f, 1f, bar));
         }
     }
 
