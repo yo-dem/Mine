@@ -32,14 +32,16 @@ public struct Creature
 /// </summary>
 public sealed class Creatures
 {
-    private const int ButterflyCount = 90, DayButterflies = 30, FishCount = 28;
+    private const int ButterflyCount = 45, DayButterflies = 15, FishCount = 22;
     private const int FlockCount = 7, NightFlocks = 1, MaxBirdsPerFlock = 12;
     private const float ButterflyRange = 32f, FishRange = 30f;
-    // Fish are born in open water: deep, and with deep water all around (FishSpawnClearance metres
-    // each way). Most keep to water at least FishMinDepth deep; only one in BraveFishEvery ventures
-    // into the shallows, down to BraveFishMinDepth.
-    private const float FishSpawnDepth = 5f, FishSpawnClearance = 12f, FishMinDepth = 3f, BraveFishMinDepth = 1f;
-    private const int BraveFishEvery = 10;
+    // Fish are born in water at least FishSpawnDepth deep, with water FishMinDepth deep all around
+    // (FishSpawnClearance metres each way), so plenty of them swim near the shores, in sight of a
+    // player standing there. Most keep to water at least FishMinDepth deep; one in BraveFishEvery
+    // ventures into the shallows, down to BraveFishMinDepth. (They used to keep 3 m deep, far
+    // from the shore: from it hardly any were seen.)
+    private const float FishSpawnDepth = 3f, FishSpawnClearance = 7f, FishMinDepth = 1.6f, BraveFishMinDepth = 0.8f;
+    private const int BraveFishEvery = 6;
     private const float FlockAwayDistance = 700f; // how far away a flock that has left the sky wheels
 
     private readonly TerrainField _terrain;
@@ -59,9 +61,17 @@ public sealed class Creatures
     private readonly Creature[] _fish = new Creature[FishCount];
     private readonly float[] _fishMinDepth = new float[FishCount];
 
+    // How many fish a school has: alone 30%, a pair 35%, three 20%, four 15%.
+    private int SchoolSize()
+    {
+        float roll = _random.NextSingle();
+        return roll < 0.3f ? 1 : roll < 0.65f ? 2 : roll < 0.85f ? 3 : 4;
+    }
+
     // Deep water schools: glowing fish swimming well below the surface, to be seen when diving.
-    // Each school keeps together around a centre that roams the deep water near the player.
-    private const int DeepSchools = 3, MaxPerSchool = 6;
+    // Each school keeps together around a centre that roams the deep water near the player. Schools
+    // are small: a lone fish, a pair, three or four (SchoolSize), never a crowd.
+    private const int DeepSchools = 4, MaxPerSchool = 4;
     private const float DeepRange = 38f, DeepSpawnDepth = 6f, DeepMinDepth = 4f;
     // Schools are born and roam only where the water stays deep all around (far from the shores),
     // and keep this far apart from each other.
@@ -370,7 +380,7 @@ public sealed class Creatures
                 school.Scale = 1.3f + 1.4f * _random.NextSingle();
                 school.Speed = 0.7f + 0.6f * _random.NextSingle();
                 school.Spread = 1f + 0.3f * _random.NextSingle();
-                school.Count = 3 + _random.Next(MaxPerSchool - 2);
+                school.Count = SchoolSize();
                 school.Position = new Vector3(p.X, float.Lerp(p.Y + 1.2f, water - 1.5f, school.Level), p.Z);
                 school.Velocity = school.Heading * school.Speed;
                 for (int j = 0; j < MaxPerSchool; j++)
