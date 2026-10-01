@@ -78,10 +78,11 @@ public static class TitleCard
     /// <summary>
     /// Draws the black (<paramref name="black"/> its opacity) with the title in it, its letters of
     /// colour <paramref name="letters"/>, and under it a thin loading bar filled to
-    /// <paramref name="progress"/> (0..1), as opaque as <paramref name="bar"/>. Call between
-    /// Hud.Begin and Hud.End.
+    /// <paramref name="progress"/> (0..1), as opaque as <paramref name="bar"/>, and round the
+    /// letters a soft glow as strong as <paramref name="halo"/>, moving round them with
+    /// <paramref name="time"/>. Call between Hud.Begin and Hud.End.
     /// </summary>
-    public static void Draw(Hud hud, int width, int height, float black, Vector4 letters, float progress, float bar)
+    public static void Draw(Hud hud, int width, int height, float black, Vector4 letters, float progress, float bar, float halo = 0f, float time = 0f)
     {
         var dark = new Vector4(0f, 0f, 0f, black);
         float cap = MathF.Min(width * 0.94f / WordWidth, height * 0.6f);
@@ -120,6 +121,26 @@ public static class TitleCard
             }
         }
 
+        if (halo > 0.002f)
+        {
+            // The glow: the letters drawn again a little brighter than white (HDR), pink-tinged,
+            // into the scene before the bloom (Game.DrawLoadingFade), which blurs their light into
+            // a soft glow round their exact shapes; a brighter band slowly sweeps along the word
+            // and back, so the glow moves round it, and the whole breathes. (Faint copies of the
+            // letters offset round them were tried first: drawn after the bloom they were layered
+            // steps, blurred by it they filled the letters' slits.)
+            float breathe = 0.85f + 0.15f * MathF.Sin(time * 0.8f);
+            // (Starting at the left and going back and forth over the whole word: it used to start on the right.)
+            float sweep = 0.5f - 0.6f * MathF.Cos(time * 0.9f);
+            DrawLetters(hud, left, top, cap, y0, y1, height, 1, letters, x =>
+            {
+                float along = (x - left) / (WordWidth * cap);
+                float band = MathF.Exp(-(along - sweep) * (along - sweep) * 14f);
+                float glow = (1.9f + 0.3f * band) * breathe * halo + (1f - halo);
+                return new Vector4(glow, glow * 0.72f, glow, letters.W);
+            });
+        }
+
         // The loading bar: a faint track half the word wide under it, and its filled part.
         if (bar > 0.002f)
         {
@@ -127,6 +148,28 @@ public static class TitleCard
             float barX = MathF.Round((width - barWidth) / 2), barY = MathF.Round(top + cap * 1.22f);
             hud.Rect(barX, barY, barWidth, barHeight, new Vector4(1f, 1f, 1f, 0.18f * bar));
             hud.Rect(barX, barY, MathF.Round(barWidth * Math.Clamp(progress, 0f, 1f)), barHeight, new Vector4(1f, 1f, 1f, bar));
+        }
+    }
+
+    // Only the letters, at (left, top), rows `step` pixels tall, in `color` or, if given, the
+    // colour colorAt gives for the middle of each run.
+    private static void DrawLetters(Hud hud, float left, float top, float cap, int y0, int y1, int height, int step, Vector4 color, Func<float, Vector4>? colorAt = null)
+    {
+        if (color.W <= 0.002f) return;
+        for (int py = Math.Max(0, y0); py < Math.Min(height, y1); py += step)
+        {
+            float y = (py + step * 0.5f - top) / cap;
+            Spans.Clear();
+            for (int k = 0; k < LetterX.Length; k++)
+            {
+                int before = Spans.Count;
+                LetterSpans(k, y, Spans);
+                for (int i = before; i < Spans.Count; i++)
+                {
+                    float a = MathF.Round(left + (LetterX[k] + Spans[i].A) * cap), b = MathF.Round(left + (LetterX[k] + Spans[i].B) * cap);
+                    if (b > a) hud.Rect(a, py, b - a, step, colorAt?.Invoke((a + b) / 2) ?? color);
+                }
+            }
         }
     }
 

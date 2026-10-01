@@ -810,6 +810,21 @@ public sealed class Game : IDisposable
         _profiler.BeginFrame();
         // The terrain's slow materials around the camera (redrawn only after moving far).
         _groundMap.Update(eye, shader => shader.Set("uColorVariety", WorldPreset.Current.ColorVariety));
+
+        // While the opening's black covers the whole screen the world is not drawn at all: it
+        // could not be seen, and drawing it while it is being built took the frames down to a
+        // few a second, so the title's glow stuttered. Just the title.
+        if (OpeningOpaque)
+        {
+            _post.BeginScene();
+            _gl.ClearColor(0f, 0f, 0f, 1f);
+            _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+            DrawLoadingFade(_post.SceneWidth, _post.SceneHeight);
+            _post.Finish(0f, 0f, 1f);
+            _profiler.EndFrame();
+            SaveScreenshot(size.X, size.Y);
+            return;
+        }
         _profiler.Section("ombre");
         var atmosphere = _dayCycle.Sample();
         float time = (float)_time;
@@ -988,17 +1003,28 @@ public sealed class Game : IDisposable
 
         DrawHeldItem(view, time);
 
-        _profiler.Section("post");
-        if (On("post")) _post.Finish(atmosphere.Night, MathF.Min(MathF.Max(_weather.Snow, _weather.SnowCover * 0.6f) + 0.2f * _weather.Blizzard, 1f));
+        // The opening's title goes into the scene, so the bloom gives its letters a real glow.
+        DrawLoadingFade(_post.SceneWidth, _post.SceneHeight);
 
-        _crosshair.Draw();
-        DrawHud(size.X, size.Y);
-        DrawLoadingFade(size.X, size.Y);
+        _profiler.Section("post");
+        if (On("post")) _post.Finish(atmosphere.Night, MathF.Min(MathF.Max(_weather.Snow, _weather.SnowCover * 0.6f) + 0.2f * _weather.Blizzard, 1f), _blackShown);
+
+        // (Not over the opening's black: the interface comes once it is over.)
+        if (IntroOver)
+        {
+            _crosshair.Draw();
+            DrawHud(size.X, size.Y);
+        }
         _profiler.EndFrame();
 
+        SaveScreenshot(size.X, size.Y);
+    }
+
+    private void SaveScreenshot(int width, int height)
+    {
         if (Screenshot.Path is { } shot && _time > Screenshot.At)
         {
-            Screenshot.Save(_gl, size.X, size.Y, shot);
+            Screenshot.Save(_gl, width, height, shot);
             _window.Close();
         }
     }
@@ -1111,13 +1137,18 @@ public sealed class Game : IDisposable
     // a loading bar under it that creeps on by itself (never past 90%) while the land, the grass
     // and the trees around are built (LoadingMaxSeconds at the latest), and then fills up over
     // BarFillSeconds. Then, and not before WhiteSeconds, the whole screen, black, title and bar
-    // together, fades out over FadeOutSeconds and the world is left. So nothing is ever seen being built.
+    // together, fades out over FadeOutSeconds and the world is left. So nothing is ever seen being
+    // built. It is drawn into the scene before the post-processing, so its letters glow (bloom).
     private const float TitleStart = 0.3f, TitleInSeconds = 0.6f, WhiteSeconds = 2.2f, FadeOutSeconds = 2.4f;
     private const float LoadingMaxSeconds = 12f, BarFillSeconds = 0.5f, BarPace = 1.8f;
     private double _loadedAt = double.NaN;
+    private float _blackShown; // how opaque the opening's black is this frame (the grade keeps it black)
 
     // When the fade out starts (never, until the world around is built).
     private double FadeFrom => double.IsNaN(_loadedAt) ? double.PositiveInfinity : Math.Max(_loadedAt + BarFillSeconds, WhiteSeconds);
+
+    /// <summary>Whether the opening's black still covers the whole screen (the world is not drawn then).</summary>
+    private bool OpeningOpaque => _time < FadeFrom;
 
     /// <summary>Whether the opening (title and fade from black) is over: until then the game answers no input at all.</summary>
     private bool IntroOver => _time >= FadeFrom + FadeOutSeconds;
@@ -1125,14 +1156,18 @@ public sealed class Game : IDisposable
     private void DrawLoadingFade(int width, int height)
     {
         static float Smooth(double t) { float x = (float)Math.Clamp(t, 0.0, 1.0); return x * x * (3f - 2f * x); }
+        _blackShown = 0f;
         if (IntroOver) return;
         float shown = 1f - Smooth((_time - FadeFrom) / FadeOutSeconds);
+        _blackShown = shown;
         float white = Smooth((_time - TitleStart) / TitleInSeconds);
         // The loading bar is a show: it creeps toward 90% while the world is built, then fills up.
         static float Creep(double t) => 0.9f * (1f - MathF.Exp(-(float)t / BarPace));
         float progress = double.IsNaN(_loadedAt) ? Creep(_time) : float.Lerp(Creep(_loadedAt), 1f, Smooth((_time - _loadedAt) / BarFillSeconds));
+        // (The letters stay white, under the bloom's threshold, so they stay crisp; the glow
+        // round them is drawn brighter, for the bloom to blur.)
         _hud.Begin(width, height);
-        TitleCard.Draw(_hud, width, height, shown, new Vector4(white, white, white, shown), progress, white * shown);
+        TitleCard.Draw(_hud, width, height, shown, new Vector4(white, white, white, shown), progress, white * shown, white * shown, (float)_time);
         _hud.End();
     }
 

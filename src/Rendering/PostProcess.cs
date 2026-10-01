@@ -113,6 +113,7 @@ public sealed unsafe class PostProcess : IDisposable
         uniform float uExposure;
         uniform float uNight;
         uniform float uCold;
+        uniform float uPureBlack; // 1 while the opening's black covers the screen: no tint lifts it
         uniform float uSaturation; // 1.25 = the usual rich grade (WorldPreset.Saturation) // snow: 0 = none .. 1 = a cold, pale, blue-grey world
         out vec4 FragColor;
 
@@ -136,7 +137,7 @@ public sealed unsafe class PostProcess : IDisposable
             float luma = dot(color, vec3(0.3, 0.59, 0.11));
             color = mix(vec3(luma), color, uSaturation);
             vec3 shadowTint = mix(vec3(0.05, 0.02, 0.10), vec3(0.06, 0.02, 0.13), uNight);
-            color += shadowTint * (1.0 - smoothstep(0.0, 0.45, luma));
+            color += shadowTint * (1.0 - smoothstep(0.0, 0.45, luma)) * (1.0 - uPureBlack);
             color *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), smoothstep(0.5, 1.0, luma));
             // Cold: colours drained toward a pale blue-grey.
             float coldLuma = dot(color, vec3(0.3, 0.59, 0.11));
@@ -247,7 +248,8 @@ public sealed unsafe class PostProcess : IDisposable
     /// Runs bloom and grading into the default framebuffer.
     /// </summary>
     /// <param name="cold">0..1: how cold the snow makes the world look.</param>
-    public void Finish(float night, float cold = 0f)
+    /// <param name="pureBlack">0..1: how much the shadows' tint is left out (the opening's black stays black).</param>
+    public void Finish(float night, float cold = 0f, float pureBlack = 0f)
     {
         _gl.Disable(EnableCap.DepthTest);
         _gl.DepthMask(false);
@@ -299,6 +301,7 @@ public sealed unsafe class PostProcess : IDisposable
         _composite.Set("uNight", night);
         _composite.Set("uSaturation", Mine.World.WorldPreset.Current.Saturation);
         _composite.Set("uCold", cold);
+        _composite.Set("uPureBlack", pureBlack);
         _gl.ActiveTexture(TextureUnit.Texture0);
         _gl.BindTexture(TextureTarget.Texture2D, _sceneColor);
         _gl.ActiveTexture(TextureUnit.Texture1);
