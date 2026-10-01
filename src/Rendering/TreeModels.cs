@@ -427,7 +427,7 @@ public static class TreeModels
                 {
                     // Short stems of very different heights, like the tulips'.
                     float r = random.NextSingle();
-                    var top = FlowerStem(mesh, random, 0.08f + 0.22f * r * MathF.Sqrt(r), 0.03f, 0.1f);
+                    var top = FlowerStem(mesh, random, 0.55f + 0.4f * r * MathF.Sqrt(r), 0.06f, 0.15f);
                     Flower(mesh, top, 8, 0.13f + 0.04f * random.NextSingle(), 0.07f, 0.15f, colors[random.Next(colors.Length)], 0f,
                         new Vector3(1.0f, 0.75f, 0.25f), random.NextSingle());
                 }
@@ -445,7 +445,7 @@ public static class TreeModels
                 for (int i = 0; i < (lod >= 1 ? 4 : 7); i++)
                 {
                     float r = random.NextSingle();
-                    var top = FlowerStem(mesh, random, 0.08f + 0.22f * r * MathF.Sqrt(r), 0.03f, 0.1f);
+                    var top = FlowerStem(mesh, random, 0.55f + 0.4f * r * MathF.Sqrt(r), 0.06f, 0.15f);
                     var color = Vector3.Lerp(colors[random.Next(colors.Length)], colors[random.Next(colors.Length)], 0.4f * random.NextSingle())
                                 * (0.85f + 0.3f * random.NextSingle());
                     Flower(mesh, top, 5, 0.11f + 0.06f * random.NextSingle(), 0.1f, 2.2f, color, 0.5f, color * 0.45f, random.NextSingle());
@@ -459,7 +459,7 @@ public static class TreeModels
                 {
                     // Short stems of very different heights, like the daisies' and tulips'.
                     float r = random.NextSingle();
-                    var top = FlowerStem(mesh, random, 0.08f + 0.22f * r * MathF.Sqrt(r), 0.03f, 0.1f);
+                    var top = FlowerStem(mesh, random, 0.55f + 0.4f * r * MathF.Sqrt(r), 0.06f, 0.15f);
                     Flower(mesh, top, 5, 0.1f + 0.04f * random.NextSingle(), 0.05f, 0.3f, colors[random.Next(colors.Length)], 0.85f,
                         new Vector3(1.0f, 1.0f, 0.9f), random.NextSingle());
                 }

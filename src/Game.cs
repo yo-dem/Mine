@@ -457,7 +457,7 @@ public sealed class Game : IDisposable
         float dt = (float)Math.Min(deltaTime, 0.05); // avoid huge steps after a hitch
 
         var move = Vector2.Zero;
-        bool playing = _mouseCaptured;
+        bool playing = _mouseCaptured && IntroOver; // nothing answers the player during the opening
         if (playing)
         {
             if (_keyboard.IsKeyPressed(Key.W)) move.Y += 1;
@@ -674,7 +674,7 @@ public sealed class Game : IDisposable
     /// <summary>Keeps sowing while the right button is held, and plants the seeds that have landed.</summary>
     private void Sow(float dt)
     {
-        bool holding = _mouseCaptured && Held == Resource.Seeds && _input.Mice.Any(m => m.IsButtonPressed(MouseButton.Right));
+        bool holding = _mouseCaptured && IntroOver && Held == Resource.Seeds && _input.Mice.Any(m => m.IsButtonPressed(MouseButton.Right));
         if (!holding) _lastSown = null;
         else if (_time >= _nextSowAt)
         {
@@ -698,7 +698,7 @@ public sealed class Game : IDisposable
     /// </summary>
     private void Gather(float dt)
     {
-        bool holding = _mouseCaptured && (_input.Mice.Any(m => m.IsButtonPressed(MouseButton.Left)) || _time > AutoBreakAt);
+        bool holding = _mouseCaptured && IntroOver && (_input.Mice.Any(m => m.IsButtonPressed(MouseButton.Left)) || _time > AutoBreakAt);
         object? key = _gatherTarget?.Tree ?? _aimed ?? (object?)_aimedBlock?.Block
             ?? (_mowTarget is { } aimedGrass ? new MowKey((int)MathF.Floor(aimedGrass.X), (int)MathF.Floor(aimedGrass.Z)) : null);
         if (!holding || key is null)
@@ -1111,10 +1111,16 @@ public sealed class Game : IDisposable
     private const float FadeInSeconds = 2.4f, LoadingMaxSeconds = 12f;
     private double _loadedAt = double.NaN;
 
+    // When the title starts opening (never, until the world around is built).
+    private double OpenFrom => double.IsNaN(_loadedAt) ? double.PositiveInfinity : Math.Max(_loadedAt, WhiteSeconds);
+
+    /// <summary>Whether the opening (title and fade from black) is over: until then the game answers no input at all.</summary>
+    private bool IntroOver => _time >= OpenFrom + OpenSeconds - FadeOverlap + FadeInSeconds;
+
     private void DrawLoadingFade(int width, int height)
     {
         static float Smooth(double t) { float x = (float)Math.Clamp(t, 0.0, 1.0); return x * x * (3f - 2f * x); }
-        double openFrom = double.IsNaN(_loadedAt) ? double.PositiveInfinity : Math.Max(_loadedAt, WhiteSeconds);
+        double openFrom = OpenFrom;
         float fade = Smooth((_time - (openFrom + OpenSeconds - FadeOverlap)) / FadeInSeconds);
         if (fade >= 1f) return;
         float white = Smooth((_time - TitleStart) / TitleInSeconds);
@@ -1297,6 +1303,7 @@ public sealed class Game : IDisposable
 
     private void OnKeyDown(IKeyboard keyboard, Key key, int scancode)
     {
+        if (!IntroOver) return; // no keys during the opening (not even Esc)
         if (key == Key.Escape)
         {
             // The menu lies over the game, which goes on as if nothing were open.
@@ -1343,7 +1350,8 @@ public sealed class Game : IDisposable
     private void OnMouseMove(IMouse mouse, Vector2 position)
     {
         if (!_mouseCaptured) return;
-        if (_lastMouse is { } last)
+        // During the opening the view stays as it is (the position is still followed, so it does not jump after).
+        if (_lastMouse is { } last && IntroOver)
         {
             var delta = position - last;
             _player.Look(delta.X * MouseSensitivity, -delta.Y * MouseSensitivity);
@@ -1353,6 +1361,7 @@ public sealed class Game : IDisposable
 
     private void OnMouseDown(IMouse mouse, MouseButton button)
     {
+        if (!IntroOver) return;
         if (!_mouseCaptured)
         {
             SetMouseCaptured(true);
@@ -1375,7 +1384,7 @@ public sealed class Game : IDisposable
 
     private void OnScroll(IMouse mouse, ScrollWheel wheel)
     {
-        if (!_mouseCaptured || wheel.Y == 0) return;
+        if (!_mouseCaptured || !IntroOver || wheel.Y == 0) return;
         int sign = Math.Sign(wheel.Y);
         bool newGesture = _time - _lastScrollAt > ScrollGestureGap || sign != _scrollSign;
         _lastScrollAt = _time;
