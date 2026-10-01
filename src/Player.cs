@@ -49,10 +49,14 @@ public sealed class Player
     // layer onto the next must not count as being airborne.
     private const float GroundGrace = 0.15f;
 
-    // Swimming: slow, with heavy drag; idle swimmers float up to rest with the head above water.
+    // Swimming: slow at the surface, with heavy drag; idle swimmers float up to rest with the head
+    // above water. Wholly under the water (the eyes DiveDepth under) swimmers go as fast as
+    // walking (DiveSpeed, DiveSprintSpeed), picking up speed sooner (DiveAccel), easing from the
+    // surface's pace over the first DiveDepth.
     private const float SwimSpeed = 2.2f;
     private const float SwimSprintSpeed = 3.6f;
     private const float SwimAccel = 1.8f;
+    private const float DiveSpeed = WalkSpeed, DiveSprintSpeed = 8.5f, DiveAccel = 3.5f, DiveDepth = 0.5f;
     private const float SwimDrag = 1.2f;
     private const float SwimDepth = 1.0f;    // feet this far below the surface: swimming
     private const float FloatDepth = 1.7f;   // where idle swimmers rest (eye ~0.4 m above water)
@@ -110,13 +114,15 @@ public sealed class Player
         }
         else if (Swimming)
         {
-            float speed = sprint ? SwimSprintSpeed : SwimSpeed;
+            float under = Math.Clamp((TerrainField.WaterLevel - Eye.Y) / DiveDepth, 0f, 1f);
+            float speed = float.Lerp(sprint ? SwimSprintSpeed : SwimSpeed, sprint ? DiveSprintSpeed : DiveSpeed, under);
+            float accel = float.Lerp(SwimAccel, DiveAccel, under);
             var target = wish * speed;
             float vertical = (up ? 1 : 0) - (down ? 1 : 0);
             // Idle: drift gently toward the floating depth.
             float rest = TerrainField.WaterLevel - FloatDepth;
             target.Y = vertical != 0 ? vertical * speed : Math.Clamp((rest - Position.Y) * 0.8f, -0.6f, 0.6f);
-            Velocity = Approach(Velocity, target, target == Vector3.Zero ? SwimDrag : SwimAccel, dt);
+            Velocity = Approach(Velocity, target, target == Vector3.Zero ? SwimDrag : accel, dt);
         }
         else
         {
