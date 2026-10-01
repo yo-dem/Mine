@@ -8,17 +8,15 @@ namespace Mine.Rendering;
 /// its feet, a wide L, a slightly oval O with a small round counter, an N cut by two diagonal
 /// notches, an E with thin slits), as holes in the black through which the world shows. The
 /// letters are measured in cap heights (<see cref="LetterSpans"/>) and rasterised row by row at
-/// screen resolution with the HUD's rectangles, so they stay crisp at any size. Their insides open
-/// in small scattered blocks sweeping left to right, as if the word were being written
-/// (<see cref="WriteStart"/> .. <see cref="Written"/>).
+/// screen resolution with the HUD's rectangles, so they stay crisp at any size. The whole word
+/// opens at once, the black in its letters fading away (<see cref="WriteStart"/> .. <see cref="Written"/>).
 /// </summary>
 public static class TitleCard
 {
     /// <summary>When the first hole starts opening, and when the last one is fully open (seconds).</summary>
-    public const float WriteStart = 0.3f, Written = WriteStart + WriteSpan + Jitter + BlockOpenSeconds;
+    public const float WriteStart = 0.3f, Written = WriteStart + OpenSeconds;
 
-    private const float WriteSpan = 1.8f, Jitter = 0.4f, BlockOpenSeconds = 0.3f;
-    private const float BlocksPerCap = 14f; // the opening blocks, this many to a cap height
+    private const float OpenSeconds = 0.6f;
 
     // Where each letter starts, in cap heights from the A's left edge, and the whole word's width.
     private static readonly float[] LetterX = [0f, 1.218f, 2.120f, 3.338f, 4.421f];
@@ -96,7 +94,8 @@ public static class TitleCard
         hud.Rect(0, 0, width, y0, dark);
         hud.Rect(0, y1, width, height - y1, dark);
 
-        float block = cap / BlocksPerCap;
+        float open = Math.Clamp((time - WriteStart) / OpenSeconds, 0f, 1f);
+        float hole = black * (1f - open * open * (3f - 2f * open)); // the black left in the letters
         for (int py = y0; py < y1; py++)
         {
             float y = (py + 0.5f - top) / cap;
@@ -109,24 +108,13 @@ public static class TitleCard
                     Spans[i] = (MathF.Round(left + (LetterX[k] + Spans[i].A) * cap), MathF.Round(left + (LetterX[k] + Spans[i].B) * cap));
             }
 
-            // The row as runs of equal opacity: the black, and the letters' blocks, each holding as
-            // much black as it has not opened yet (runs of the same opacity merged).
+            // The row as runs of equal opacity: the black, and the letters holding what is left of it.
             Row.Clear();
-            int by = (int)MathF.Floor((py - top) / block);
             foreach (var (a, b) in Spans)
             {
                 if (b <= a) continue;
                 Add(a, black);
-                for (float s = a; s < b;)
-                {
-                    int bx = (int)MathF.Floor((s - left) / block + 1e-3f);
-                    float end = MathF.Min(b, MathF.Max(left + (bx + 1) * block, s + 1f)); // always moves on
-                    float along = bx * block / (WordWidth * cap);
-                    float opens = WriteStart + along * WriteSpan + Hash(bx * 7919 + by * 104729) * Jitter;
-                    float t = Math.Clamp((time - opens) / BlockOpenSeconds, 0f, 1f);
-                    Add(end, black * (1f - t * t * (3f - 2f * t)));
-                    s = end;
-                }
+                Add(b, hole);
             }
             Add(width, black);
 
@@ -144,15 +132,5 @@ public static class TitleCard
     {
         if (Row.Count > 0 && MathF.Abs(Row[^1].Alpha - alpha) < 0.002f) Row[^1] = (x, alpha);
         else Row.Add((x, alpha));
-    }
-
-    private static float Hash(int n)
-    {
-        unchecked
-        {
-            uint h = (uint)n * 374761393u;
-            h = (h ^ (h >> 13)) * 1274126177u;
-            return ((h ^ (h >> 16)) & 0xFFFF) / 65535f;
-        }
     }
 }

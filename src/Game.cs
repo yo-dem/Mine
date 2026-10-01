@@ -1106,7 +1106,7 @@ public sealed class Game : IDisposable
     // the world fades in over FadeInSeconds (after LoadingMaxSeconds at the latest), so nothing is
     // seen popping in. In the black the title is written as holes the world shows through
     // (TitleCard); it stays readable a while before the fade (TitleSeconds at the earliest).
-    private const float FadeInSeconds = 1.6f, LoadingMaxSeconds = 12f, TitleSeconds = TitleCard.Written + 1.2f;
+    private const float FadeInSeconds = 1.6f, LoadingMaxSeconds = 12f, TitleSeconds = TitleCard.Written + 1.6f;
     private double _loadedAt = double.NaN;
 
     private void DrawLoadingFade(int width, int height)
