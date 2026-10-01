@@ -107,10 +107,13 @@ public sealed unsafe class TreeRenderer : IDisposable
     /// <summary>
     /// Draws the trees in view: <paramref name="look"/> is the view direction, the field of view
     /// vertical. With <paramref name="translucent"/>, only the variants with glass parts
-    /// (<see cref="TreeModels.Translucent"/>), for the see-through pass.
+    /// (<see cref="TreeModels.Translucent"/>), for the see-through pass. <paramref name="floating"/>
+    /// is told, before each variant, whether it floats on the water (<see cref="TreeModels.Floats"/>).
     /// </summary>
-    public void Draw(Vector3 look, float verticalFov, float aspect, bool translucent = false)
+    public void Draw(Vector3 look, float verticalFov, float aspect, bool translucent = false, Action<bool>? floating = null)
     {
+        bool floats = false;
+        floating?.Invoke(false);
         // The horizontal half-angle of the view, widened as the view tilts (the frustum then
         // reaches farther to the sides at the ground); looking steeply up or down, everything.
         float pitch = MathF.Asin(Math.Clamp(look.Y, -1f, 1f));
@@ -131,6 +134,7 @@ public sealed unsafe class TreeRenderer : IDisposable
             var batch = _batches[v, lod];
             _drawingLod = translucent ? -1 : lod;
             if (batch.InstanceCount == 0 || (translucent && !TreeModels.Translucent(v))) continue;
+            if (TreeModels.Floats(v) != floats) floating?.Invoke(floats = !floats);
             // The near group, then each run of visible slices in one draw (the groups are contiguous).
             int runStart = 0, runEnd = batch.GroupStart[1];
             for (int s = 0; s < Sectors; s++)
@@ -146,6 +150,7 @@ public sealed unsafe class TreeRenderer : IDisposable
             DrawRange(batch, runStart, runEnd - runStart);
         }
         _drawingLod = -1;
+        if (floats) floating?.Invoke(false);
     }
 
     /// <summary>The trees near the camera, for the shadow map (same vertex layout, read by its instanced path).</summary>

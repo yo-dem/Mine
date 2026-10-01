@@ -626,6 +626,12 @@ public static class TerrainShaders
         uniform mat4 uViewProj;
         uniform float uTime;
         uniform float uGlass; // 1 in the see-through pass: only the glass parts are drawn, 0: all but them
+        uniform float uFloat; // 1 for what floats on the water (lotus): it rides the swell
+        uniform vec3 uCameraPos;
+        uniform float uWaterLevel;
+        uniform sampler2D uSeaFloor;
+        uniform vec2 uSeaFloorOrigin;
+        uniform float uSeaFloorExtent;
 
         out vec3 vWorldPos;
         out vec3 vNormal;
@@ -633,9 +639,18 @@ public static class TerrainShaders
         out float vEmissive;
         out float vFoliage;
 
+        """ + WaterSwell + """
+
         void main()
         {
             vec3 world = treeWorld(aPos, aSway, aInstance, aScale, uTime, 1.0);
+            if (uFloat > 0.5)
+            {
+                // Rise and fall with the water under it, tilted with its slope (as WaterVertex lifts the water).
+                vec3 s = swell(aInstance.xz) * swellFade(aInstance.xz - uCameraPos.xz);
+                vec2 local = world.xz - aInstance.xz;
+                world.y += s.z + dot(local, s.xy);
+            }
             vWorldPos = world;
             vNormal = treeRotate(aNormal, aInstance.w);
             vColor = aColor;
@@ -683,35 +698,105 @@ public static class TerrainShaders
 
     // ---- Water ---------------------------------------------------------------------------
 
-    /// <summary>A flat sheet at the water level following the camera; <c>aCorner</c> is -1..1.</summary>
+    /// <summary>
+    /// The swell, shared by the water's vertex shader (which lifts the surface with it) and its
+    /// fragment shader (whose normal follows it): SwellCount long waves from SwellLongest metres
+    /// down, fanned a little around the wind, at the deep-water speed for their length, with sharp
+    /// crests and broad troughs (exp(sin - 1)). Lower in the shallows (from the SeaFloorMap), though
+    /// never flat, so the water laps up and down the shores. Needs uTime, uWaterLevel,
+    /// uCameraPos and the uSeaFloor uniforms declared before it.
+    /// </summary>
+    private const string WaterSwell = """
+        // The wind's direction over the water, the same as the grass's (windOffset).
+        const vec2 WindDir = vec2(0.848, 0.530);
+
+        const int SwellCount = 4;
+        const float SwellLongest = 11.0, SwellSteep = 0.22;
+
+        float swellScale(vec2 p)
+        {
+            vec2 uv = (p - uSeaFloorOrigin) / uSeaFloorExtent;
+            float inMap = smoothstep(0.0, 0.08, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
+            float depth = uWaterLevel - textureLod(uSeaFloor, uv, 0.0).r;
+            return mix(1.0, mix(0.35, 1.0, smoothstep(0.0, 2.5, depth)), inMap);
+        }
+
+        // The swell's slope (xy) and height above the water level (z).
+        vec3 swell(vec2 p)
+        {
+            vec3 sum = vec3(0.0);
+            float wavelength = SwellLongest;
+            for (int i = 0; i < SwellCount; i++)
+            {
+                float h = fract(sin(float(i) * 41.17 + 3.1) * 43758.547);
+                float angle = (h - 0.5) * 1.0;
+                vec2 dir = mat2(cos(angle), sin(angle), -sin(angle), cos(angle)) * WindDir;
+                float k = 6.2832 / wavelength;
+                float theta = dot(dir, p) * k - sqrt(9.81 * k) * uTime + h * 40.0;
+                float e = exp(sin(theta) - 1.0);
+                // (0.47 centres it: exp(sin - 1) averages about that.)
+                sum.z += SwellSteep / k * (e - 0.47);
+                sum.xy += dir * SwellSteep * cos(theta) * e;
+                wavelength *= 0.68;
+            }
+            return sum * swellScale(p);
+        }
+
+        // How much of the swell the drawn water shows at an offset from the camera: none far away,
+        // where the grid is coarse and the waves too small to see, nor right round the camera
+        // when it is at the water level (swimming), so crests never sweep across the eye.
+        float swellFade(vec2 offset)
+        {
+            float d = length(offset);
+            return smoothstep(240.0, 120.0, d)
+                 * mix(1.0, smoothstep(0.5, 3.0, d), smoothstep(0.8, 0.2, abs(uCameraPos.y - uWaterLevel)));
+        }
+        """;
+
+    /// <summary>
+    /// The water's surface: a grid of rings round the camera (<c>aOffset</c> in metres, see
+    /// <see cref="WaterRenderer"/>) lifted by the swell, which fades out far away, where the grid
+    /// is coarse and the waves too small to see, and right round the camera when it is at the
+    /// water level (swimming), so crests never sweep across the eye.
+    /// </summary>
     public const string WaterVertex = """
         #version 330 core
-        layout(location = 0) in vec2 aCorner;
+        layout(location = 0) in vec2 aOffset;
 
         uniform mat4 uViewProj;
         uniform vec3 uCameraPos;
         uniform float uWaterLevel;
-        uniform float uWaterExtent;
+        uniform float uTime;
+        uniform sampler2D uSeaFloor;
+        uniform vec2 uSeaFloorOrigin;
+        uniform float uSeaFloorExtent;
 
         out vec3 vWorldPos;
+        out float vSwell;
+
+        """ + WaterSwell + """
 
         void main()
         {
-            vec3 p = vec3(uCameraPos.x + aCorner.x * uWaterExtent, uWaterLevel, uCameraPos.z + aCorner.y * uWaterExtent);
+            vec2 xz = uCameraPos.xz + aOffset;
+            float height = swell(xz).z * swellFade(aOffset);
+            vec3 p = vec3(xz.x, uWaterLevel + height, xz.y);
             vWorldPos = p;
+            vSwell = height;
             gl_Position = uViewProj * vec4(p, 1.0);
         }
         """;
 
     /// <summary>
-    /// Water: rippled normals from the cloud noise, the sky (galaxy and stars included) reflected
+    /// Water: normals from the swell and the wind waves, the sky (galaxy and stars included) reflected
     /// with Fresnel, the scene beneath seen through it (from a snapshot) and absorbed with depth,
-    /// a glittering path toward the sun or moon, and bioluminescence: glowing veins in the shallows,
-    /// a pulsing line along the shore and sparkles like stars on the surface.
+    /// a glittering path toward the sun or moon, and bioluminescence: soft drifting clouds of
+    /// plankton light breathing toward the shore, a gentle line along the shore and the odd sparkle.
     /// </summary>
     public const string WaterFragment = FragmentHeader + """
 
         in vec3 vWorldPos;
+        in float vSwell;
 
         uniform sampler2D uUnderColor; // the scene before the water was drawn
         uniform sampler2D uSeaFloor;   // smooth land height around the camera (SeaFloorMap)
@@ -725,6 +810,8 @@ public static class TerrainShaders
 
         out vec4 FragColor;
 
+        """ + WaterSwell + """
+
         // Window depth to view-space distance (System.Numerics projection: NDC depth in [0, 1]).
         float viewDepth(float windowDepth)
         {
@@ -732,11 +819,45 @@ public static class TerrainShaders
             return uFar * uNear / (uFar - z * (uFar - uNear));
         }
 
-        float waves(vec2 p)
+        // Gusts: patches of rougher water drifting downwind (~3 m/s) over calmer, glassier water.
+        // Returns how hard the wind blows there, 0.25 (calm) to ~1.4.
+        float gusts(vec2 p)
         {
-            float a = texture(uCloudNoise, vec3(p * 0.035 + vec2(uTime * 0.02, uTime * 0.013), 0.3)).r;
-            float b = texture(uCloudNoise, vec3(p * 0.11 - vec2(uTime * 0.03, -uTime * 0.021), 0.7)).r;
-            return a * 0.6 + b * 0.4;
+            float a = texture(uCloudNoise, vec3(p * 0.012 - WindDir * uTime * 0.036, 0.42)).r;
+            float b = texture(uCloudNoise, vec3(p * 0.03 - WindDir * uTime * 0.07, 0.58)).r;
+            return mix(0.25, 1.4, smoothstep(0.38, 0.68, a * 0.7 + b * 0.3));
+        }
+
+        // Wind waves: WaveCount travelling waves from WaveLongest metres down to a few centimetres,
+        // fanned out around the wind's direction, each running at the deep-water speed for its
+        // length (omega = sqrt(g k)) with sharp crests and broad troughs (exp(sin)). Returns the
+        // surface slope (xy) and, in z, the variance of the slope of the waves too fine for the
+        // pixel, which are left out (they would only shimmer) and turned into roughness instead.
+        const int WaveCount = 10;
+        const float WaveLongest = 3.5;
+        vec3 windWaves(vec2 p, float footprint, float gust)
+        {
+            vec3 sum = vec3(0.0);
+            float wavelength = WaveLongest;
+            for (int i = 0; i < WaveCount; i++)
+            {
+                float h = fract(sin(float(i) * 78.233 + 1.7) * 43758.547);
+                float angle = (h - 0.5) * 1.7;
+                vec2 dir = mat2(cos(angle), sin(angle), -sin(angle), cos(angle)) * WindDir;
+                float k = 6.2832 / wavelength;
+                float omega = sqrt(9.81 * k);
+                // Steeper short waves, and those react most to the gusts (long ones only half).
+                float steep = mix(0.07, 0.13, float(i) / float(WaveCount - 1)) * mix(1.0, gust, mix(0.5, 1.0, float(i) / float(WaveCount - 1)));
+                float theta = dot(dir, p) * k - omega * uTime + h * 40.0;
+                // exp(sin - 1): sharp crests; its slope is steep * cos * exp(sin - 1).
+                float slope = steep * cos(theta) * exp(sin(theta) - 1.0);
+                // Fade a wave out as it gets shorter than ~4 pixels, its slope going into roughness.
+                float keep = smoothstep(2.0, 4.0, wavelength / max(footprint, 1e-4));
+                sum.xy += dir * slope * keep;
+                sum.z += steep * steep * 0.5 * (1.0 - keep);
+                wavelength *= 0.68;
+            }
+            return sum;
         }
 
         // Rain rings: in each cell of a fine grid a drop lands now and then, and a ring spreads and
@@ -765,15 +886,20 @@ public static class TerrainShaders
             return sum;
         }
 
-        vec3 waterNormal(vec2 p, float dist, vec3 rings)
+        // The surface normal, and in w its roughness (0 glassy .. 1): the slope of the waves too
+        // fine to draw, so far water turns satin and sheeny instead of a flat mirror.
+        vec4 waterNormal(vec2 p, float dist, vec3 rings)
         {
-            float e = 0.4 + dist * 0.01;
-            float amplitude = 0.35 / (1.0 + dist * 0.015); // calmer far away, where ripples would only shimmer
-            float sx = (waves(p + vec2(e, 0.0)) - waves(p - vec2(e, 0.0))) * amplitude / (2.0 * e);
-            float sz = (waves(p + vec2(0.0, e)) - waves(p - vec2(0.0, e))) * amplitude / (2.0 * e);
-            vec3 n = vec3(-sx * 6.0, 1.0, -sz * 6.0);
+            vec2 fw = fwidth(p);
+            float footprint = max(fw.x, fw.y);
+            float gust = gusts(p);
+            vec3 w = windWaves(p, footprint, gust);
+            w.xy += swell(p).xy;
+            vec3 n = vec3(-w.x, 1.0, -w.y);
             n.xz += rings.xy * 0.25 * uRain * smoothstep(60.0, 20.0, dist);
-            return normalize(n);
+            // Rain roughens the whole surface.
+            float rough = clamp(sqrt(w.z) * 4.0 + uRain * 0.3, 0.0, 1.0);
+            return vec4(normalize(n), rough);
         }
 
         void main()
@@ -784,7 +910,9 @@ public static class TerrainShaders
             vec3 rd = toFragment / dist;
             // Rain rings, computed once for both the ripples and their glow.
             vec3 rings = uRain > 0.01 && dist < 60.0 ? rainRings(vWorldPos.xz) : vec3(0.0);
-            vec3 n = waterNormal(vWorldPos.xz, dist, rings);
+            vec4 surfaceNormal = waterNormal(vWorldPos.xz, dist, rings);
+            vec3 n = surfaceNormal.xyz;
+            float rough = surfaceNormal.w;
 
             // How much water the view ray crosses before hitting the bottom, and how deep it is there.
             float surface = viewDepth(gl_FragCoord.z);
@@ -801,8 +929,11 @@ public static class TerrainShaders
 
             // Reflection of the whole sky, galaxy and stars included.
             vec3 r = reflect(rd, n);
-            r.y = abs(r.y);
-            float fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(n, -rd), 0.0), 5.0);
+            // Rough water, on average, mirrors the sky a little higher than glassy water would.
+            r.y = max(abs(r.y), rough * 0.12);
+            r = normalize(r);
+            // (and less of it at grazing angles, where the tiny waves' backs face the viewer).
+            float fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(n, -rd), 0.0), 5.0) * (1.0 - 0.35 * rough);
             // Capped, so the galaxy core or the moon reflected in every ripple do not wash out into white.
             vec3 color = mix(refracted, min(skyColor(r, true), vec3(1.6)), fresnel);
             if (uUnderwater > 0.5)
@@ -818,37 +949,60 @@ public static class TerrainShaders
                 color += mix(vec3(0.3, 0.8, 1.0), vec3(0.8, 0.45, 1.0), 0.5 + 0.5 * sin(vWorldPos.x * 0.3 + vWorldPos.z * 0.2))
                     * rings.z * 0.12 * uRain * mix(0.6, 1.5, uNight) * smoothstep(60.0, 20.0, dist);
 
+            // Light through the crests: looking toward the sun or moon, the thin water at the top of
+            // each swell glows turquoise, lit from behind; at night the crests glow faintly by
+            // themselves, as if the swell stirred the bioluminescence.
+            float crest = clamp(vSwell / 0.12, 0.0, 1.0);
+            float against = pow(clamp(dot(normalize(rd.xz + 1e-5), normalize(uLightDir.xz + 1e-5)), 0.0, 1.0), 3.0);
+            color += vec3(0.25, 0.8, 0.95) * uLightColor * crest * crest * against * (1.0 - fresnel) * 0.6;
+
             // A glittering path toward the sun or the moon.
             float toLight = max(dot(r, uLightDir), 0.0);
             // (Softer under the moon, whose glints would otherwise flood the rippled water.)
-            color += uLightColor * (pow(toLight, 400.0) * mix(8.0, 2.0, uNight) + pow(toLight, 40.0) * mix(0.35, 0.12, uNight));
+            // On rough water the sharp glints widen into a broad, dimmer sheen.
+            float sharpness = mix(400.0, 60.0, rough);
+            color += uLightColor * (pow(toLight, sharpness) * mix(8.0, 2.0, uNight) * mix(1.0, 0.35, rough)
+                                  + pow(toLight, mix(40.0, 12.0, rough)) * mix(0.35, 0.12, uNight));
 
-            // Bioluminescence: thin veins of light in the shallows, pulsing in waves toward the shore.
-            float shallow = exp(-depth * 0.5);
-            float v = texture(uCloudNoise, vec3(vWorldPos.xz * 0.04 + vec2(uTime * 0.008, 0.0), 0.9)).r;
-            float vein = pow(max(1.0 - abs(v - 0.5) * 2.0, 0.0), 18.0);
-            float pulse = 0.5 + 0.5 * sin(uTime * 1.4 - depth * 3.0 + v * 14.0);
-            vec3 glow = vec3(0.3, 0.85, 1.0) * vein * (0.35 + 0.65 * pulse) * shallow * 3.0;
-            // A soft line of light where the water laps the sand.
-            float shore = exp(-depth * 14.0) * (0.6 + 0.4 * sin(uTime * 2.0 + vWorldPos.x * 0.3 + vWorldPos.z * 0.2));
-            glow += vec3(0.25, 0.65, 1.0) * shore * 0.4;
-            // Sparkles on the surface, like stars fallen in the water.
+            // The real depth of the water here (from the sea floor map; past its edge, the depth the
+            // view ray measures).
+            vec2 mapUv = (vWorldPos.xz - uSeaFloorOrigin) / uSeaFloorExtent;
+            float inMap = smoothstep(0.0, 0.08, min(min(mapUv.x, mapUv.y), min(1.0 - mapUv.x, 1.0 - mapUv.y)));
+            float seaDepth = uWaterLevel - texture(uSeaFloor, mapUv).r;
+            float waterDepth = mix(depth, max(seaDepth, 0.0), inMap);
+
+            // Bioluminescence, meant to be watched for a long time: soft clouds of glowing plankton,
+            // sparse, drifting very slowly, thickest in the shallows and faint out in the open
+            // water. They breathe in slow waves of light rolling toward the shore (~14 s), and the
+            // swell carries the light, brighter on its crests. Within the clouds, faint filaments.
+            float cloudA = texture(uCloudNoise, vec3(vWorldPos.xz * 0.015 + vec2(uTime * 0.0025, uTime * 0.0012), 0.9)).r;
+            float cloudB = texture(uCloudNoise, vec3(vWorldPos.xz * 0.05 - vec2(uTime * 0.004, -uTime * 0.003), 0.62)).r;
+            float plankton = smoothstep(0.45, 0.8, cloudA * 0.65 + cloudB * 0.35);
+            float shallow = mix(0.12, 1.0, exp(-waterDepth * 0.6));
+            float breathe = 0.6 + 0.4 * sin(uTime * 0.45 - waterDepth * 1.2 + cloudA * 3.0);
+            float carried = 0.7 + 0.6 * crest;
+            float filament = pow(max(1.0 - abs(cloudB - 0.5) * 2.0, 0.0), 14.0) * plankton;
+            vec3 planktonColor = mix(vec3(0.2, 0.75, 1.0), vec3(0.45, 0.5, 1.0), smoothstep(0.3, 0.7, cloudB));
+            vec3 glow = planktonColor * (plankton * 0.55 + filament * 0.3) * breathe * carried * shallow;
+            // A soft line of light where the water laps the sand, slowly coming and going.
+            float shore = exp(-waterDepth * 8.0) * (0.65 + 0.35 * sin(uTime * 0.7 + vWorldPos.x * 0.15 + vWorldPos.z * 0.1));
+            glow += vec3(0.25, 0.65, 1.0) * shore * 0.18;
+            glow += vec3(0.3, 0.85, 1.0) * crest * crest * crest * 0.25 * uNight;
+            // Now and then a sparkle, like a star fallen in the water, slowly waxing and waning.
             vec2 cell = floor(vWorldPos.xz * 3.0);
             float h = hash13(vec3(cell, 11.0));
-            if (h > 0.992 && dist < 90.0)
+            if (h > 0.996 && dist < 90.0)
             {
                 float sparkle = smoothstep(0.35, 0.0, length(fract(vWorldPos.xz * 3.0) - 0.5));
+                float wax = smoothstep(0.55, 1.0, 0.5 + 0.5 * sin(uTime * 0.9 + h * 70.0));
                 glow += mix(vec3(0.6, 0.9, 1.0), vec3(1.0, 0.7, 1.0), hash13(vec3(cell, 3.0)))
-                      * sparkle * pow(max(0.5 + 0.5 * sin(uTime * 3.0 + h * 70.0), 0.0), 4.0) * 3.0 * smoothstep(90.0, 40.0, dist);
+                      * sparkle * wax * 1.2 * smoothstep(90.0, 40.0, dist);
             }
             // Breaking waves: bands rolling in to the shore, laid out along the depth contours of the
             // smooth sea floor (so they follow every coastline in soft curves, not the layered tiles),
             // rearing up as the water gets shallow and breaking into glowing pink-white foam that
             // trails behind each crest, a cyan glow on each rising face. Each wave is stronger or
             // weaker along its length, and broken up where it is weak.
-            vec2 mapUv = (vWorldPos.xz - uSeaFloorOrigin) / uSeaFloorExtent;
-            float inMap = smoothstep(0.0, 0.08, min(min(mapUv.x, mapUv.y), min(1.0 - mapUv.x, 1.0 - mapUv.y)));
-            float seaDepth = uWaterLevel - texture(uSeaFloor, mapUv).r;
             if (inMap > 0.0 && seaDepth < 7.0 && uUnderwater < 0.5)
             {
                 float depth = max(seaDepth, 0.0);
@@ -869,7 +1023,8 @@ public static class TerrainShaders
                 float face = smoothstep(0.45, 0.93, f) * (1.0 - crest) * rising * strength * inMap;
                 vec3 foam = mix(vec3(1.0, 0.82, 1.0), vec3(0.95, 0.42, 1.0), 0.4 + 0.3 * sin(vWorldPos.x * 0.05 + vWorldPos.z * 0.04));
                 color = mix(color, foam * mix(1.1, 0.35, uNight), surf * 0.85);
-                glow += foam * surf * 2.4 + vec3(0.25, 0.7, 1.0) * face * 0.8;
+                // (At night the foam's glow is gentler: it is the brightest thing on the water.)
+                glow += foam * surf * mix(2.4, 0.9, uNight) + vec3(0.25, 0.7, 1.0) * face * mix(0.8, 0.3, uNight);
             }
 
             color += glow * mix(0.45, 1.0, uNight) * mix(0.15, 1.0, uMagic);

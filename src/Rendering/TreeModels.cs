@@ -102,6 +102,9 @@ public static class TreeModels
         (Decoration.Lotus or Decoration.GlowBells or Decoration.Daisies or Decoration.Tulips or Decoration.Starflowers or Decoration.Lupins
          or Decoration.Irises or Decoration.Poppies or Decoration.Lilies);
 
+    /// <summary>Whether a variant floats on the water, riding the swell (TreeVertex's uFloat).</summary>
+    public static bool Floats(int variant) => variant == VariantOf(Decoration.Lotus);
+
     /// <summary>The colour a decoration lights its surroundings with, or null if it gives no light.</summary>
     public static System.Numerics.Vector3? GlowColor(int variant) => variant < Styles.Length ? null : (Decoration)(variant - Styles.Length) switch
     {

@@ -6,10 +6,9 @@ namespace Mine.Rendering;
 /// The title in the black at the start: ALONE in huge, heavy, extended capitals (modelled on a
 /// reference the user picked: a trapezoid A with a small triangular counter and a notch between
 /// its feet, a wide L, a slightly oval O with a small round counter, an N cut by two diagonal
-/// notches, an E with thin slits), as holes in the black through which the world shows. The
-/// letters are measured in cap heights (<see cref="LetterSpans"/>) and rasterised row by row at
+/// notches, an E with thin slits), white in the black. The letters are measured in cap heights (<see cref="LetterSpans"/>) and rasterised row by row at
 /// screen resolution with the HUD's rectangles, so they stay crisp at any size. The caller says
-/// what the letters are (Game.DrawLoadingFade: white in the black, then see-through).
+/// how opaque the black and the letters are (Game.DrawLoadingFade: they fade out together).
 /// </summary>
 public static class TitleCard
 {
@@ -17,12 +16,6 @@ public static class TitleCard
     private static readonly float[] LetterX = [0f, 1.218f, 2.120f, 3.338f, 4.421f];
     private const float WordWidth = 5.331f;
     private const float Overshoot = 0.03f; // the O rises and sinks this much past the cap height
-
-    // Flying into the title: the point it grows around (the bottom of the O's ring, between its
-    // counter and its outer edge), and how much it grows (enough for the ring there to cover any
-    // screen, wide ones too).
-    private static readonly Vector2 ZoomPivot = new(2.120f + 0.564f, 0.85f);
-    private const float ZoomScale = 16f;
 
     private static readonly List<(float A, float B)> Spans = new();
     private static readonly List<(float X, Vector4 Color)> Row = new();
@@ -84,26 +77,15 @@ public static class TitleCard
 
     /// <summary>
     /// Draws the black (<paramref name="black"/> its opacity) with the title in it, its letters of
-    /// colour <paramref name="letters"/> (alpha 0: holes the world shows through), and under it a
-    /// thin loading bar filled to <paramref name="progress"/> (0..1), as opaque as <paramref name="bar"/>.
-    /// <paramref name="zoom"/> (0..1) flies into the title, through the bottom of the O's ring
-    /// (<see cref="ZoomPivot"/>), which slides to the middle of the screen, until it fills the screen
-    /// and only the world is left. Call between Hud.Begin and Hud.End.
+    /// colour <paramref name="letters"/>, and under it a thin loading bar filled to
+    /// <paramref name="progress"/> (0..1), as opaque as <paramref name="bar"/>. Call between
+    /// Hud.Begin and Hud.End.
     /// </summary>
-    public static void Draw(Hud hud, int width, int height, float black, Vector4 letters, float progress, float bar, float zoom = 0f)
+    public static void Draw(Hud hud, int width, int height, float black, Vector4 letters, float progress, float bar)
     {
         var dark = new Vector4(0f, 0f, 0f, black);
         float cap = MathF.Min(width * 0.94f / WordWidth, height * 0.6f);
         float left = (width - WordWidth * cap) / 2, top = (height - cap) / 2;
-        if (zoom > 0f)
-        {
-            // Growing exponentially reads as a steady flight; the pivot keeps its place on the letter.
-            var from = new Vector2(left + ZoomPivot.X * cap, top + ZoomPivot.Y * cap);
-            var to = Vector2.Lerp(from, new Vector2(width / 2f, height / 2f), zoom);
-            cap *= MathF.Pow(ZoomScale, zoom);
-            left = to.X - ZoomPivot.X * cap;
-            top = to.Y - ZoomPivot.Y * cap;
-        }
         int y0 = Math.Max(0, (int)MathF.Floor(top - Overshoot * cap)), y1 = Math.Min(height, (int)MathF.Ceiling(top + (1f + Overshoot) * cap));
         hud.Rect(0, 0, width, y0, dark);
         hud.Rect(0, y1, width, height - y1, dark);

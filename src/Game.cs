@@ -846,7 +846,13 @@ public sealed class Game : IDisposable
         _shadowMap.Bind(0);
         _profiler.Section("alberi");
         SetWorldUniforms(_treeShader, view * projection, eye, atmosphere, time);
-        if (On("trees")) _trees.Draw(look, FieldOfView, (float)size.X / size.Y);
+        // The lotus ride the swell, read from the same sea floor map as the water.
+        _seaFloor.Bind();
+        _treeShader.Set("uSeaFloor", SeaFloorMap.Unit);
+        _treeShader.Set("uSeaFloorOrigin", float.IsNaN(_seaFloor.Origin.X) ? new Vector2(1e9f) : _seaFloor.Origin);
+        _treeShader.Set("uSeaFloorExtent", SeaFloorMap.Extent);
+        _treeShader.Set("uWaterLevel", TerrainField.WaterLevel);
+        if (On("trees")) _trees.Draw(look, FieldOfView, (float)size.X / size.Y, floating: f => _treeShader.Set("uFloat", f ? 1f : 0f));
 
         // Grass blades are seen from both sides.
         _profiler.Section("erba");
@@ -928,7 +934,6 @@ public sealed class Game : IDisposable
         _waterShader.Set("uNear", NearPlane);
         _waterShader.Set("uFar", FarPlane);
         _waterShader.Set("uWaterLevel", TerrainField.WaterLevel);
-        _waterShader.Set("uWaterExtent", WaterRenderer.Extent);
         if (On("water")) _water.Draw();
 
         // Glass: glass blocks, the glass cubes lying around, the translucent crystals.
@@ -1105,37 +1110,29 @@ public sealed class Game : IDisposable
     // Starting: the black, and in it the title (TitleCard) turning white over TitleInSeconds, with
     // a loading bar under it that creeps on by itself (never past 90%) while the land, the grass
     // and the trees around are built (LoadingMaxSeconds at the latest), and then fills up over
-    // BarFillSeconds. Then, and not before WhiteSeconds, the white empties out of the letters (the
-    // bar fading with it) over OpenSeconds, the world showing through them; the hollow title stays
-    // HoldSeconds, and then the camera flies into it over ZoomSeconds: the title grows through the
-    // bottom of its O until it fills the screen and only the world is left (TitleCard's zoom). So nothing is ever seen being built.
-    private const float TitleStart = 0.3f, TitleInSeconds = 0.6f, WhiteSeconds = 2.2f, OpenSeconds = 0.9f, HoldSeconds = 2.5f;
-    private const float ZoomSeconds = 2.2f, LoadingMaxSeconds = 12f, BarFillSeconds = 0.5f, BarPace = 1.8f;
+    // BarFillSeconds. Then, and not before WhiteSeconds, the whole screen, black, title and bar
+    // together, fades out over FadeOutSeconds and the world is left. So nothing is ever seen being built.
+    private const float TitleStart = 0.3f, TitleInSeconds = 0.6f, WhiteSeconds = 2.2f, FadeOutSeconds = 2.4f;
+    private const float LoadingMaxSeconds = 12f, BarFillSeconds = 0.5f, BarPace = 1.8f;
     private double _loadedAt = double.NaN;
 
-    // When the title starts opening (never, until the world around is built).
-    private double OpenFrom => double.IsNaN(_loadedAt) ? double.PositiveInfinity : Math.Max(_loadedAt + BarFillSeconds, WhiteSeconds);
-
-    // When the black starts fading away.
-    private double ZoomFrom => OpenFrom + OpenSeconds + HoldSeconds;
+    // When the fade out starts (never, until the world around is built).
+    private double FadeFrom => double.IsNaN(_loadedAt) ? double.PositiveInfinity : Math.Max(_loadedAt + BarFillSeconds, WhiteSeconds);
 
     /// <summary>Whether the opening (title and fade from black) is over: until then the game answers no input at all.</summary>
-    private bool IntroOver => _time >= ZoomFrom + ZoomSeconds;
+    private bool IntroOver => _time >= FadeFrom + FadeOutSeconds;
 
     private void DrawLoadingFade(int width, int height)
     {
         static float Smooth(double t) { float x = (float)Math.Clamp(t, 0.0, 1.0); return x * x * (3f - 2f * x); }
-        // Flying in starts slowly and speeds up (ease in).
-        float z = (float)Math.Clamp((_time - ZoomFrom) / ZoomSeconds, 0.0, 1.0);
-        if (z >= 1f) return;
-        float zoom = z * z * (2f - z);
+        if (IntroOver) return;
+        float shown = 1f - Smooth((_time - FadeFrom) / FadeOutSeconds);
         float white = Smooth((_time - TitleStart) / TitleInSeconds);
-        float open = Smooth((_time - OpenFrom) / OpenSeconds);
         // The loading bar is a show: it creeps toward 90% while the world is built, then fills up.
         static float Creep(double t) => 0.9f * (1f - MathF.Exp(-(float)t / BarPace));
         float progress = double.IsNaN(_loadedAt) ? Creep(_time) : float.Lerp(Creep(_loadedAt), 1f, Smooth((_time - _loadedAt) / BarFillSeconds));
         _hud.Begin(width, height);
-        TitleCard.Draw(_hud, width, height, 1f, new Vector4(white, white, white, 1f - open), progress, white * (1f - open), zoom);
+        TitleCard.Draw(_hud, width, height, shown, new Vector4(white, white, white, shown), progress, white * shown);
         _hud.End();
     }
 
