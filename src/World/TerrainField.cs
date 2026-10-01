@@ -34,7 +34,7 @@ public sealed class TerrainField
     private const float LakeCell = 400f;
     private const float LakeMinRadius = 40f, LakeMaxRadius = 120f;
     private const float LakeBank = 130f;
-    private const float LakeMinDepth = 2f, LakeMaxDepth = 11f;
+    private const float LakeMinDepth = 4f, LakeMaxDepth = 16f;
 
     // Ponds under the islands' waterfalls (see Ponds): a basin PondRadius-ish wide, ringed by a
     // bank at least half a layer above the water, then a slope back down to the land.
@@ -272,7 +272,7 @@ public sealed class TerrainField
             float d = r / wobble;
             float depth = LakeMinDepth + (LakeMaxDepth - LakeMinDepth) * ((hash >> 28) & 0xF) / 15f;
             bank = MathF.Max(bank, Smooth(radius + LakeBank, radius, d));
-            floor = MathF.Max(floor, Smooth(radius, radius * 0.25f, d) * depth);
+            floor = MathF.Max(floor, Smooth(radius, radius * 0.6f, d) * depth); // (deep from 60% of the radius in: 25% left most of the lake a shallow shelf)
         }
         if (bank <= 0) return h;
         // Only ever lowers the land (the sea floor stays where it is).

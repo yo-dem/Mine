@@ -276,7 +276,7 @@ public sealed class Blocks
     // cluster), lighting the water round it (Lights). It is no material: broken, it is gone for
     // good (Remove gives nothing; it is remembered as dug). Laid within OutcropRadius, taken away
     // beyond OutcropForget.
-    private const float OutcropCell = 9f, OutcropChance = 0.75f, OutcropMinDepth = 1.2f, OutcropClearance = 0.15f;
+    private const float OutcropCell = 14f, OutcropChance = 0.35f, OutcropMinDepth = 4f, OutcropClearance = 2.5f;
     private const float OutcropRadius = 160f, OutcropForget = 200f;
     private readonly Dictionary<(int X, int Z), List<BlockPos>> _outcrops = new();
     private readonly Dictionary<BlockPos, int> _glowstones = new(); // and its colour (GlowstoneColors)
