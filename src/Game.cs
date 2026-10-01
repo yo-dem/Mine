@@ -1104,18 +1104,18 @@ public sealed class Game : IDisposable
 
     // Starting: the black, and in it the title (TitleCard) turning white over TitleInSeconds. Once
     // the land, the grass and the trees around are built (LoadingMaxSeconds at the latest), and
-    // not before WhiteSeconds, the letters turn see-through over OpenSeconds, the world showing
-    // through them; after HoldSeconds more the whole black fades away over FadeInSeconds. So
-    // nothing is ever seen being built.
-    private const float TitleStart = 0.3f, TitleInSeconds = 0.6f, WhiteSeconds = 2.2f, OpenSeconds = 0.9f, HoldSeconds = 1.2f;
-    private const float FadeInSeconds = 1.6f, LoadingMaxSeconds = 12f;
+    // not before WhiteSeconds, the white empties out of the letters over OpenSeconds, the world
+    // showing through them, and without a pause (the last FadeOverlap of it) the black goes on
+    // emptying, more slowly, over FadeInSeconds. So nothing is ever seen being built.
+    private const float TitleStart = 0.3f, TitleInSeconds = 0.6f, WhiteSeconds = 2.2f, OpenSeconds = 0.9f, FadeOverlap = 0.2f;
+    private const float FadeInSeconds = 2.4f, LoadingMaxSeconds = 12f;
     private double _loadedAt = double.NaN;
 
     private void DrawLoadingFade(int width, int height)
     {
         static float Smooth(double t) { float x = (float)Math.Clamp(t, 0.0, 1.0); return x * x * (3f - 2f * x); }
         double openFrom = double.IsNaN(_loadedAt) ? double.PositiveInfinity : Math.Max(_loadedAt, WhiteSeconds);
-        float fade = Smooth((_time - (openFrom + OpenSeconds + HoldSeconds)) / FadeInSeconds);
+        float fade = Smooth((_time - (openFrom + OpenSeconds - FadeOverlap)) / FadeInSeconds);
         if (fade >= 1f) return;
         float white = Smooth((_time - TitleStart) / TitleInSeconds);
         float open = Smooth((_time - openFrom) / OpenSeconds);
