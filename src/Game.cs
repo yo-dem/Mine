@@ -1107,8 +1107,8 @@ public sealed class Game : IDisposable
     // and the trees around are built (LoadingMaxSeconds at the latest), and then fills up over
     // BarFillSeconds. Then, and not before WhiteSeconds, the white empties out of the letters (the
     // bar fading with it) over OpenSeconds, the world showing through them; the hollow title stays
-    // HoldSeconds, and then the camera flies into it over ZoomSeconds: the title grows until its N
-    // fills the screen and only the world is left (TitleCard's zoom). So nothing is ever seen being built.
+    // HoldSeconds, and then the camera flies into it over ZoomSeconds: the title grows through the
+    // bottom of its O until it fills the screen and only the world is left (TitleCard's zoom). So nothing is ever seen being built.
     private const float TitleStart = 0.3f, TitleInSeconds = 0.6f, WhiteSeconds = 2.2f, OpenSeconds = 0.9f, HoldSeconds = 2.5f;
     private const float ZoomSeconds = 2.2f, LoadingMaxSeconds = 12f, BarFillSeconds = 0.5f, BarPace = 1.8f;
     private double _loadedAt = double.NaN;

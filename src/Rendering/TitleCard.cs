@@ -18,10 +18,10 @@ public static class TitleCard
     private const float WordWidth = 5.331f;
     private const float Overshoot = 0.03f; // the O rises and sinks this much past the cap height
 
-    // Flying into the title: the point it grows around (the middle of the N, solid between its
-    // notches: a band 0.955 wide and 0.4 tall), and how much it grows (enough for that band to
-    // cover any screen).
-    private static readonly Vector2 ZoomPivot = new(3.338f + 0.4775f, 0.5f);
+    // Flying into the title: the point it grows around (the bottom of the O's ring, between its
+    // counter and its outer edge), and how much it grows (enough for the ring there to cover any
+    // screen, wide ones too).
+    private static readonly Vector2 ZoomPivot = new(2.120f + 0.564f, 0.85f);
     private const float ZoomScale = 16f;
 
     private static readonly List<(float A, float B)> Spans = new();
@@ -86,9 +86,9 @@ public static class TitleCard
     /// Draws the black (<paramref name="black"/> its opacity) with the title in it, its letters of
     /// colour <paramref name="letters"/> (alpha 0: holes the world shows through), and under it a
     /// thin loading bar filled to <paramref name="progress"/> (0..1), as opaque as <paramref name="bar"/>.
-    /// <paramref name="zoom"/> (0..1) flies into the title: it grows around the solid heart of the N
-    /// (<see cref="ZoomPivot"/>), which slides to the middle of the screen, until that letter fills
-    /// the screen and only the world is left. Call between Hud.Begin and Hud.End.
+    /// <paramref name="zoom"/> (0..1) flies into the title, through the bottom of the O's ring
+    /// (<see cref="ZoomPivot"/>), which slides to the middle of the screen, until it fills the screen
+    /// and only the world is left. Call between Hud.Begin and Hud.End.
     /// </summary>
     public static void Draw(Hud hud, int width, int height, float black, Vector4 letters, float progress, float bar, float zoom = 0f)
     {
