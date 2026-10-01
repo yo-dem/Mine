@@ -443,7 +443,7 @@ public static class TreeModels
                 for (int i = 0; i < (lod >= 1 ? 4 : 7); i++)
                 {
                     float r = random.NextSingle();
-                    var top = FlowerStem(mesh, random, 0.22f + 0.55f * r * MathF.Sqrt(r), 0.08f, 0.15f);
+                    var top = FlowerStem(mesh, random, 0.1f + 0.32f * r * MathF.Sqrt(r), 0.05f, 0.12f);
                     var color = Vector3.Lerp(colors[random.Next(colors.Length)], colors[random.Next(colors.Length)], 0.4f * random.NextSingle())
                                 * (0.85f + 0.3f * random.NextSingle());
                     Flower(mesh, top, 5, 0.11f + 0.06f * random.NextSingle(), 0.1f, 2.2f, color, 0.5f, color * 0.45f, random.NextSingle());
