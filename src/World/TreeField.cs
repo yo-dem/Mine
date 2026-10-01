@@ -337,8 +337,8 @@ public sealed class TreeField
                 int dominant = Math.Clamp((int)((species + 0.35f) / 0.7f * meadow.Length), 0, meadow.Length - 1);
                 kind = meadow[random.NextSingle() < 0.2f ? random.Next(meadow.Length) : dominant];
             }
-            // Daisies and tulips stay below the knee (about half a metre at most).
-            float scale = kind is TreeModels.Decoration.Daisies or TreeModels.Decoration.Tulips
+            // Daisies, tulips and starflowers stay below the knee (about half a metre at most).
+            float scale = kind is TreeModels.Decoration.Daisies or TreeModels.Decoration.Tulips or TreeModels.Decoration.Starflowers
                 ? 0.9f + 0.25f * random.NextSingle() : 1.05f + 0.5f * random.NextSingle();
             list.Add(new TreeInstance(new Vector3(x, y - 0.03f, z), random.NextSingle() * MathF.Tau, scale, TreeModels.VariantOf(kind)));
         }

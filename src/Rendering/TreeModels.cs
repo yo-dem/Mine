@@ -457,7 +457,9 @@ public static class TreeModels
                 Vector3[] colors = [new(0.3f, 0.95f, 1.0f), new(1.0f, 0.8f, 0.35f), new(0.5f, 1.0f, 0.75f), new(0.95f, 0.5f, 1.0f)];
                 for (int i = 0; i < (lod >= 1 ? 4 : 6); i++)
                 {
-                    var top = FlowerStem(mesh, random, 0.6f, 0.5f, 0.35f);
+                    // Short stems of very different heights, like the daisies' and tulips'.
+                    float r = random.NextSingle();
+                    var top = FlowerStem(mesh, random, 0.08f + 0.22f * r * MathF.Sqrt(r), 0.03f, 0.1f);
                     Flower(mesh, top, 5, 0.1f + 0.04f * random.NextSingle(), 0.05f, 0.3f, colors[random.Next(colors.Length)], 0.85f,
                         new Vector3(1.0f, 1.0f, 0.9f), random.NextSingle());
                 }
