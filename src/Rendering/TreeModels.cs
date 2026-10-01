@@ -433,12 +433,20 @@ public static class TreeModels
             }
             case Decoration.Tulips:
             {
-                Vector3[] colors = [new(0.95f, 0.22f, 0.55f), new(1.0f, 0.45f, 0.30f), new(0.58f, 0.24f, 0.95f), new(1.0f, 0.75f, 0.30f)];
-                for (int i = 0; i < (lod >= 1 ? 3 : 5); i++)
+                // Glowing cups on short stems of very different heights, each its own blend of two
+                // of the hues and its own brightness, with a heart of a deeper shade of it.
+                Vector3[] colors =
+                [
+                    new(0.95f, 0.22f, 0.55f), new(1.0f, 0.45f, 0.30f), new(0.58f, 0.24f, 0.95f), new(1.0f, 0.75f, 0.30f),
+                    new(0.25f, 0.85f, 1.0f), new(1.0f, 0.75f, 0.90f), new(0.45f, 1.0f, 0.70f), new(0.32f, 0.38f, 1.0f),
+                ];
+                for (int i = 0; i < (lod >= 1 ? 4 : 7); i++)
                 {
-                    var top = FlowerStem(mesh, random, 0.8f, 0.35f, 0.2f);
-                    Flower(mesh, top, 5, 0.13f + 0.04f * random.NextSingle(), 0.1f, 2.2f, colors[random.Next(colors.Length)], 0.05f,
-                        new Vector3(0.3f, 0.1f, 0.2f), random.NextSingle());
+                    float r = random.NextSingle();
+                    var top = FlowerStem(mesh, random, 0.22f + 0.55f * r * MathF.Sqrt(r), 0.08f, 0.15f);
+                    var color = Vector3.Lerp(colors[random.Next(colors.Length)], colors[random.Next(colors.Length)], 0.4f * random.NextSingle())
+                                * (0.85f + 0.3f * random.NextSingle());
+                    Flower(mesh, top, 5, 0.11f + 0.06f * random.NextSingle(), 0.1f, 2.2f, color, 0.5f, color * 0.45f, random.NextSingle());
                 }
                 break;
             }
