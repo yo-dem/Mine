@@ -292,6 +292,9 @@ public sealed class TreeField
     /// (daisies, tulips, lupins, starflowers) with a few others mixed in; under the woods, glowing
     /// starflowers and bells; in the deserts, the odd starflower.
     /// </summary>
+    // Points of a cell where a flower may grow (AddFlowers).
+    private const int FlowerSamples = 70;
+
     private void AddFlowers(List<TreeInstance> list, int cx, int cz, Random random)
     {
         const float water = TerrainField.WaterLevel;
@@ -304,7 +307,7 @@ public sealed class TreeField
             new[] { TreeModels.Decoration.Tulips, TreeModels.Decoration.Daisies, TreeModels.Decoration.Tulips, TreeModels.Decoration.Lupins },
             new[] { TreeModels.Decoration.Starflowers, TreeModels.Decoration.Daisies, TreeModels.Decoration.Starflowers, TreeModels.Decoration.Tulips },
         };
-        for (int i = 0; i < 40; i++)
+        for (int i = 0; i < FlowerSamples; i++)
         {
             float x = TerrainField.InsideTile((cx + random.NextSingle()) * CellSize, 0.35f);
             float z = TerrainField.InsideTile((cz + random.NextSingle()) * CellSize, 0.35f);
@@ -323,14 +326,18 @@ public sealed class TreeField
             else if (Forest(x, z) > WoodsThreshold(x, z))
             {
                 // Under the woods.
-                if (roll > 0.35f) continue;
-                kind = random.NextSingle() < 0.6f ? TreeModels.Decoration.Starflowers : TreeModels.Decoration.GlowBells;
+                // Under the woods: thick with flowers, glowing starflowers and bells, and the
+                // biome's own meadow flowers among them.
+                if (roll > 0.8f) continue;
+                float pick = random.NextSingle();
+                kind = pick < 0.45f ? TreeModels.Decoration.Starflowers : pick < 0.7f ? TreeModels.Decoration.GlowBells
+                    : meadows[biome][random.Next(meadows[biome].Length)];
             }
             else
             {
                 // Everywhere in moderation, a little thicker in patches.
                 float patch = _forest.Fractal(x * 0.015f + 90f, z * 0.015f - 30f, 2);
-                if (roll > 0.3f + 0.2f * Math.Clamp(patch + 0.1f, 0f, 1f)) continue;
+                if (roll > 0.4f + 0.25f * Math.Clamp(patch + 0.1f, 0f, 1f)) continue;
                 var meadow = meadows[biome];
                 float species = _forest.Fractal(x * 0.008f - 70f, z * 0.008f + 55f, 2);
                 // Bands of the species noise (it mostly spans about -0.4..0.4), one per kind of flower.
