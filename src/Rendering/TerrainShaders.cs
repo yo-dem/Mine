@@ -287,7 +287,9 @@ public static class TerrainShaders
             return 1.0 - exp(-uMistDensity * dist);
         #endif
             vec3 p = ro + rd * dist * 0.5;
-            float drift = 0.85 + 0.3 * valueNoise3(p * 0.01 + vec3(uTime * 0.02, 0.0, uTime * 0.015));
+            // Its density drifts a little, over about a hundred metres (one look-up in the cloud
+            // noise: the value noise it was, eight hashes a pixel, was a large share of the water's cost).
+            float drift = 0.85 + 0.3 * texture(uCloudNoise, p * 0.0025 + vec3(uTime * 0.005, 0.0, uTime * 0.004)).r;
             return 1.0 - exp(-uMistDensity * dist * drift);
         }
 
