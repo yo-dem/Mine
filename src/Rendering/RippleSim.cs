@@ -146,7 +146,7 @@ public sealed unsafe class RippleSim : IDisposable
         for (int i = 0; i < count; i++)
             _sourceShader.Set(_sourceNames[i], sources[i] with { W = sources[i].W / StepsPerSecond });
         _shader.Use();
-        _shader.Set("uPrevious", 0);
+        _shader.Set("uPrevious", Unit);
         float courant = WaveSpeed / StepsPerSecond / Cell;
         _shader.Set("uCourant", courant * courant);
         _shader.Set("uDamping", Damping);
@@ -164,8 +164,11 @@ public sealed unsafe class RippleSim : IDisposable
             _shader.Set("uShift", shift.Item1, shift.Item2);
             _shader.Set("uOrigin", Origin);
             int next = 1 - _current;
-            _gl.ActiveTexture(TextureUnit.Texture0);
+            // (Read through its own unit: unit 0 holds the shadow map, which the shaders drawn
+            // after the water still sample.)
+            _gl.ActiveTexture(TextureUnit.Texture0 + Unit);
             _gl.BindTexture(TextureTarget.Texture2D, _textures[_current]);
+            _gl.ActiveTexture(TextureUnit.Texture0);
             _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbos[next]);
             _gl.DrawArrays(PrimitiveType.Triangles, 0, 3);
             if (count > 0)
