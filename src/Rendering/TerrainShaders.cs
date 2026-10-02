@@ -562,6 +562,19 @@ public static class TerrainShaders
         {
             vec3 n = normalize(vNormal);
             float dist = length(vWorldPos - uCameraPos);
+            // Seen from above through more than DeepEnough metres of water, the land is not worth
+            // shading: the water fades what lies under it to its own deep colour (exp(-0.14 t):
+            // under 2% of it is left), and the deep lake floors cost as much as the water itself.
+            const float WaterSurface = 14.8, DeepEnough = 30.0; // TerrainField.WaterLevel
+            if (uUnderwater < 0.5 && vWorldPos.y < WaterSurface)
+            {
+                float through = dist * (WaterSurface - vWorldPos.y) / max(uCameraPos.y - vWorldPos.y, 1e-3);
+                if (through > DeepEnough)
+                {
+                    FragColor = vec4(vec3(0.03, 0.02, 0.08) + uAmbient * 0.1, 1.0);
+                    return;
+                }
+            }
             float sandy;
             vec3 albedo = terrainAlbedo(vWorldPos, vSlope, dist, sandy);
             albedo = mix(albedo, SnowColor, snowCover(vWorldPos, n.y)) * vAo * tileEdges(vWorldPos, n, dist);
@@ -859,7 +872,7 @@ public static class TerrainShaders
     /// a glittering path toward the sun or moon, and bioluminescence: soft drifting clouds of
     /// plankton light breathing toward the shore, a gentle line along the shore and the odd sparkle.
     /// </summary>
-    public const string WaterFragment = FragmentHeader + """
+    public const string WaterFragment = FragmentHeader + SkyRenderer.LayersGlsl + """
 
         in vec3 vWorldPos;
         in float vSwell;
@@ -880,6 +893,7 @@ public static class TerrainShaders
         uniform vec4 uRippler[MaxRipplers];
         uniform int uRipplerCount;
         uniform vec4 uWakeStamp[MaxWake];
+        uniform vec4 uWakeBounds; // a circle round the wake still alive (xy, radius z; 0: none) and its first stamp (w)
 
         out vec4 FragColor;
 
@@ -901,34 +915,51 @@ public static class TerrainShaders
             return mix(0.25, 1.4, smoothstep(0.38, 0.68, a * 0.7 + b * 0.3));
         }
 
-        // Wind waves: WaveCount travelling waves from WaveLongest metres down to a few centimetres,
-        // fanned out around the wind's direction, each running at the deep-water speed for its
-        // length (omega = sqrt(g k)) with sharp crests and broad troughs (exp(sin)). Returns the
-        // surface slope (xy) and, in z, the variance of the slope of the waves too fine for the
-        // pixel, which are left out (they would only shimmer) and turned into roughness instead.
         const int WaveCount = 10;
-        const float WaveLongest = 3.5;
+        // Each wave's direction, wave number (2 pi / length: from 3.5 m, each 0.68 times the last),
+        // deep-water speed (sqrt(g k)), phase, steepness, and how much it reacts to the gusts; and
+        // for each, the roughness the waves from it on add once too fine to draw (the sums of
+        // steep^2, steep^2 gust, steep^2 gust^2 from it to the last, so a gust's roughness is
+        // 0.5 (x + 2 (g - 1) y + (g - 1)^2 z)). Worked out once (they were computed with sin, cos
+        // and sqrt for every wave of every pixel).
+        const vec2 WaveDir[WaveCount] = vec2[WaveCount](vec2(0.464553, 0.885547), vec2(0.405694, 0.914011), vec2(0.578350, 0.815791), vec2(0.860445, 0.509548), vec2(0.988651, 0.150241), vec2(0.290677, 0.956823), vec2(0.348289, 0.937390), vec2(0.953517, 0.301347), vec2(0.592995, 0.805208), vec2(0.495537, 0.868589));
+        const float WaveK[WaveCount] = float[WaveCount](1.795196, 2.639994, 3.882344, 5.709329, 8.396072, 12.347165, 18.157596, 26.702347, 39.268157, 57.747290);
+        const float WaveOmega[WaveCount] = float[WaveCount](4.196531, 5.089041, 6.171369, 7.483884, 9.075542, 11.005712, 13.346386, 16.184870, 19.627038, 23.801280);
+        const float WavePhase[WaveCount] = float[WaveCount](32.448657, 33.987296, 29.305742, 19.436682, 10.404997, 36.876778, 35.445954, 14.058940, 28.880583, 31.617523);
+        const float WaveSteep[WaveCount] = float[WaveCount](0.045000, 0.049444, 0.053889, 0.058333, 0.062778, 0.067222, 0.071667, 0.076111, 0.080556, 0.085000);
+        const float WaveGust[WaveCount] = float[WaveCount](0.500000, 0.555556, 0.611111, 0.666667, 0.722222, 0.777778, 0.833333, 0.888889, 0.944444, 1.000000);
+        const vec3 WaveRoughRest[WaveCount] = vec3[WaveCount](vec3(0.043880, 0.035558, 0.029804), vec3(0.041855, 0.034545, 0.029298), vec3(0.039410, 0.033187, 0.028543), vec3(0.036506, 0.031413, 0.027459), vec3(0.033103, 0.029144, 0.025946), vec3(0.029162, 0.026298, 0.023891), vec3(0.024643, 0.022783, 0.021157), vec3(0.019507, 0.018503, 0.017590), vec3(0.013714, 0.013354, 0.013013), vec3(0.007225, 0.007225, 0.007225));
+
+        // Wind waves: WaveCount travelling waves from 3.5 metres down to a few centimetres,
+        // fanned out around the wind's direction, each running at the deep-water speed for its
+        // length with sharp crests and broad troughs (exp(sin)). Returns the surface slope (xy)
+        // and, in z, the variance of the slope of the waves too fine for the pixel, which are left
+        // out (they would only shimmer) and turned into roughness instead. The waves run from the
+        // longest down, so once one is under two pixels the rest are all roughness, added at once
+        // from WaveRoughRest: far water computes only its few long waves.
         vec3 windWaves(vec2 p, float footprint, float gust)
         {
             vec3 sum = vec3(0.0);
-            float wavelength = WaveLongest;
+            float g = gust - 1.0;
+            float perPixel = 1.0 / max(footprint, 1e-4);
             for (int i = 0; i < WaveCount; i++)
             {
-                float h = fract(sin(float(i) * 78.233 + 1.7) * 43758.547);
-                float angle = (h - 0.5) * 1.7;
-                vec2 dir = mat2(cos(angle), sin(angle), -sin(angle), cos(angle)) * WindDir;
-                float k = 6.2832 / wavelength;
-                float omega = sqrt(9.81 * k);
+                float pixels = 6.2831853 / WaveK[i] * perPixel; // the wave's length in pixels
+                if (pixels < 2.0)
+                {
+                    vec3 rest = WaveRoughRest[i];
+                    sum.z += 0.5 * (rest.x + 2.0 * g * rest.y + g * g * rest.z);
+                    break;
+                }
                 // Steeper short waves, and those react most to the gusts (long ones only half).
-                float steep = mix(0.045, 0.085, float(i) / float(WaveCount - 1)) * mix(1.0, gust, mix(0.5, 1.0, float(i) / float(WaveCount - 1)));
-                float theta = dot(dir, p) * k - omega * uTime + h * 40.0;
+                float steep = WaveSteep[i] * (1.0 + g * WaveGust[i]);
+                float theta = dot(WaveDir[i], p) * WaveK[i] - WaveOmega[i] * uTime + WavePhase[i];
                 // exp(sin - 1): sharp crests; its slope is steep * cos * exp(sin - 1).
                 float slope = steep * cos(theta) * exp(sin(theta) - 1.0);
                 // Fade a wave out as it gets shorter than ~4 pixels, its slope going into roughness.
-                float keep = smoothstep(2.0, 4.0, wavelength / max(footprint, 1e-4));
-                sum.xy += dir * slope * keep;
+                float keep = smoothstep(2.0, 4.0, pixels);
+                sum.xy += WaveDir[i] * slope * keep;
                 sum.z += steep * steep * 0.5 * (1.0 - keep);
-                wavelength *= 0.68;
             }
             return sum;
         }
@@ -1027,9 +1058,10 @@ public static class TerrainShaders
         const float WakeLife = 6.0, WakeSpread = 0.45, WakeBlend = 0.35;
         vec2 wake(vec2 p)
         {
+            if (uWakeBounds.z <= 0.0 || distance(p, uWakeBounds.xy) > uWakeBounds.z) return vec2(0.0);
             float weights = 0.0, ageSum = 0.0;
             vec2 awaySum = vec2(0.0);
-            for (int i = 0; i < MaxWake - 1; i++)
+            for (int i = int(uWakeBounds.w); i < MaxWake - 1; i++)
             {
                 vec4 a = uWakeStamp[i], b = uWakeStamp[i + 1];
                 if (a.w <= 0.0 || b.w <= 0.0) continue;
@@ -1149,7 +1181,7 @@ public static class TerrainShaders
             // white; the night mirror keeps the moon and the galaxy's core bright. Shooting stars
             // are drawn wider in it, or the least ripple would break their hair-thin trail away.
             gStreakSharpness = 4e4;
-            vec3 color = mix(refracted, min(skyColor(r, true), vec3(mix(1.6, 6.0, mirror))), fresnel);
+            vec3 color = mix(refracted, min(mirroredSky(r), vec3(mix(1.6, 6.0, mirror))), fresnel);
             gStreakSharpness = 3e5;
             // What glows under the water (the crystal outcrops on the floor, their light on it)
             // shines through the mirror as real water would let it, dimmed by the water it crosses,
@@ -1160,7 +1192,7 @@ public static class TerrainShaders
             {
                 // Seen from below: the bright, rippled sky through the surface, fading at grazing
                 // angles into the silvery mirror of total internal reflection.
-                vec3 up = skyColor(normalize(vec3(rd.x, abs(rd.y) * 1.5, rd.z)), true);
+                vec3 up = mirroredSky(normalize(vec3(rd.x, abs(rd.y) * 1.5, rd.z)));
                 color = mix(vec3(0.08, 0.12, 0.3), min(up, vec3(1.5)) * 0.8, smoothstep(0.05, 0.4, abs(rd.y)));
             }
 

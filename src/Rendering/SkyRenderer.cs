@@ -393,28 +393,56 @@ public sealed class SkyRenderer : IDisposable
             return c;
         }
 
+        // Stars show wherever the sky is dark enough (c: skyGradient), so at dusk they come out on
+        // the side opposite the sun first.
+        float starVisibilityOf(vec3 c) { return smoothstep(0.45, 0.08, dot(c, vec3(0.3, 0.5, 0.2))); }
+
+        // Stars, nebulae and the galaxy turn slowly with the sky.
+        vec3 skyTurned(vec3 d)
+        {
+            float ca = cos(uSkyAngle * 0.25), sa = sin(uSkyAngle * 0.25); // uSkyAngle is continuous
+            return vec3(ca * d.x + sa * d.z, d.y, -sa * d.x + ca * d.z);
+        }
+
+        // The smooth, costly layers of the sky in direction d: the nebulae, the galaxy and the halo
+        // round the planet, before its disk and the horizon hide them (c: skyGradient(d)). The
+        // water reads them from a small map of the sky (SkyRenderer.DrawLayers) instead of
+        // computing them for every pixel it mirrors the sky in.
+        vec3 skyLayers(vec3 d, vec3 c)
+        {
+            vec3 layers = nebula(skyTurned(d)) * starVisibilityOf(c) * uMagic * (1.0 - uPlainNight)
+                        + galaxy(d) * mix(0.2, 1.0, uMagic) * (1.0 - uPlainNight);
+            float moonAlpha = smoothstep(-0.02, 0.3, d.y) * uNight;
+            if (moonAlpha > 0.0)
+                layers += moonHalo(d, bodyCoords(d, uMoonDir, PlanetSize, -0.35)) * moonAlpha * mix(0.3, 1.0, uMagic) * (1.0 - uPlainNight);
+            return layers;
+        }
+
+        vec3 skyWithLayers(vec3 d, vec3 c, vec3 layers);
+
         // bodies = false leaves out sun, moon and stars (used for fog and sky light).
         vec3 skyColor(vec3 d, bool bodies)
         {
             vec3 c = skyGradient(d);
             if (!bodies) return c;
+            return skyWithLayers(d, c, skyLayers(d, c));
+        }
 
+        // The sky in direction d with its smooth layers already known (skyLayers): the gradient c,
+        // those layers where neither the planet nor the horizon hides them, the stars, the sun,
+        // the planet and its small moons, auroras, lightning and shooting stars.
+        vec3 skyWithLayers(vec3 d, vec3 c, vec3 layers)
+        {
             float up = clamp(d.y, 0.0, 1.0);
             float aboveHorizon = smoothstep(-0.02, 0.03, d.y);
-
-            // Stars show wherever the sky is dark enough, so at dusk they come out
-            // on the side opposite the sun first.
-            float starVisibility = smoothstep(0.45, 0.08, dot(c, vec3(0.3, 0.5, 0.2)));
-            // Stars, nebulae and the galaxy turn slowly with the sky.
-            float ca = cos(uSkyAngle * 0.25), sa = sin(uSkyAngle * 0.25); // uSkyAngle is continuous
-            vec3 s = vec3(ca * d.x + sa * d.z, d.y, -sa * d.x + ca * d.z);
+            float starVisibility = starVisibilityOf(c);
+            vec3 s = skyTurned(d);
             // The moon is solid: nothing beyond it (nebulae, galaxy, stars) shows through its disk.
             vec2 mq = bodyCoords(d, uMoonDir, PlanetSize, -0.35);
             float moonAlpha = smoothstep(-0.02, 0.3, d.y) * uNight;
             float moon = diskMask(mq, d, uMoonDir, 0.02) * moonAlpha;
             float behind = aboveHorizon * (1.0 - moon);
-            c += nebula(s) * starVisibility * behind * uMagic * (1.0 - uPlainNight);
-            c += galaxy(d) * behind * mix(0.2, 1.0, uMagic) * (1.0 - uPlainNight);
+            c += layers * behind;
             if (starVisibility > 0.0)
             {
                 vec3 p = s * 220.0;
@@ -438,7 +466,6 @@ public sealed class SkyRenderer : IDisposable
             // A small square sun, and the round moon with its halo.
             vec2 sq = bodyCoords(d, uSunDir, 0.045, 0.3);
             c += vec3(5.0, 4.4, 3.6) * diskMask(sq, d, uSunDir, 0.0) * aboveHorizon * (1.0 - uNight);
-            if (moonAlpha > 0.0) c += moonHalo(d, mq) * moonAlpha * (1.0 - moon) * mix(0.3, 1.0, uMagic) * (1.0 - uPlainNight);
             if (moon > 0.0 && uPlainNight > 0.5)
             {
                 // Only its shadow: a dark disk hiding the stars (with a softly glowing rim, if asked).
@@ -621,10 +648,48 @@ public sealed class SkyRenderer : IDisposable
         }
         """;
 
+    // The sky's smooth layers (skyLayers: nebulae, galaxy, the planet's halo) over the upper half
+    // of the sky, for the water to mirror (LayersGlsl): azimuth across, elevation up, a texel
+    // about a third of a degree. 260 thousand sky directions a frame instead of one for every
+    // pixel of water (millions, looking out over a lake): the galaxy cost more than the rest of
+    // the water together. The layers are soft, so the map loses nothing seen rippled in the water.
+    private const string LayersFragmentSource = "#version 330 core\n" + Glsl + """
+
+        uniform vec2 uLayersSize;
+        out vec4 FragColor;
+
+        void main()
+        {
+            vec2 uv = gl_FragCoord.xy / uLayersSize;
+            float azimuth = uv.x * 6.2831853 - 3.1415927, elevation = uv.y * 1.5707963;
+            vec3 d = vec3(cos(elevation) * cos(azimuth), sin(elevation), cos(elevation) * sin(azimuth));
+            FragColor = vec4(skyLayers(d, skyGradient(d)), 1.0);
+        }
+        """;
+
+    /// <summary>
+    /// <c>mirroredSky(dir)</c>: <c>skyColor(dir, true)</c> for the upper half of the sky, its smooth
+    /// layers read from the map <see cref="DrawLayers"/> drew (bound to <see cref="LayersUnit"/>,
+    /// <c>uSkyLayers</c>). Paste after <see cref="Glsl"/>.
+    /// </summary>
+    public const string LayersGlsl = """
+        uniform sampler2D uSkyLayers;
+
+        vec3 mirroredSky(vec3 d)
+        {
+            vec2 uv = vec2(atan(d.z, d.x) / 6.2831853 + 0.5, asin(clamp(d.y, 0.0, 1.0)) / 1.5707963);
+            return skyWithLayers(d, skyGradient(d), textureLod(uSkyLayers, uv, 0.0).rgb);
+        }
+        """;
+
+    /// <summary>Texture unit the sky's layers (<see cref="DrawLayers"/>) are bound to.</summary>
+    public const int LayersUnit = 9;
+    private const int LayersWidth = 1024, LayersHeight = 256;
+
     private readonly GL _gl;
-    private readonly Shader _shader, _cloudShader;
+    private readonly Shader _shader, _cloudShader, _layersShader;
     private readonly uint _vao; // core profile needs a bound VAO even with no attributes
-    private uint _cloudFbo, _cloudTexture;
+    private uint _cloudFbo, _cloudTexture, _layersFbo, _layersTexture;
     private int _cloudWidth, _cloudHeight;
 
     public SkyRenderer(GL gl)
@@ -632,7 +697,44 @@ public sealed class SkyRenderer : IDisposable
         _gl = gl;
         _shader = new Shader(gl, VertexSource, FragmentSource);
         _cloudShader = new Shader(gl, VertexSource, CloudFragmentSource);
+        _layersShader = new Shader(gl, VertexSource, LayersFragmentSource);
         _vao = gl.GenVertexArray();
+    }
+
+    /// <summary>
+    /// Draws the map of the sky's smooth layers the water mirrors (<see cref="LayersGlsl"/>) and
+    /// binds it to <see cref="LayersUnit"/>. Leaves its framebuffer bound: the caller binds the scene again.
+    /// </summary>
+    public unsafe void DrawLayers(in Atmosphere atmosphere, float time, float cloudTime)
+    {
+        if (_layersFbo == 0)
+        {
+            _layersTexture = _gl.GenTexture();
+            _gl.BindTexture(TextureTarget.Texture2D, _layersTexture);
+            _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba16f, LayersWidth, LayersHeight, 0, PixelFormat.Rgba, PixelType.HalfFloat, (void*)0);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat); // round the horizon
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+            _layersFbo = _gl.GenFramebuffer();
+            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _layersFbo);
+            _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _layersTexture, 0);
+        }
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _layersFbo);
+        _gl.Viewport(0, 0, LayersWidth, LayersHeight);
+        _layersShader.Use();
+        SetUniforms(_layersShader, atmosphere, time, cloudTime);
+        _layersShader.Set("uLayersSize", new Vector2(LayersWidth, LayersHeight));
+        _gl.Disable(EnableCap.DepthTest);
+        _gl.Disable(EnableCap.Blend);
+        _gl.DepthMask(false);
+        _gl.BindVertexArray(_vao);
+        _gl.DrawArrays(PrimitiveType.Triangles, 0, 3);
+        _gl.DepthMask(true);
+        _gl.Enable(EnableCap.DepthTest);
+        _gl.ActiveTexture(TextureUnit.Texture0 + LayersUnit);
+        _gl.BindTexture(TextureTarget.Texture2D, _layersTexture);
+        _gl.ActiveTexture(TextureUnit.Texture0);
     }
 
     /// <summary>Texture unit the half-resolution clouds are bound to while drawing the sky.</summary>
@@ -780,6 +882,12 @@ public sealed class SkyRenderer : IDisposable
     public void Dispose()
     {
         DeleteCloudTarget();
+        if (_layersFbo != 0)
+        {
+            _gl.DeleteFramebuffer(_layersFbo);
+            _gl.DeleteTexture(_layersTexture);
+        }
+        _layersShader.Dispose();
         _gl.DeleteVertexArray(_vao);
         _shader.Dispose();
         _cloudShader.Dispose();

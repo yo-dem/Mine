@@ -808,6 +808,8 @@ public sealed class Game : IDisposable
     // still) in a ring of WakeStamps; leaving the water breaks it (a point with w 0).
     private const int MaxRipplers = 40, WakeStamps = 39;
     private const float RippleRange = 35f, RipplerRefresh = 0.2f, WakeStep = 0.4f;
+    // How long the wake lives and how far its waves reach from the path (the shader's WakeLife, and its reach).
+    private const float WakeLife = 6f, WakeReach = 5f;
     private static readonly string[] RipplerUniforms = Enumerable.Range(0, MaxRipplers).Select(i => $"uRippler[{i}]").ToArray();
     private static readonly string[] WakeUniforms = Enumerable.Range(0, WakeStamps + 1).Select(i => $"uWakeStamp[{i}]").ToArray();
     private readonly Vector4[] _ripplers = new Vector4[MaxRipplers];
@@ -866,7 +868,24 @@ public sealed class Game : IDisposable
         shader.Set("uRipplerCount", _ripplerCount);
         // The path oldest first, then where the player is now (so the wake reaches them).
         for (int i = 0; i < WakeStamps; i++) shader.Set(WakeUniforms[i], _wake[(_wakeNext + i) % WakeStamps]);
-        shader.Set(WakeUniforms[WakeStamps], new Vector4(_player.Position.X, _player.Position.Z, (float)_time, _inWater ? 1f : 0f));
+        var now = new Vector4(_player.Position.X, _player.Position.Z, (float)_time, _inWater ? 1f : 0f);
+        shader.Set(WakeUniforms[WakeStamps], now);
+        // Where the wake still lives (its last WakeLife seconds): a circle round it, wide enough for
+        // its waves, and the first stamp of it. The shader skips the wake everywhere outside it,
+        // and the whole of it when none is left: looping over all the stamps for every pixel of
+        // water cost more than all the rest of the water.
+        int first = -1;
+        Vector2 min = new(float.MaxValue), max = new(float.MinValue);
+        for (int i = 0; i <= WakeStamps; i++)
+        {
+            var stamp = i < WakeStamps ? _wake[(_wakeNext + i) % WakeStamps] : now;
+            if (stamp.W <= 0f || _time - stamp.Z > WakeLife) continue;
+            if (first < 0) first = Math.Max(i - 1, 0);
+            min = Vector2.Min(min, new Vector2(stamp.X, stamp.Y));
+            max = Vector2.Max(max, new Vector2(stamp.X, stamp.Y));
+        }
+        shader.Set("uWakeBounds", first < 0 ? Vector4.Zero
+            : new Vector4((min + max) / 2, Vector2.Distance(min, max) / 2 + WakeReach, first));
     }
 
     private void OnRender(double deltaTime)
@@ -1009,9 +1028,15 @@ public sealed class Game : IDisposable
         _profiler.Section("cielo");
         if (On("sky")) _sky.Draw(inverseSkyViewProj, eye, (float)_dayCycle.Elapsed, atmosphere, time);
 
-        // The water, over the snapshot.
+        // The water, over the snapshot, mirroring the sky's smooth layers from a small map.
         _profiler.Section("acqua");
+        if (On("water"))
+        {
+            _sky.DrawLayers(atmosphere, time, (float)_dayCycle.Elapsed);
+            _post.BindScene();
+        }
         SetWorldUniforms(_waterShader, view * projection, eye, atmosphere, time);
+        _waterShader.Set("uSkyLayers", SkyRenderer.LayersUnit);
         _waterShader.Set("uUnderColor", 3);
         _waterShader.Set("uUnderDepth", 4);
         _seaFloor.Bind();
