@@ -493,7 +493,8 @@ public static class TerrainShaders
         // The land is made of tiles: a faint groove along their edges, fading with distance.
         float tileEdges(vec3 p, vec3 n, float dist)
         {
-            if (n.y < 0.5 || dist > 60.0) return 1.0;
+            // (Not under the water: through the shallows the grooves read as a grid.)
+            if (n.y < 0.5 || dist > 60.0 || p.y < 14.8) return 1.0;
             vec2 f = fract(p.xz / 2.0); // TerrainField.TileSize
             float edge = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)) * 2.0;
             return mix(1.0, 0.86 + 0.14 * smoothstep(0.0, 0.03, edge), smoothstep(60.0, 20.0, dist));
@@ -1041,23 +1042,35 @@ public static class TerrainShaders
             return texture(uRipples, uv).b;
         }
 
-        // A little foam where the water laps the shore: a band at the waterline whose reach swashes
-        // up and back (each stretch of shore at its own time), thickest right at the edge where the
-        // wave breaks and thinning out toward open water. One soft noise look-up breaks it up.
-        // Returns how white the water is there (0..1).
+        // The swash: waves running up the shore and drawing back. Every ShoreWavePeriod seconds
+        // (each stretch of shore at its own time) a wave rushes in from ShoreFoamDepth, its front a
+        // crisp white line, and leaves a sheet of foam behind it; then the sheet draws back slowly,
+        // thinning into patches and fading, until the next wave. Densest at the waterline, where
+        // the wave breaks. Returns how white the water is there (0..1).
         const float ShoreFoamDepth = 2.0; // (the banks drop steeply: the water at the visible edge is often a metre deep)
+        const float ShoreWavePeriod = 6.0, ShoreRushIn = 0.3; // the share of the period it takes to rush in
         float shoreFoam(vec2 p, float depth, float crest)
         {
             if (depth > ShoreFoamDepth) return 0.0;
-            float along = texture(uCloudNoise, vec3(p * 0.03, 0.21)).r;
-            float swash = 0.5 + 0.5 * sin(uTime * 0.85 + along * 12.0);
-            float reach = mix(0.8, ShoreFoamDepth, swash);
-            float band = 1.0 - smoothstep(reach * 0.5, reach, depth);
-            float edge = exp(-depth * 1.6);
-            float amount = band * mix(0.35, 1.0, edge) * (0.85 + 0.3 * crest);
+            float along = texture(uCloudNoise, vec3(p * 0.02, 0.21)).r;
+            float phase = fract(uTime / ShoreWavePeriod + along * 3.0);
+            // How far out the water's edge (the foam's outer border) is now, as a depth: rushing in
+            // fast, then drawing back slowly.
+            float rush = phase < ShoreRushIn ? phase / ShoreRushIn : 1.0;
+            float back = phase < ShoreRushIn ? 0.0 : (phase - ShoreRushIn) / (1.0 - ShoreRushIn);
+            float front = ShoreFoamDepth * (1.0 - rush);         // the front running in
+            float edge = mix(0.0, ShoreFoamDepth * 0.8, back);    // where the sheet has drawn back to... from the shore out
+            // Foam lies between the shore and the front while it comes in, then from the drawn-back
+            // edge to the shore, thinning.
+            float sheet = phase < ShoreRushIn ? 1.0 - smoothstep(front - 0.05, front + 0.15, depth)
+                                              : smoothstep(edge + 0.4, edge, depth) * (1.0 - back * 0.85);
+            float line = phase < ShoreRushIn ? exp(-(depth - front) * (depth - front) / 0.08) : 0.0;
+            float atShore = mix(0.45, 1.0, exp(-depth * 1.6));
+            float amount = max(sheet * atShore, line) * (0.85 + 0.3 * crest);
             if (amount < 0.03) return 0.0;
-            float bubbles = texture(uCloudNoise, vec3(p * 1.3 + vec2(0.0, swash * 0.25), 0.45 + uTime * 0.01)).r;
-            return smoothstep(0.7 - amount * 0.5, 0.8 - amount * 0.5, bubbles) * min(amount * 1.4, 1.0) * 0.9;
+            // Broken into soft patches, more so as it draws back (one gentle noise look-up).
+            float patches = texture(uCloudNoise, vec3(p * 0.7 + vec2(back * 0.3), 0.45)).r;
+            return min(amount * 1.3, 1.0) * smoothstep(0.2 + 0.45 * back, 0.4 + 0.45 * back, patches + line * 0.6) * 0.95;
         }
 
         // The primordial soup: broad patches of light in the water, pink, indigo and red, that
@@ -1117,14 +1130,28 @@ public static class TerrainShaders
             float thickness = max(viewDepth(texture(uUnderDepth, uv).r) - surface, 0.0);
             float depth = thickness * max(-rd.y, 0.05);
 
+            // The real depth of the water here (from the sea floor map; past its edge, the depth the
+            // view ray measures).
+            vec2 mapUv = (vWorldPos.xz - uSeaFloorOrigin) / uSeaFloorExtent;
+            float inMap = smoothstep(0.0, 0.08, min(min(mapUv.x, mapUv.y), min(1.0 - mapUv.x, 1.0 - mapUv.y)));
+            float seaDepth = uWaterLevel - texture(uSeaFloor, mapUv).r;
+            float waterDepth = mix(depth, max(seaDepth, 0.0), inMap);
+
             // Refraction: the scene beneath, bent by the ripples (unless that would pick up something
-            // in front of the water) and fading into deep indigo.
-            vec2 bentUv = uv + n.xz * 0.035 * clamp(thickness * 0.3, 0.0, 1.0);
+            // in front of the water) and fading into deep indigo. The fading goes by the smooth depth
+            // where it is known (the layered floor's steps made the shallows a grid of tints), and
+            // even the shallows bend what they show a little, softening the tiles' edges.
+            vec2 bentUv = uv + n.xz * (0.012 + 0.023 * clamp(thickness * 0.3, 0.0, 1.0));
             if (viewDepth(texture(uUnderDepth, bentUv).r) < surface) bentUv = uv;
             vec3 under = texture(uUnderColor, bentUv).rgb;
             vec3 deep = vec3(0.03, 0.015, 0.1) + uAmbient * 0.12;
+            float through = mix(thickness, waterDepth / max(-rd.y, 0.05), inMap);
             // (Clear enough that the floor shows through the mirror.)
-            vec3 refracted = mix(under, deep, 1.0 - exp(-thickness * 0.14));
+            vec3 refracted = mix(under, deep, 1.0 - exp(-through * 0.14));
+            // The shallows are a little milky (stirred sand), so the layered floor's steps show
+            // softly through them instead of as a sharp staircase.
+            vec3 milk = mix(vec3(0.55, 0.62, 0.78), vec3(0.08, 0.1, 0.22), uNight) * (0.6 + 0.4 * uAmbient.b);
+            refracted = mix(refracted, milk, 0.72 * smoothstep(0.0, 0.25, waterDepth) * smoothstep(5.0, 2.0, waterDepth) * inMap);
 
             // Reflection of the whole sky, galaxy and stars included. At night (mirror) the water is
             // a mirror of the sky: the galaxy, the stars and the moon are seen in it, whole. The
@@ -1188,13 +1215,6 @@ public static class TerrainShaders
             // in the middle of it.)
             color += uLightColor * (pow(toLight, sharpness) * mix(8.0, 2.0, uNight) * mix(1.0, 0.35, rough) * (1.0 - mirror)
                                   + pow(toLight, mix(40.0, 12.0, rough)) * mix(0.35, 0.12, uNight) * mix(1.0, 0.4, mirror));
-
-            // The real depth of the water here (from the sea floor map; past its edge, the depth the
-            // view ray measures).
-            vec2 mapUv = (vWorldPos.xz - uSeaFloorOrigin) / uSeaFloorExtent;
-            float inMap = smoothstep(0.0, 0.08, min(min(mapUv.x, mapUv.y), min(1.0 - mapUv.x, 1.0 - mapUv.y)));
-            float seaDepth = uWaterLevel - texture(uSeaFloor, mapUv).r;
-            float waterDepth = mix(depth, max(seaDepth, 0.0), inMap);
 
             // Bioluminescence, meant to be watched for a long time: soft clouds of glowing plankton,
             // sparse, drifting very slowly, out in the open water, away from the shores (offshore:
