@@ -330,7 +330,8 @@ public sealed class SkyRenderer : IDisposable
             float sparkle = step(0.97, hash13(vec3(dust, 3.0))) * (0.5 + 0.5 * sin(uTime * 3.0 + hash13(vec3(dust, 9.0)) * 40.0));
             c += vec3(1.0, 0.9, 1.0) * sparkle * (0.2 + arms) * inside * 0.5;
             // Outer wisps continue the arms beyond the rim, fading out.
-            float outer = smoothstep(0.9, 1.25, r) * exp(-(r - 1.0) * 1.6);
+            // (Gone before the cut at r 1.8, or its edge drew a great arc across the sky.)
+            float outer = smoothstep(0.9, 1.25, r) * exp(-(r - 1.0) * 1.6) * smoothstep(1.8, 1.45, r);
             c += vec3(0.4, 0.3, 1.0) * pow(max(0.5 + 0.5 * cos(wavy * 5.0 + 0.6), 0.0), 1.5) * (0.5 + streaks) * outer * 0.6;
             return c * uGalaxyGlow;
         }
