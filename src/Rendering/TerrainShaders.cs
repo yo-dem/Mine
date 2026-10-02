@@ -1041,35 +1041,23 @@ public static class TerrainShaders
             return texture(uRipples, uv).b;
         }
 
-        // Waves breaking on the shore, in the last ShoreFoamDepth of water (by the sea floor map's
-        // depth, so they follow the coast's curves): every ShoreWavePeriod seconds a line of foam
-        // runs in from that depth to the waterline, thickening as it comes, a thinning trail of
-        // foam behind it; reaching the shore it spreads in a wash that draws back and fades until
-        // the next one. Each stretch of shore keeps its own time and each wave its own strength,
-        // and the bubbles ride with the wave. Returns how white the water is there (0..1).
-        const float ShoreFoamDepth = 2.0; // (the banks drop steeply: the first water tile is often a metre deep)
-        const float ShoreWavePeriod = 5.5;
+        // A little foam where the water laps the shore: a band at the waterline whose reach swashes
+        // up and back (each stretch of shore at its own time), thickest right at the edge where the
+        // wave breaks and thinning out toward open water. One soft noise look-up breaks it up.
+        // Returns how white the water is there (0..1).
+        const float ShoreFoamDepth = 2.0; // (the banks drop steeply: the water at the visible edge is often a metre deep)
         float shoreFoam(vec2 p, float depth, float crest)
         {
             if (depth > ShoreFoamDepth) return 0.0;
-            float along = texture(uCloudNoise, vec3(p * 0.025, 0.21)).r;
-            float t = uTime / ShoreWavePeriod + along * 2.5;
-            float phase = fract(t);
-            float strength = smoothstep(0.25, 0.6, texture(uCloudNoise, vec3(p * 0.02 + floor(t) * 0.37, 0.55)).r);
-            // Where the breaking front is now (a depth), and how far behind it (in deeper water) a point lies.
-            float front = ShoreFoamDepth * (1.0 - phase);
-            float behind = depth - front;
-            float line = exp(-behind * behind / (0.02 + 0.08 * phase)) * mix(0.6, 1.2, phase);
-            float trail = behind > 0.0 ? exp(-behind * 1.4) * 0.9 * (1.0 - phase * 0.4) : 0.0;
-            // The wash left by the last wave at the waterline, drawing back as the next comes in.
-            float wash = smoothstep(0.8, 0.0, depth + phase * 0.6) * (1.0 - phase * 0.8) * 1.1;
-            float amount = (max(line, trail) * strength + wash) * (0.75 + 0.35 * crest);
+            float along = texture(uCloudNoise, vec3(p * 0.03, 0.21)).r;
+            float swash = 0.5 + 0.5 * sin(uTime * 0.85 + along * 12.0);
+            float reach = mix(0.8, ShoreFoamDepth, swash);
+            float band = 1.0 - smoothstep(reach * 0.5, reach, depth);
+            float edge = exp(-depth * 1.6);
+            float amount = band * mix(0.35, 1.0, edge) * (0.85 + 0.3 * crest);
             if (amount < 0.03) return 0.0;
-            // Bubbles riding with the wave (carried shoreward, churning).
-            vec2 flow = vec2(uTime * 0.05, -uTime * 0.03) + vec2(behind * 1.5);
-            float bubbles = texture(uCloudNoise, vec3(p * 3.2 + flow, 0.45 + phase * 0.2)).r * 0.6
-                          + texture(uCloudNoise, vec3(p * 9.0 - flow, 0.83 + uTime * 0.02)).r * 0.4;
-            return smoothstep(0.58 - amount * 0.38, 0.64 - amount * 0.38, bubbles) * min(amount * 2.0, 1.0) * 0.9;
+            float bubbles = texture(uCloudNoise, vec3(p * 1.3 + vec2(0.0, swash * 0.25), 0.45 + uTime * 0.01)).r;
+            return smoothstep(0.7 - amount * 0.5, 0.8 - amount * 0.5, bubbles) * min(amount * 1.4, 1.0) * 0.9;
         }
 
         // The primordial soup: broad patches of light in the water, pink, indigo and red, that
