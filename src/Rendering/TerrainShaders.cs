@@ -1024,17 +1024,39 @@ public static class TerrainShaders
             return vec2(hx, hz) / (2.0 * RippleCell) * visible;
         }
 
-        // The foam a swimmer leaves (the simulation's blue): small white patches broken into bubbles;
-        // the thinner it gets the fewer bubbles stay, so it breaks up as it fades away.
+        // Foam as small white patches broken into bubbles, `amount` 0..1+: the thinner it is the
+        // fewer bubbles stay, so it breaks up as it fades away. The bubbles churn slowly.
+        float foamBubbles(vec2 p, float amount)
+        {
+            float bubbles = texture(uCloudNoise, vec3(p * 0.9, 0.33 + uTime * 0.01)).r * 0.65
+                          + texture(uCloudNoise, vec3(p * 2.7, 0.77 + uTime * 0.006)).r * 0.35;
+            return smoothstep(0.62 - amount * 0.35, 0.7 - amount * 0.35, bubbles) * min(amount * 2.5, 1.0);
+        }
+
+        // The foam a swimmer leaves (the simulation's blue).
         float rippleFoam(vec2 p)
         {
             vec2 uv = (p - uRippleOrigin) / RippleExtent;
             if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return 0.0;
-            float foam = texture(uRipples, uv).b;
-            if (foam < 0.02) return 0.0;
-            float bubbles = texture(uCloudNoise, vec3(p * 0.9, 0.33 + uTime * 0.01)).r * 0.65
-                          + texture(uCloudNoise, vec3(p * 2.7, 0.77)).r * 0.35;
-            return smoothstep(0.62 - foam * 0.35, 0.7 - foam * 0.35, bubbles) * min(foam * 2.5, 1.0);
+            return texture(uRipples, uv).b;
+        }
+
+        // Where the waves break on the shore, in the last ShoreFoamDepth of water: a thin line of
+        // foam at the waterline, and broken patches of finer bubbles farther out that swell as the
+        // crest of the swell comes in (`crest` 0..1) and come and go in lapping waves rolling toward
+        // the shore. Returns how white the water is there (0..1).
+        const float ShoreFoamDepth = 2.0; // (the banks drop steeply: the first water tile is often a metre deep)
+        float shoreFoam(vec2 p, float waterDepth, float crest)
+        {
+            if (waterDepth > ShoreFoamDepth) return 0.0;
+            float band = smoothstep(ShoreFoamDepth, 0.4, waterDepth);
+            float wobble = texture(uCloudNoise, vec3(p * 0.04, 0.21)).r;
+            float lap = 0.5 + 0.5 * sin(uTime * 1.1 - waterDepth * 3.0 + wobble * 9.0);
+            float bubbles = texture(uCloudNoise, vec3(p * 3.2 + vec2(uTime * 0.05, 0.0), 0.45)).r * 0.6
+                          + texture(uCloudNoise, vec3(p * 9.0, 0.83 + uTime * 0.015)).r * 0.4;
+            float patches = smoothstep(0.56, 0.62, bubbles + (lap * 0.5 + crest * 0.2) * band - 0.3) * band;
+            float line = smoothstep(0.75, 0.35, waterDepth) * (0.55 + 0.45 * lap) * smoothstep(0.35, 0.5, bubbles);
+            return max(patches, line) * 0.8;
         }
 
         // The primordial soup: broad patches of light in the water, pink, indigo and red, that
@@ -1232,11 +1254,17 @@ public static class TerrainShaders
                 glow += foam * surf * mix(2.4, 0.9, uNight) + vec3(0.25, 0.7, 1.0) * face * mix(0.8, 0.3, uNight);
             }
 
-            // Foam left behind a swimmer: white by day, a softer moonlit white at night.
-            if (uUnderwater < 0.5 && dist < 40.0)
+            // Foam left behind a swimmer, and where the waves break on the shore: white by day, a
+            // softer moonlit white at night.
+            if (uUnderwater < 0.5 && dist < 150.0)
             {
-                float foam = rippleFoam(vWorldPos.xz);
-                color = mix(color, mix(vec3(1.0, 0.97, 1.0), vec3(0.45, 0.5, 0.75), uNight), foam * 0.85);
+                float white = shoreFoam(vWorldPos.xz, waterDepth, crest) * smoothstep(150.0, 90.0, dist);
+                if (dist < 40.0)
+                {
+                    float swum = rippleFoam(vWorldPos.xz);
+                    if (swum > 0.02) white = max(white, foamBubbles(vWorldPos.xz, swum) * 0.85);
+                }
+                if (white > 0.0) color = mix(color, mix(vec3(1.0, 0.97, 1.0), vec3(0.45, 0.5, 0.75), uNight), white);
             }
 
             // (At night, softer: the mirrored sky is the show.)

@@ -817,7 +817,7 @@ public sealed class Game : IDisposable
     private readonly float[] _rippleFoam = new float[RippleSim.MaxSources];
     // Swimming, small patches of white foam are left behind (FoamRate per second for each metre a
     // second over FoamFrom, half a metre behind), fading as the swimmer goes on.
-    private const float FoamRate = 3.5f, FoamFrom = 0.6f, FoamRadius = 0.45f;
+    private const float FoamRate = 2.2f, FoamFrom = 0.6f, FoamRadius = 0.45f;
     private readonly List<(float Distance, Vector4 Rippler)> _rippleScratch = new();
     private int _ripplerCount;
     private double _ripplersAt = double.NegativeInfinity;
