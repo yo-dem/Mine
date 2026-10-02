@@ -567,13 +567,17 @@ public static class TerrainShaders
             // Seen from above through more than DeepEnough metres of water, the land is not worth
             // shading: the water fades what lies under it to its own deep colour (exp(-0.14 t):
             // under 2% of it is left), and the deep lake floors cost as much as the water itself.
+            // Only the light seeping from the rocks is kept: the water lets glowing things through
+            // much farther (exp(-0.06 t)).
             const float WaterSurface = 14.8, DeepEnough = 30.0; // TerrainField.WaterLevel
             if (uUnderwater < 0.5 && vWorldPos.y < WaterSurface)
             {
                 float through = dist * (WaterSurface - vWorldPos.y) / max(uCameraPos.y - vWorldPos.y, 1e-3);
                 if (through > DeepEnough)
                 {
-                    FragColor = vec4(vec3(0.03, 0.02, 0.08) + uAmbient * 0.1, 1.0);
+                    vec3 deep = vec3(0.03, 0.02, 0.08) + uAmbient * 0.1;
+                    if (through < 70.0) deep += rockLight(vWorldPos, n, dist); // (past that, under 2% of it too)
+                    FragColor = vec4(deep, 1.0);
                     return;
                 }
             }
@@ -888,14 +892,11 @@ public static class TerrainShaders
         uniform vec2 uScreenSize;
         uniform float uNear;
         uniform float uFar;
-        // Rings on the water round what stands in it (reed clumps, lotus, blocks: x, z, its radius,
-        // a phase), and the path the player has swum or waded, oldest first, up to where they are
-        // now (x, z, when; w 0 for an unused point), see Game.UpdateRipples.
-        const int MaxRipplers = 40, MaxWake = 40;
-        uniform vec4 uRippler[MaxRipplers];
-        uniform int uRipplerCount;
-        uniform vec4 uWakeStamp[MaxWake];
-        uniform vec4 uWakeBounds; // a circle round the wake still alive (xy, radius z; 0: none) and its first stamp (w)
+        // The small waves round the player (RippleSim): heights over RippleExtent metres from
+        // uRippleOrigin, a cell RippleCell wide.
+        uniform sampler2D uRipples;
+        uniform vec2 uRippleOrigin;
+        const float RippleExtent = 64.0, RippleCell = 0.125; // RippleSim.Extent, Cell
 
         out vec4 FragColor;
 
@@ -1008,90 +1009,19 @@ public static class TerrainShaders
             return vec4(normalize(n), rough);
         }
 
-        // The slope the rings on the water add. From every lotus, block and reed stem standing in
-        // the water (a reed clump has RingStems stems scattered over it) rings keep spreading out:
-        // a train of fine waves (~RingWavelength apart) leaving at RingSpeed, gathered in groups
-        // that travel outward too, dying away within a few metres. The waves of neighbouring stems
-        // are summed, so where they meet they cross and interfere. Finer than a few pixels they
-        // fade out (`footprint`: metres per pixel), as they would only shimmer.
-        const float RingSpeed = 0.35, RingWavelength = 0.26, RingReach = 3.5;
-        const int RingStems = 3;
-        vec2 ripples(vec2 p, float footprint)
+        // The slope of the small waves round the player (the swimmer's wake, rings round the reeds,
+        // lotus and blocks), from the simulation's height field; finer than a few pixels
+        // (`footprint`: metres per pixel) they fade out, as they would only shimmer.
+        vec2 rippleSlope(vec2 p, float footprint)
         {
-            float visible = smoothstep(3.0, 6.0, RingWavelength / max(footprint, 1e-4));
+            float visible = smoothstep(2.0, 5.0, 3.0 * RippleCell / max(footprint, 1e-4));
             if (visible <= 0.0) return vec2(0.0);
-            const float k = 6.2832 / RingWavelength, kGroup = 6.2832 / 1.3;
-            vec2 sum = vec2(0.0);
-            for (int i = 0; i < MaxRipplers; i++)
-            {
-                if (i >= uRipplerCount) break;
-                vec4 s = uRippler[i];
-                if (distance(p, s.xy) > RingReach + s.z) continue;
-                bool reeds = s.w < 0.0;
-                float phase = abs(s.w);
-                int stems = reeds ? RingStems : 1;
-                for (int j = 0; j < RingStems; j++)
-                {
-                    if (j >= stems) break;
-                    // A stem somewhere in the clump (or the lotus or block itself, at its centre).
-                    float h = fract(phase * 7.13 + float(j) * 0.618);
-                    vec2 stem = s.xy + (reeds ? vec2(cos(h * 6.2832), sin(h * 6.2832)) * s.z * (0.3 + 0.6 * fract(h * 13.7)) : vec2(0.0));
-                    float start = reeds ? 0.03 : s.z;
-                    vec2 off = p - stem;
-                    float d = length(off);
-                    float x = d - start;
-                    if (x < 0.0 || x > RingReach) continue;
-                    float own = phase * 3.7 + float(j) * 2.1;
-                    float wave = sin(k * (x - uTime * RingSpeed) + own);
-                    float groups = 0.5 + 0.5 * sin(kGroup * (x - uTime * RingSpeed * 0.8) + own * 1.3);
-                    float envelope = exp(-x * 0.9) / sqrt(1.0 + x * 3.0) * smoothstep(0.0, 0.06, x);
-                    sum += off / max(d, 1e-3) * wave * groups * envelope * (reeds ? 0.22 : 0.3);
-                }
-            }
-            return sum * visible;
-        }
-
-        // The player's wake, along the path they swam or waded (uWakeStamp). How far a point is
-        // from the path, and how long ago the player passed there, are blended over the nearby
-        // segments (a soft minimum), so the wake bends smoothly round the turns instead of
-        // breaking into straight pieces with corners. Behind the player its waves fan out: crests
-        // slanting back from the path (a feathered V), spreading to WakeSpread m/s, broken here
-        // and there, dying away over WakeLife seconds. Returns the slope.
-        const float WakeLife = 6.0, WakeSpread = 0.45, WakeBlend = 0.35;
-        vec2 wake(vec2 p)
-        {
-            if (uWakeBounds.z <= 0.0 || distance(p, uWakeBounds.xy) > uWakeBounds.z) return vec2(0.0);
-            float weights = 0.0, ageSum = 0.0;
-            vec2 awaySum = vec2(0.0);
-            for (int i = int(uWakeBounds.w); i < MaxWake - 1; i++)
-            {
-                vec4 a = uWakeStamp[i], b = uWakeStamp[i + 1];
-                if (a.w <= 0.0 || b.w <= 0.0) continue;
-                vec2 ab = b.xy - a.xy;
-                float len2 = dot(ab, ab);
-                if (len2 > 4.0) continue; // a jump, not a path
-                float t = len2 > 1e-6 ? clamp(dot(p - a.xy, ab) / len2, 0.0, 1.0) : 0.0;
-                vec2 off = p - (a.xy + ab * t);
-                float d = length(off);
-                if (d > 5.0) continue;
-                float w = exp(-d / WakeBlend);
-                weights += w;
-                ageSum += w * (uTime - mix(a.z, b.z, t));
-                awaySum += w * off / max(d, 1e-3);
-            }
-            if (weights < 1e-6) return vec2(0.0);
-            float dist = -WakeBlend * log(weights);
-            float age = ageSum / weights;
-            if (age > WakeLife || dist > 4.0) return vec2(0.0);
-            vec2 away = awaySum / max(length(awaySum), 1e-4);
-            float life = 1.0 - age / WakeLife;
-            // The front of the spreading wake, and behind it (toward the path) the feathered crests.
-            float front = 0.2 + age * WakeSpread;
-            float inside = smoothstep(0.0, 0.25, dist) * smoothstep(front + 0.25, front - 0.15, dist);
-            float crests = sin(dist * 22.0 - age * 7.0);
-            float edge = exp(-(dist - front) * (dist - front) * 30.0) * sin((dist - front) * 26.0);
-            float broken = 0.4 + 1.2 * texture(uCloudNoise, vec3(p * 0.5, 0.61)).r;
-            return away * (crests * inside * 0.6 + edge) * life * life * broken * 0.4;
+            vec2 uv = (p - uRippleOrigin) / RippleExtent;
+            if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec2(0.0);
+            const float e = RippleCell / RippleExtent;
+            float hx = texture(uRipples, uv + vec2(e, 0.0)).r - texture(uRipples, uv - vec2(e, 0.0)).r;
+            float hz = texture(uRipples, uv + vec2(0.0, e)).r - texture(uRipples, uv - vec2(0.0, e)).r;
+            return vec2(hx, hz) / (2.0 * RippleCell) * visible;
         }
 
         // The primordial soup: broad patches of light in the water, pink, indigo and red, that
@@ -1141,7 +1071,7 @@ public static class TerrainShaders
             vec4 surfaceNormal = waterNormal(vWorldPos.xz, dist, rings);
             // The rings (near only) bend the surface fully, also in the night mirror below.
             vec2 fwRipple = fwidth(vWorldPos.xz);
-            vec2 rip = dist < 60.0 && uUnderwater < 0.5 ? (ripples(vWorldPos.xz, max(fwRipple.x, fwRipple.y)) + wake(vWorldPos.xz)) * smoothstep(60.0, 30.0, dist) : vec2(0.0);
+            vec2 rip = dist < 40.0 && uUnderwater < 0.5 ? rippleSlope(vWorldPos.xz, max(fwRipple.x, fwRipple.y)) : vec2(0.0);
             vec3 waves = surfaceNormal.xyz;
             vec3 n = normalize(waves - vec3(rip.x, 0.0, rip.y));
             float rough = surfaceNormal.w;

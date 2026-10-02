@@ -38,6 +38,7 @@ public sealed class Game : IDisposable
     private WorldObjects _objects = null!;
     private Crosshair _crosshair = null!;
     private SkyRenderer _sky = null!;
+    private RippleSim _rippleSim = null!;
     private ShadowMap _shadowMap = null!;
     private TerrainField _terrainField = null!;
     private TerrainRenderer _terrain = null!;
@@ -195,6 +196,7 @@ public sealed class Game : IDisposable
         if (Enum.TryParse<Resource>(Environment.GetEnvironmentVariable("MINE_SLOT"), true, out var inHand))
             _slot = Math.Max(Enumerable.Range(0, Inventory.SlotCount).FirstOrDefault(i => _inventory[i]?.Resource == inHand, -1), 0);
         _sky = new SkyRenderer(_gl);
+        _rippleSim = new RippleSim(_gl);
         _shadowMap = new ShadowMap(_gl);
         BuildWorld();
         _creatureRenderer = new CreatureRenderer(_gl);
@@ -801,24 +803,23 @@ public sealed class Game : IDisposable
 
     private void Toast(string text, Vector4 color) => _toasts.Add((text, color, _time + 2.2));
 
-    // Rings on the water (the water shader's ripples) round the reed clumps, lotus and blocks
-    // standing in it within RippleRange (the nearest MaxRipplers, gathered every RipplerRefresh
-    // seconds), and the player's wake and trail of light (the water shader's wake): wading or
-    // swimming, the path is kept as a point every WakeStep metres moved (none while keeping
-    // still) in a ring of WakeStamps; leaving the water breaks it (a point with w 0).
-    private const int MaxRipplers = 40, WakeStamps = 39;
-    private const float RippleRange = 35f, RipplerRefresh = 0.2f, WakeStep = 0.4f;
-    // How long the wake lives and how far its waves reach from the path (the shader's WakeLife, and its reach).
-    private const float WakeLife = 6f, WakeReach = 5f;
-    private static readonly string[] RipplerUniforms = Enumerable.Range(0, MaxRipplers).Select(i => $"uRippler[{i}]").ToArray();
-    private static readonly string[] WakeUniforms = Enumerable.Range(0, WakeStamps + 1).Select(i => $"uWakeStamp[{i}]").ToArray();
+    // The small waves on the water (RippleSim): every RipplerRefresh seconds the reed clumps,
+    // lotus and blocks standing in the water within RippleRange (the nearest MaxRipplers) are
+    // gathered; each bobs gently, sending rings out, and the player wading or swimming pushes the
+    // water as they go (a wake, a V when faster than the waves), and bobs a little keeping still.
+    private const int MaxRipplers = 40;
+    private const float RippleRange = 30f, RipplerRefresh = 0.2f;
+    // The swimmer's strokes push the water up and down (StrokeRate a second), harder the faster
+    // they go; the reeds and lotus bob at RingRate, each in its own phase. Neither takes water away.
+    private const float WakePush = 0.3f, WakeRadius = 0.25f, BobPush = 0.05f, RingPush = 0.25f, StrokeRate = 9.5f, RingRate = 11f;
     private readonly Vector4[] _ripplers = new Vector4[MaxRipplers];
-    private readonly Vector4[] _wake = new Vector4[WakeStamps];
+    private readonly Vector4[] _rippleSources = new Vector4[RippleSim.MaxSources];
     private readonly List<(float Distance, Vector4 Rippler)> _rippleScratch = new();
-    private int _ripplerCount, _wakeNext;
+    private int _ripplerCount;
     private double _ripplersAt = double.NegativeInfinity;
-    private Vector2 _lastWake = new(float.NaN);
     private bool _inWater;
+    // Debug (MINE_WAKE_TEST=1): something swims round in a circle ahead of the player, to watch the wake.
+    private static readonly bool WakeTest = Environment.GetEnvironmentVariable("MINE_WAKE_TEST") == "1";
 
     private void UpdateRipples()
     {
@@ -826,8 +827,7 @@ public sealed class Game : IDisposable
         {
             _rippleScratch.Clear();
             _treeField.WaterRipplers(_player.Position, RippleRange, _rippleScratch);
-            // Blocks standing in the water, through its surface (a ring round each, its corners
-            // reaching a little past it).
+            // Blocks standing in the water, through its surface.
             var center = new Vector2(_player.Position.X, _player.Position.Z);
             foreach (var (block, _) in _blocks.All)
             {
@@ -841,51 +841,37 @@ public sealed class Game : IDisposable
             for (int i = 0; i < _ripplerCount; i++) _ripplers[i] = _rippleScratch[i].Rippler;
             _ripplersAt = _time;
         }
-        var feet = new Vector2(_player.Position.X, _player.Position.Z);
         _inWater = _player.Position.Y < TerrainField.WaterLevel - 0.1f;
-        if (!_inWater)
-        {
-            if (!float.IsNaN(_lastWake.X)) AddWakePoint(new Vector4(feet.X, feet.Y, (float)_time, 0f));
-            _lastWake = new Vector2(float.NaN);
-            return;
-        }
-        if (float.IsNaN(_lastWake.X) || Vector2.Distance(feet, _lastWake) >= WakeStep)
-        {
-            AddWakePoint(new Vector4(feet.X, feet.Y, (float)_time, 1f));
-            _lastWake = feet;
-        }
     }
 
-    private void AddWakePoint(Vector4 point)
+    // What pushes the water this frame (x, z, radius, push per second), for RippleSim.Step.
+    private ReadOnlySpan<Vector4> RippleSources()
     {
-        _wake[_wakeNext] = point;
-        _wakeNext = (_wakeNext + 1) % WakeStamps;
-    }
-
-    private void SetRipples(Shader shader)
-    {
-        for (int i = 0; i < _ripplerCount; i++) shader.Set(RipplerUniforms[i], _ripplers[i]);
-        shader.Set("uRipplerCount", _ripplerCount);
-        // The path oldest first, then where the player is now (so the wake reaches them).
-        for (int i = 0; i < WakeStamps; i++) shader.Set(WakeUniforms[i], _wake[(_wakeNext + i) % WakeStamps]);
-        var now = new Vector4(_player.Position.X, _player.Position.Z, (float)_time, _inWater ? 1f : 0f);
-        shader.Set(WakeUniforms[WakeStamps], now);
-        // Where the wake still lives (its last WakeLife seconds): a circle round it, wide enough for
-        // its waves, and the first stamp of it. The shader skips the wake everywhere outside it,
-        // and the whole of it when none is left: looping over all the stamps for every pixel of
-        // water cost more than all the rest of the water.
-        int first = -1;
-        Vector2 min = new(float.MaxValue), max = new(float.MinValue);
-        for (int i = 0; i <= WakeStamps; i++)
+        int n = 0;
+        float t = (float)_time;
+        for (int i = 0; i < _ripplerCount && n < _rippleSources.Length - 2; i++)
         {
-            var stamp = i < WakeStamps ? _wake[(_wakeNext + i) % WakeStamps] : now;
-            if (stamp.W <= 0f || _time - stamp.Z > WakeLife) continue;
-            if (first < 0) first = Math.Max(i - 1, 0);
-            min = Vector2.Min(min, new Vector2(stamp.X, stamp.Y));
-            max = Vector2.Max(max, new Vector2(stamp.X, stamp.Y));
+            // Each bobs at its own pace (its phase; reed clumps have it negative).
+            var r = _ripplers[i];
+            float phase = MathF.Abs(r.W);
+            _rippleSources[n++] = new Vector4(r.X, r.Y, MathF.Max(r.Z * 0.6f, 0.15f), RingPush * MathF.Sin(t * (RingRate + phase % 2f) + phase));
         }
-        shader.Set("uWakeBounds", first < 0 ? Vector4.Zero
-            : new Vector4((min + max) / 2, Vector2.Distance(min, max) / 2 + WakeReach, first));
+        if (_inWater)
+        {
+            var v = new Vector2(_player.Velocity.X, _player.Velocity.Z);
+            float speed = v.Length();
+            _rippleSources[n++] = new Vector4(_player.Position.X, _player.Position.Z, WakeRadius,
+                (WakePush * speed + BobPush * MathF.Max(0f, 1f - speed)) * MathF.Sin(t * StrokeRate));
+        }
+        if (WakeTest)
+        {
+            var look = _player.LookDirection;
+            var ahead = new Vector2(_player.Position.X, _player.Position.Z) + Vector2.Normalize(new Vector2(look.X, look.Z)) * 14f;
+            float a = t * 0.45f; // 3 m/s round a circle of 6.5 m
+            var p = ahead + new Vector2(MathF.Cos(a), MathF.Sin(a)) * 6.5f;
+            _rippleSources[n++] = new Vector4(p.X, p.Y, WakeRadius, WakePush * 3f * MathF.Sin(t * StrokeRate));
+        }
+        return _rippleSources.AsSpan(0, n);
     }
 
     private void OnRender(double deltaTime)
@@ -1033,6 +1019,7 @@ public sealed class Game : IDisposable
         if (On("water"))
         {
             _sky.DrawLayers(atmosphere, time, (float)_dayCycle.Elapsed);
+            if (On("ripples")) _rippleSim.Step(eye, (float)deltaTime, RippleSources());
             _post.BindScene();
         }
         SetWorldUniforms(_waterShader, view * projection, eye, atmosphere, time);
@@ -1047,7 +1034,8 @@ public sealed class Game : IDisposable
         _waterShader.Set("uNear", NearPlane);
         _waterShader.Set("uFar", FarPlane);
         _waterShader.Set("uWaterLevel", TerrainField.WaterLevel);
-        SetRipples(_waterShader);
+        _waterShader.Set("uRipples", RippleSim.Unit);
+        _waterShader.Set("uRippleOrigin", _rippleSim.Origin);
         if (On("water")) _water.Draw();
 
         // Glass: glass blocks, the glass cubes lying around, the translucent crystals.
@@ -1636,6 +1624,7 @@ public sealed class Game : IDisposable
         _water?.Dispose();
         _crosshair?.Dispose();
         _sky?.Dispose();
+        _rippleSim?.Dispose();
         _shadowMap?.Dispose();
         _terrainShader?.Dispose();
         _objectShader?.Dispose();

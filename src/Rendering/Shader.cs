@@ -50,6 +50,7 @@ public sealed unsafe class Shader : IDisposable
     }
 
     public void Set(string name, int value) => _gl.Uniform1(Location(name), value);
+    public void Set(string name, int x, int y) => _gl.Uniform2(Location(name), x, y);
     public void Set(string name, float value) => _gl.Uniform1(Location(name), value);
     public void Set(string name, Vector2 value) => _gl.Uniform2(Location(name), value.X, value.Y);
     public void Set(string name, Vector3 value) => _gl.Uniform3(Location(name), value.X, value.Y, value.Z);
