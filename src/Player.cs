@@ -49,13 +49,13 @@ public sealed class Player
     // layer onto the next must not count as being airborne.
     private const float GroundGrace = 0.15f;
 
-    // Swimming: slow at the surface, with heavy drag; idle swimmers float up to rest with the head
+    // Swimming: at the surface a brisk pace (SwimSpeed, SwimSprintSpeed), with heavy drag; idle swimmers float up to rest with the head
     // above water. Wholly under the water (the eyes DiveDepth under) swimmers go as fast as
     // walking (DiveSpeed, DiveSprintSpeed), picking up speed sooner (DiveAccel), easing from the
     // surface's pace over the first DiveDepth.
-    private const float SwimSpeed = 2.2f;
-    private const float SwimSprintSpeed = 3.6f;
-    private const float SwimAccel = 1.8f;
+    private const float SwimSpeed = 4f;
+    private const float SwimSprintSpeed = 6.5f;
+    private const float SwimAccel = 2.8f;
     private const float DiveSpeed = WalkSpeed, DiveSprintSpeed = 8.5f, DiveAccel = 3.5f, DiveDepth = 0.5f;
     private const float SwimDrag = 1.2f;
     private const float SwimDepth = 1.0f;    // feet this far below the surface: swimming

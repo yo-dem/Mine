@@ -814,6 +814,10 @@ public sealed class Game : IDisposable
     private const float WakePush = 0.3f, WakeRadius = 0.25f, BobPush = 0.05f, RingPush = 0.25f, StrokeRate = 9.5f, RingRate = 11f;
     private readonly Vector4[] _ripplers = new Vector4[MaxRipplers];
     private readonly Vector4[] _rippleSources = new Vector4[RippleSim.MaxSources];
+    private readonly float[] _rippleFoam = new float[RippleSim.MaxSources];
+    // Swimming, small patches of white foam are left behind (FoamRate per second for each metre a
+    // second over FoamFrom, half a metre behind), fading as the swimmer goes on.
+    private const float FoamRate = 3.5f, FoamFrom = 0.6f, FoamRadius = 0.45f;
     private readonly List<(float Distance, Vector4 Rippler)> _rippleScratch = new();
     private int _ripplerCount;
     private double _ripplersAt = double.NegativeInfinity;
@@ -844,10 +848,12 @@ public sealed class Game : IDisposable
         _inWater = _player.Position.Y < TerrainField.WaterLevel - 0.1f;
     }
 
-    // What pushes the water this frame (x, z, radius, push per second), for RippleSim.Step.
-    private ReadOnlySpan<Vector4> RippleSources()
+    // What pushes the water this frame (x, z, radius, push per second), for RippleSim.Step, and
+    // the foam each leaves (_rippleFoam, per second).
+    private int RippleSources()
     {
         int n = 0;
+        Array.Clear(_rippleFoam);
         float t = (float)_time;
         for (int i = 0; i < _ripplerCount && n < _rippleSources.Length - 2; i++)
         {
@@ -860,8 +866,14 @@ public sealed class Game : IDisposable
         {
             var v = new Vector2(_player.Velocity.X, _player.Velocity.Z);
             float speed = v.Length();
-            _rippleSources[n++] = new Vector4(_player.Position.X, _player.Position.Z, WakeRadius,
+            var feet = new Vector2(_player.Position.X, _player.Position.Z);
+            _rippleSources[n++] = new Vector4(feet, WakeRadius,
                 (WakePush * speed + BobPush * MathF.Max(0f, 1f - speed)) * MathF.Sin(t * StrokeRate));
+            if (speed > FoamFrom)
+            {
+                _rippleSources[n] = new Vector4(feet - v / speed * 0.5f, FoamRadius, 0f);
+                _rippleFoam[n++] = FoamRate * (speed - FoamFrom);
+            }
         }
         if (WakeTest)
         {
@@ -870,8 +882,11 @@ public sealed class Game : IDisposable
             float a = t * 0.45f; // 3 m/s round a circle of 6.5 m
             var p = ahead + new Vector2(MathF.Cos(a), MathF.Sin(a)) * 6.5f;
             _rippleSources[n++] = new Vector4(p.X, p.Y, WakeRadius, WakePush * 3f * MathF.Sin(t * StrokeRate));
+            var behind = p - new Vector2(-MathF.Sin(a), MathF.Cos(a)) * 0.5f; // (it goes round anticlockwise)
+            _rippleSources[n] = new Vector4(behind.X, behind.Y, FoamRadius, 0f);
+            _rippleFoam[n++] = FoamRate * (3f - FoamFrom);
         }
-        return _rippleSources.AsSpan(0, n);
+        return n;
     }
 
     private void OnRender(double deltaTime)
@@ -1019,7 +1034,11 @@ public sealed class Game : IDisposable
         if (On("water"))
         {
             _sky.DrawLayers(atmosphere, time, (float)_dayCycle.Elapsed);
-            if (On("ripples")) _rippleSim.Step(eye, (float)deltaTime, RippleSources());
+            if (On("ripples"))
+            {
+                int sources = RippleSources();
+                _rippleSim.Step(eye, (float)deltaTime, _rippleSources.AsSpan(0, sources), _rippleFoam.AsSpan(0, sources));
+            }
             _post.BindScene();
         }
         SetWorldUniforms(_waterShader, view * projection, eye, atmosphere, time);

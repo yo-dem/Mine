@@ -9,8 +9,10 @@ namespace Mine.Rendering;
 /// wave equation on the GPU at a fixed <see cref="StepsPerSecond"/>: waves spread at
 /// <see cref="WaveSpeed"/>, die away, and are soaked up at the edges. Whatever stands or moves in
 /// the water pushes it (<see cref="Step"/>'s sources): the swimmer's wake, a V when swimming faster
-/// than the waves, rings round the reeds, lotus and blocks. The water shader reads the slope from it
-/// (<c>rippleSlope</c>, texture unit <see cref="Unit"/>). Red holds the height now, green a step ago.
+/// than the waves, rings round the reeds, lotus and blocks. A swimmer also leaves foam (blue), which
+/// spreads a little and fades away over a couple of seconds (<see cref="FoamFade"/>). The water
+/// shader reads the slope and the foam from it (<c>rippleSlope</c>, <c>rippleFoam</c>, texture unit
+/// <see cref="Unit"/>). Red holds the height now, green a step ago, blue the foam.
 /// </summary>
 public sealed unsafe class RippleSim : IDisposable
 {
@@ -23,6 +25,7 @@ public sealed unsafe class RippleSim : IDisposable
     private const float WaveSpeed = 0.7f;   // metres a second
     private const float Damping = 0.994f;   // per step: half gone in about two seconds
     private const int MaxStepsPerFrame = 3;
+    private const float FoamFade = 0.995f;  // per step: half gone in about two seconds and a half
 
     private const string Vertex = """
         #version 330 core
@@ -40,29 +43,33 @@ public sealed unsafe class RippleSim : IDisposable
         uniform vec2 uOrigin;         // world xz of the corner, now
         uniform float uCourant;       // (speed * step / cell)^2
         uniform float uDamping;
-        out vec2 FragColor;
+        uniform float uFoamFade;
+        out vec4 FragColor;
 
         const int N = {{Size}};
         const float Cell = {{Cell.ToString(System.Globalization.CultureInfo.InvariantCulture)}};
 
-        vec2 at(ivec2 c)
+        vec4 at(ivec2 c)
         {
-            if (c.x < 0 || c.y < 0 || c.x >= N || c.y >= N) return vec2(0.0);
-            return texelFetch(uPrevious, c, 0).rg;
+            if (c.x < 0 || c.y < 0 || c.x >= N || c.y >= N) return vec4(0.0);
+            return texelFetch(uPrevious, c, 0);
         }
 
         void main()
         {
             ivec2 cell = ivec2(gl_FragCoord.xy);
             ivec2 c = cell + uShift; // where this cell was before the field moved
-            vec2 h = at(c);
-            float around = at(c + ivec2(1, 0)).r + at(c - ivec2(1, 0)).r + at(c + ivec2(0, 1)).r + at(c - ivec2(0, 1)).r;
+            vec4 h = at(c);
+            vec4 r = at(c + ivec2(1, 0)), l = at(c - ivec2(1, 0)), u = at(c + ivec2(0, 1)), d = at(c - ivec2(0, 1));
+            float around = r.r + l.r + u.r + d.r;
+            // The foam spreads a little into its neighbours as it fades.
+            float foam = mix(h.b, (r.b + l.b + u.b + d.b) * 0.25, 0.08) * uFoamFade;
             // (A slight pull back to the rest level, so nothing is left raised or sunk.)
             float next = (2.0 * h.r - h.g + uCourant * (around - 4.0 * h.r) - 0.002 * h.r) * uDamping;
             // The edges soak the waves up, so none comes back from them.
             float edge = float(min(min(cell.x, cell.y), min(N - 1 - cell.x, N - 1 - cell.y)));
-            next *= smoothstep(0.0, 24.0, edge);
-            FragColor = vec2(next, h.r);
+            float soak = smoothstep(0.0, 24.0, edge);
+            FragColor = vec4(next * soak, h.r, foam * soak, 0.0);
         }
         """;
 
@@ -71,9 +78,11 @@ public sealed unsafe class RippleSim : IDisposable
     private static readonly string SourceVertex = $$"""
         #version 330 core
         uniform vec4 uSource[{{MaxSources}}]; // x, z, radius, how much it pushes the water this step
+        uniform float uSourceFoam[{{MaxSources}}]; // how much foam it leaves this step
         uniform vec2 uOrigin;
         out vec2 vOffset; // from the source, in radii
         out float vPush;
+        out float vFoam;
         void main()
         {
             vec4 s = uSource[gl_InstanceID];
@@ -81,6 +90,7 @@ public sealed unsafe class RippleSim : IDisposable
             corner = corner * 2.0 + 1.0;
             vOffset = corner * 3.0;
             vPush = s.w;
+            vFoam = uSourceFoam[gl_InstanceID];
             vec2 world = s.xy + vOffset * s.z;
             gl_Position = vec4((world - uOrigin) / {{Extent.ToString(System.Globalization.CultureInfo.InvariantCulture)}} * 2.0 - 1.0, 0.0, 1.0);
         }
@@ -90,8 +100,13 @@ public sealed unsafe class RippleSim : IDisposable
         #version 330 core
         in vec2 vOffset;
         in float vPush;
-        out vec2 FragColor;
-        void main() { FragColor = vec2(vPush * exp(-dot(vOffset, vOffset)), 0.0); }
+        in float vFoam;
+        out vec4 FragColor;
+        void main()
+        {
+            float bell = exp(-dot(vOffset, vOffset));
+            FragColor = vec4(vPush * bell, 0.0, vFoam * bell, 0.0);
+        }
         """;
 
     private readonly GL _gl;
@@ -99,6 +114,7 @@ public sealed unsafe class RippleSim : IDisposable
     private readonly uint _vao;
     private readonly uint[] _textures = new uint[2], _fbos = new uint[2];
     private readonly string[] _sourceNames = Enumerable.Range(0, MaxSources).Select(i => $"uSource[{i}]").ToArray();
+    private readonly string[] _foamNames = Enumerable.Range(0, MaxSources).Select(i => $"uSourceFoam[{i}]").ToArray();
     private int _current;
     private (int X, int Z) _corner = (int.MinValue, int.MinValue);
     private float _pending;
@@ -116,7 +132,7 @@ public sealed unsafe class RippleSim : IDisposable
         {
             _textures[i] = gl.GenTexture();
             gl.BindTexture(TextureTarget.Texture2D, _textures[i]);
-            gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.RG16f, Size, Size, 0, PixelFormat.RG, PixelType.HalfFloat, (void*)0);
+            gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba16f, Size, Size, 0, PixelFormat.Rgba, PixelType.HalfFloat, (void*)0);
             gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
             gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
             gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
@@ -133,9 +149,10 @@ public sealed unsafe class RippleSim : IDisposable
     /// <summary>
     /// Moves the waves on by <paramref name="dt"/> seconds (in fixed steps), the field centred on
     /// <paramref name="center"/>. <paramref name="sources"/> (x, z, radius, push per second) push
-    /// the water at every step. Binds the result to <see cref="Unit"/>; leaves its framebuffer bound.
+    /// the water at every step, each leaving <paramref name="foam"/> (per second) too. Binds the
+    /// result to <see cref="Unit"/>; leaves its framebuffer bound.
     /// </summary>
-    public void Step(Vector3 center, float dt, ReadOnlySpan<Vector4> sources)
+    public void Step(Vector3 center, float dt, ReadOnlySpan<Vector4> sources, ReadOnlySpan<float> foam)
     {
         _pending = MathF.Min(_pending + dt, MaxStepsPerFrame / StepsPerSecond);
         int steps = (int)(_pending * StepsPerSecond);
@@ -144,12 +161,16 @@ public sealed unsafe class RippleSim : IDisposable
         int count = Math.Min(sources.Length, MaxSources);
         _sourceShader.Use();
         for (int i = 0; i < count; i++)
+        {
             _sourceShader.Set(_sourceNames[i], sources[i] with { W = sources[i].W / StepsPerSecond });
+            _sourceShader.Set(_foamNames[i], i < foam.Length ? foam[i] / StepsPerSecond : 0f);
+        }
         _shader.Use();
         _shader.Set("uPrevious", Unit);
         float courant = WaveSpeed / StepsPerSecond / Cell;
         _shader.Set("uCourant", courant * courant);
         _shader.Set("uDamping", Damping);
+        _shader.Set("uFoamFade", FoamFade);
         _gl.Disable(EnableCap.DepthTest);
         _gl.Disable(EnableCap.Blend);
         _gl.DepthMask(false);

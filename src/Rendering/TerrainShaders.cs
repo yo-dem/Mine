@@ -1024,6 +1024,19 @@ public static class TerrainShaders
             return vec2(hx, hz) / (2.0 * RippleCell) * visible;
         }
 
+        // The foam a swimmer leaves (the simulation's blue): small white patches broken into bubbles;
+        // the thinner it gets the fewer bubbles stay, so it breaks up as it fades away.
+        float rippleFoam(vec2 p)
+        {
+            vec2 uv = (p - uRippleOrigin) / RippleExtent;
+            if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return 0.0;
+            float foam = texture(uRipples, uv).b;
+            if (foam < 0.02) return 0.0;
+            float bubbles = texture(uCloudNoise, vec3(p * 0.9, 0.33 + uTime * 0.01)).r * 0.65
+                          + texture(uCloudNoise, vec3(p * 2.7, 0.77)).r * 0.35;
+            return smoothstep(0.62 - foam * 0.35, 0.7 - foam * 0.35, bubbles) * min(foam * 2.5, 1.0);
+        }
+
         // The primordial soup: broad patches of light in the water, pink, indigo and red, that
         // slowly flow, swirl, stretch, merge and part (domain-warped noise, its warp drifting),
         // grainy like glowing plankton, brighter at night.
@@ -1217,6 +1230,13 @@ public static class TerrainShaders
                 color = mix(color, foam * mix(1.1, 0.35, uNight), surf * 0.85);
                 // (At night the foam's glow is gentler: it is the brightest thing on the water.)
                 glow += foam * surf * mix(2.4, 0.9, uNight) + vec3(0.25, 0.7, 1.0) * face * mix(0.8, 0.3, uNight);
+            }
+
+            // Foam left behind a swimmer: white by day, a softer moonlit white at night.
+            if (uUnderwater < 0.5 && dist < 40.0)
+            {
+                float foam = rippleFoam(vWorldPos.xz);
+                color = mix(color, mix(vec3(1.0, 0.97, 1.0), vec3(0.45, 0.5, 0.75), uNight), foam * 0.85);
             }
 
             // (At night, softer: the mirrored sky is the show.)
